@@ -92,6 +92,10 @@ type Item struct {
 	Path           string         `json:"path,omitempty"`
 	Branch         string         `json:"branch,omitempty"`
 	ExpectedBranch string         `json:"expected_branch,omitempty"`
+	Base           string         `json:"base,omitempty"`
+	Start          string         `json:"start,omitempty"`
+	Tracking       string         `json:"tracking,omitempty"`
+	CreateBranch   bool           `json:"create_branch,omitempty"`
 	Outcome        string         `json:"outcome"`
 	Status         *domain.Status `json:"status,omitempty"`
 	Problem        *Problem       `json:"error,omitempty"`
