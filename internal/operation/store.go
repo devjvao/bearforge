@@ -4,6 +4,8 @@ package operation
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -94,16 +96,18 @@ func (s *Store) List() ([]app.Operation, error) {
 		return nil, err
 	}
 	ops := []app.Operation{}
+	var failures []error
 	for _, entry := range entries {
 		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
 			op, err := s.Load(strings.TrimSuffix(entry.Name(), ".json"))
 			if err != nil {
-				return nil, err
+				failures = append(failures, fmt.Errorf("operation %s: %w", entry.Name(), err))
+				continue
 			}
 			ops = append(ops, *op)
 		}
 	}
-	return ops, nil
+	return ops, errors.Join(failures...)
 }
 func valid(op *app.Operation, root string) error {
 	if op.Version != 1 || op.Root != root {

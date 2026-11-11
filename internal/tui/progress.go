@@ -1,4 +1,4 @@
-// Package tui renders progress without owning application operations.
+// Package tui adapts application observations and progress to terminal views.
 package tui
 
 import (

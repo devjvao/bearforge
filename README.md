@@ -2,7 +2,7 @@
 
 Manage a single bare Git repository per project and materialize ordinary Git worktrees inside named workspaces.
 
-**Status: local-core development milestone.** The CLI is usable for evaluating local workflows. The full dashboard, bulk execution, PR integrations, repository retirement, and schema migration are later milestones. The approved design lives in [the blueprint](docs/architecture/0001-bearforge-blueprint.md).
+**Status: local core plus the first Phase 2 dashboard.** The CLI is usable for evaluating local workflows. The read-only dashboard browses workspace health. Dashboard mutations, bulk execution, PR integrations, repository retirement, and schema migration are later milestones. The approved design lives in [the blueprint](docs/architecture/0001-bearforge-blueprint.md).
 
 ## Build
 
@@ -46,10 +46,31 @@ Removal refuses tracked changes, untracked/ignored content, special index flags,
 - `repo add`, `repo list`, `repo inspect`, `repo sync`
 - `workspace create` / `init`, `add`, `list`, `show` / `ls`, `path`, `remove-repo`, `remove`
 - `sync`, `status` (`--check` for automation)
+- `tui [WORKSPACE]` (read-only interactive dashboard)
 - `operations list`, `show`, `resume`, `abandon`
 - `config validate`, `completion`, `version`
 
-`--output=json` emits one result; `--output=jsonl` emits progress and a final result. Bubble Tea provides inline progress for supported commands on interactive terminals. Use `--ui=plain` to disable it; pipes, CI, quiet mode and `--no-input` always remain plain. The full-window `tui` command is not implemented yet. Colors and richer components are also deferred; the current interface uses text labels.
+`--output=json` emits one result; `--output=jsonl` emits progress and a final result. Bubble Tea provides inline progress for supported commands on interactive terminals. Use `--ui=plain` to disable it; pipes, CI, quiet mode and `--no-input` always remain plain. The dashboard uses text labels without color or animation.
+
+## Workspace dashboard
+
+```sh
+bearforge tui
+bearforge tui audit-feature
+bearforge --root /path/to/code tui audit-feature
+```
+
+The full-window dashboard lists workspaces and inspects only the selected workspace. Repository details show actual/intended branches, staged/modified/untracked/conflicted counts, upstream and locally observed ahead/behind, detached/unborn HEAD, and per-repository errors. Unfinished operations are reported for inspection with `bearforge operations list` or `show`; the dashboard never resumes or abandons them.
+
+- Tab or Shift-Tab changes the active pane; arrows or `j`/`k` move selection.
+- `/` filters the active list by name, Enter accepts, and Escape clears.
+- `r` refreshes local observations. It never fetches or changes checkouts.
+- Page Up/Down scroll repository details and operation notices.
+- `q` exits successfully; Ctrl-C cancels. Both cancel and drain active reads.
+
+At widths below 90 columns, the active list appears above the details; Tab switches lists. Detail and operation-notice text wraps to the terminal width, so Page Up/Down can reveal full values and inspection commands. The minimum usable terminal is 36 columns by 12 rows. The alternate screen is restored on exit. Empty roots/workspaces have explicit empty states and browsing creates no directories, locks or journals. Observations are snapshots; external Git/editor activity may change state during inspection.
+
+`tui` requires terminal stdin/stdout/stderr, `--ui=auto`, human output and interactive input. It refuses JSON/JSONL, quiet/no-input/dry-run, CI and `TERM=dumb`; use `status WORKSPACE --json` for automation. `--root` and `BEARFORGE_ROOT` work as for other commands. Starting without a workspace selects the first workspace alphabetically.
 
 Exit codes: 0 success; 1 operation failure; 2 invalid input; 3 safety/conflict/confirmation refusal; 4 missing Git; 130 cancellation. Fetch updates remote tracking refs and never merges or resets checked-out branches. Status ahead/behind reflects locally fetched refs, not a live server query.
 
