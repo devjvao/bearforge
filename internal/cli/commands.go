@@ -179,22 +179,10 @@ func addCommands(root *cobra.Command, o *options) {
 		}
 		return s.Abandon(ctx, a[0])
 	})
-	cfg := &cobra.Command{Use: "config", Short: "Validate configuration"}
+	cfg := &cobra.Command{Use: "config", Short: "Validate configuration", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		return cmd.Help()
+	}}
 	root.AddCommand(cfg)
-	var migrationTarget int
-	migrate := command(cfg, "migrate", "Preview and explicitly migrate the catalog with an exact backup", cobra.NoArgs, false, false, func(ctx context.Context, s *app.Service, _ []string) (app.Result, error) {
-		req := app.MigrateRequest{To: migrationTarget, DryRun: true}
-		plan, err := s.Migrate(ctx, req)
-		if err != nil || o.dry || plan.Outcome == "unchanged" {
-			return plan, err
-		}
-		if err := o.confirm(ctx, plan); err != nil {
-			return plan, err
-		}
-		req.DryRun, req.ExpectedPlan = false, plan.PlanDigest
-		return s.Migrate(ctx, req)
-	})
-	migrate.Flags().IntVar(&migrationTarget, "to", 2, "Target catalog schema (2)")
 	command(cfg, "validate", "Validate catalog and workspace definitions", cobra.NoArgs, false, false, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
 		r := app.NewResult("config.validate")
 		catalog, _, err := s.Store.LoadCatalog()

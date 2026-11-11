@@ -58,22 +58,21 @@ type Journal interface {
 }
 
 type Operation struct {
-	Version       int                      `json:"schema_version"`
-	ID            string                   `json:"id"`
-	Root          string                   `json:"root"`
-	Kind          string                   `json:"kind"`
-	Workspace     string                   `json:"workspace,omitempty"`
-	DefaultBranch string                   `json:"default_branch,omitempty"`
-	Remote        string                   `json:"remote,omitempty"`
-	State         string                   `json:"state"`
-	Created       time.Time                `json:"created"`
-	Steps         []Step                   `json:"steps"`
-	Error         string                   `json:"error,omitempty"`
-	Exec          *ExecRequest             `json:"exec,omitempty"`
-	Migration     *domain.CatalogMigration `json:"migration,omitempty"`
-	Repository    *domain.Repository       `json:"repository,omitempty"`
-	Retirement    string                   `json:"retirement_operation,omitempty"`
-	Fingerprint   string                   `json:"fingerprint,omitempty"`
+	Version       int                `json:"schema_version"`
+	ID            string             `json:"id"`
+	Root          string             `json:"root"`
+	Kind          string             `json:"kind"`
+	Workspace     string             `json:"workspace,omitempty"`
+	DefaultBranch string             `json:"default_branch,omitempty"`
+	Remote        string             `json:"remote,omitempty"`
+	State         string             `json:"state"`
+	Created       time.Time          `json:"created"`
+	Steps         []Step             `json:"steps"`
+	Error         string             `json:"error,omitempty"`
+	Exec          *ExecRequest       `json:"exec,omitempty"`
+	Repository    *domain.Repository `json:"repository,omitempty"`
+	Retirement    string             `json:"retirement_operation,omitempty"`
+	Fingerprint   string             `json:"fingerprint,omitempty"`
 }
 
 type Step struct {

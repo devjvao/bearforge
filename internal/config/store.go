@@ -17,7 +17,10 @@ import (
 	"bearforge/internal/domain"
 )
 
-const maxDocument = 2 << 20
+const (
+	maxDocument          = 2 << 20
+	catalogSchemaVersion = 2
+)
 
 type Store struct{ Root string }
 
@@ -215,11 +218,8 @@ func (s *Store) LoadCatalog() (domain.Catalog, string, error) {
 	if err := decode(b, &dto); err != nil {
 		return c, rev, err
 	}
-	if dto.Version != 1 && dto.Version != 2 {
-		return c, rev, domain.E("invalid", "unsupported catalog schema %d", dto.Version)
-	}
-	if dto.Version == 1 && dto.Retired != nil {
-		return c, rev, domain.E("invalid", "retired identities require catalog schema 2")
+	if dto.Version != catalogSchemaVersion {
+		return c, rev, domain.E("invalid", "unsupported catalog schema %d; expected %d", dto.Version, catalogSchemaVersion)
 	}
 	if dto.Defaults.Remote != "" {
 		c.Remote = dto.Defaults.Remote
@@ -251,7 +251,7 @@ func (s *Store) LoadCatalog() (domain.Catalog, string, error) {
 		if err := domain.ValidateID(r.Operation); err != nil {
 			return c, rev, err
 		}
-		if !validRevision(r.Fingerprint) {
+		if !validFingerprint(r.Fingerprint) {
 			return c, rev, domain.E("invalid", "invalid retired repository fingerprint")
 		}
 		c.Retired[id] = domain.RetiredRepository{Repository: repository, Operation: r.Operation, Fingerprint: r.Fingerprint}
@@ -260,18 +260,12 @@ func (s *Store) LoadCatalog() (domain.Catalog, string, error) {
 }
 
 func (s *Store) SaveCatalog(c domain.Catalog, rev string) error {
-	version := 2
 	if rev != "" {
-		var err error
-		version, err = s.CatalogVersion()
-		if err != nil {
+		if _, _, err := s.LoadCatalog(); err != nil {
 			return err
 		}
 	}
-	if version == 1 && len(c.Retired) > 0 {
-		return domain.E("migration_required", "run config migrate --to 2 before storing retired identities")
-	}
-	d := catalogDTO{Version: version, Defaults: defaultsDTO{Remote: c.Remote, Jobs: c.Jobs}, Repositories: map[string]repoDTO{}, Retired: map[string]retiredDTO{}}
+	d := catalogDTO{Version: catalogSchemaVersion, Defaults: defaultsDTO{Remote: c.Remote, Jobs: c.Jobs}, Repositories: map[string]repoDTO{}, Retired: map[string]retiredDTO{}}
 	for id, r := range c.Repositories {
 		d.Repositories[id] = repoDTO{Remotes: r.Remotes, Base: r.Base, Provider: r.Provider}
 	}
@@ -279,6 +273,14 @@ func (s *Store) SaveCatalog(c domain.Catalog, rev string) error {
 		d.Retired[id] = retiredDTO{Repository: repoDTO{Remotes: r.Repository.Remotes, Base: r.Repository.Base, Provider: r.Repository.Provider}, Operation: r.Operation, Fingerprint: r.Fingerprint}
 	}
 	return s.save([]string{".bearforge", "catalog.yaml"}, d, rev)
+}
+
+func validFingerprint(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 func decodeRepository(id string, r repoDTO) (domain.Repository, error) {

@@ -31,18 +31,11 @@ bearforge version
 
 An explicit `--root PATH` overrides this environment variable. Otherwise Bearforge searches upward from the current directory for `.bearforge/catalog.yaml`, then falls back to `~/code`. Keep the same root selection when inspecting or recovering an operation.
 
-## Upgrade an existing root
+## Configuration formats
 
-New roots use catalog schema 2. Workspace documents remain at schema 1. Existing schema 1 catalogs remain readable, and compatible commands preserve their version. Retirement/restoration requires an explicit migration:
+Bearforge writes and accepts catalog schema 2. Workspace documents use their independent schema 1. Other catalog versions are rejected without changing their contents. Catalog schema 1 has no compatibility or migration path.
 
-```sh
-bearforge config validate
-bearforge config migrate --to 2 --dry-run
-bearforge config migrate --to 2 --yes
-bearforge doctor
-```
-
-Migration preserves comments and extensions and saves the exact original bytes under `.bearforge/state/backups/OPERATION_ID/catalog.yaml`. A current catalog is a no-op. Unknown future schemas are refused. Changed source bytes invalidate approval. Inspect and resolve unfinished operations before migrating; never downgrade by editing the schema number.
+After registering repositories, use `bearforge config validate` to check the catalog and workspace definitions, and `bearforge doctor` to inspect storage and Git health. Ordinary catalog updates preserve comments and extension data.
 
 ## Register repositories and create two workspaces
 

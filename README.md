@@ -2,7 +2,7 @@
 
 Manage a single bare Git repository per project and materialize ordinary Git worktrees inside named workspaces.
 
-**Status: Phase 2 daily-use implementation.** The CLI supports bulk execution, read-only doctor checks, recoverable repository retirement/restoration and explicit catalog migration alongside the interactive workspace dashboard. [Onboarding](docs/onboarding.md) covers setup and daily workflows; [release verification](docs/releases.md) covers deterministic artifacts, checksums and CI signing. Company private-repository validation is deferred to the maintainer after merge; disposable scale tests cover 60 repositories. Signed publication requires a reviewed, merged version tag. PR integrations belong to Phase 3. The design lives in [the blueprint](docs/architecture/0001-bearforge-blueprint.md).
+**Status: Phase 2 daily-use implementation.** The CLI supports bulk execution, read-only doctor checks and recoverable repository retirement/restoration alongside the interactive workspace dashboard. [Onboarding](docs/onboarding.md) covers setup and daily workflows; [release verification](docs/releases.md) covers deterministic artifacts, checksums and CI signing. Company private-repository validation is deferred to the maintainer after merge; disposable scale tests cover 60 repositories. Signed publication requires a reviewed, merged version tag. PR integrations belong to Phase 3. The design lives in [the blueprint](docs/architecture/0001-bearforge-blueprint.md).
 
 ## Build
 
@@ -50,13 +50,13 @@ Removal refuses tracked changes, untracked/ignored content, special index flags,
 - `doctor [WORKSPACE]` (read-only accumulated health/recovery checks)
 - `tui [WORKSPACE]` (interactive dashboard with sync, repository picker, and previewed workspace actions)
 - `operations list`, `show`, `resume`, `abandon`
-- `config validate`, `config migrate --to 2`, `completion`, `version`
+- `config validate`, `completion`, `version`
 
 `--output=json` emits one result; `--output=jsonl` emits progress and a final result. Bubble Tea provides inline progress for supported commands on interactive terminals. Use `--ui=plain` to disable it; pipes, CI, quiet mode and `--no-input` always remain plain. The dashboard uses Lip Gloss for pane borders, focus and health colors, with explicit text labels and a complete monochrome layout.
 
 Bulk exec runs direct argv after `--` in verified worktree directories and defaults to one worker. A single quoted expression without `--` selects the platform shell; explicit `--shell sh|pwsh|powershell|cmd` is available. JSON captures bounded base64 output; JSONL streams sequenced events. Interrupted commands are never replayed by recovery. See [execution and automation](docs/onboarding.md#run-a-command-across-a-workspace).
 
-New roots use catalog schema 2; compatible writes preserve existing v1 catalogs until explicit migration. Review `config migrate --to 2 --dry-run`, then use `--yes` to save an exact backup and upgrade. Retirement requires v2, no workspace references and no linked worktrees; it moves the entire bare database into local trash without deletion or automatic purge. Restore requires the original retirement operation. See [safe lifecycle workflows](docs/onboarding.md#diagnose-and-retire-safely).
+Catalogs use schema 2 exclusively; workspace documents use their independent schema 1. Other catalog versions are rejected without rewriting them. Retirement requires no workspace references and no linked worktrees; it moves the entire bare database into local trash without deletion or automatic purge. Restore requires the original retirement operation. See [safe lifecycle workflows](docs/onboarding.md#diagnose-and-retire-safely).
 
 ## Workspace dashboard
 

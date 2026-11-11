@@ -38,8 +38,6 @@ func (s *Service) Resume(ctx context.Context, id string) (Result, error) {
 		return s.applyRemove(ctx, op)
 	case "exec":
 		return r, domain.E("conflict", "bulk commands are never rerun on resume; inspect operation %s, abandon it, then run exec explicitly", op.ID)
-	case "config.migrate":
-		return s.applyMigration(ctx, op)
 	case "repo.retire", "repo.restore":
 		return s.applyRepositoryLifecycle(ctx, op)
 	default:

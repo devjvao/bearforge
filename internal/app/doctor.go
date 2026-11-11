@@ -57,15 +57,6 @@ func (s *Service) Doctor(ctx context.Context, workspace string) (Result, error) 
 		catalogErr = domain.E("not_found", "catalog is not initialized")
 	}
 	d.record("catalog.valid", "", "", "", catalogErr, "inspect config validate and the catalog definition")
-	if catalogErr == nil {
-		if reader, ok := s.Store.(catalogVersionReader); ok {
-			version, err := reader.CatalogVersion()
-			if err == nil && version != 2 {
-				err = domain.E("migration_required", "catalog schema %d predates retirement tracking", version)
-			}
-			d.record("catalog.schema", "", "", "", err, "review config migrate --to 2 --dry-run before explicit migration")
-		}
-	}
 	ops, journalErr := s.Journal.List()
 	d.record("journal.read", "", "", "", journalErr, "inspect malformed operation files without deleting their effects")
 	for _, op := range ops {

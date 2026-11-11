@@ -147,7 +147,7 @@ Canonicalize the existing parent, validate containment, and inspect symlinks/jun
 ### Catalog example
 
 ```yaml
-schema_version: 1
+schema_version: 2
 defaults:
   remote: origin
   jobs: 4
@@ -320,7 +320,7 @@ The CLI cannot change the parent shell's current directory. `workspace path` sup
 
 ### Administration
 
-Add `doctor [WORKSPACE]`, `operations list`, `operations show ID`, `operations resume ID`, `config validate`, `config migrate`, `version`, and `completion`. `doctor` is read-only by default; repair actions require an explicit plan and use Git's supported commands. Do not run automatic pruning on startup.
+Add `doctor [WORKSPACE]`, `operations list`, `operations show ID`, `operations resume ID`, `config validate`, `version`, and `completion`. `doctor` is read-only by default; repair actions require an explicit plan and use Git's supported commands. Do not run automatic pruning on startup.
 
 ### Interactive command entry points
 
@@ -534,7 +534,7 @@ bearforge/
       porcelain.go capability.go environment.go error.go
     config/
       yaml.go catalog.go workspace.go validation.go
-      atomic_unix.go atomic_windows.go migrate.go
+      atomic_unix.go atomic_windows.go
     operation/
       journal.go lock.go recovery.go
     process/
@@ -861,7 +861,9 @@ This validates those command assumptions on one Windows Git version. It is not e
 
 Version the CLI with SemVer, configuration with integer `schema_version`, and machine output independently. During 0.x, document breaking changes and migration steps; by 1.0, command and JSON compatibility become public contracts.
 
-Unknown newer configuration versions are refused for mutation. Do not silently drop unknown fields. `config migrate --dry-run` shows changes; `config migrate --yes` acquires the mutation lock, backs up old intent, runs sequential tested migrations, validates every result, and journals replacements. It never migrates Git storage formats or relocates worktrees implicitly. Retain original files until successful validation. Rollback of configuration is allowed only when it remains consistent with any filesystem effects.
+The current release accepts catalog schema 2 exclusively; workspace documents and operation journals have independent schema 1 formats. Catalog schema 1 support was dropped at the maintainer's request because it has no users. Reject other catalog versions without rewriting them; there is no current migration command. Do not silently drop unknown fields.
+
+When a future change needs migration from a published format, introduce explicit preview, approval, exact backups and journaled replacements under the mutation lock. Validate every result and retain original files until successful validation. Such a migration must not change Git storage formats or relocate worktrees implicitly. Rollback is allowed only when consistent with filesystem effects.
 
 Keep extensions explicit and namespaced under `extensions`; unknown extension data is preserved. Core behavior cannot depend on executing extension content. Read-only commands may expose raw unsupported intent with a warning but must not pretend it was validated.
 
@@ -884,7 +886,7 @@ Phases are acceptance gates, not optimistic calendar estimates for a solo mainta
 |---|---|---|
 | 0 — Git contract spike | Local fixtures; exact commands; support floor; ADR review | Bare refspec, upstream selection, branch conflicts, ignored files and Windows paths verified on all three OS families. |
 | 1 — Safe personal MVP | Root/catalog; repo add/list/inspect/sync; workspace init/create/add/show/list/path; status; journal/lock/recovery; safe removal; dry-run/JSON; Bubble Tea inline progress and confirmation adapter | Interrupted add/remove recover without deleting edits; two repositories and two workspaces work end to end; plain/JSON fallback and terminal cleanup pass native CI. |
-| 2 — Daily team use | Bulk exec; full-window Bubble Tea dashboard, repository selectors and workspace actions; doctor; retire/restore; config migration; completion and onboarding docs | Use with the maintainer's actual 50+ repositories; verify UI/CLI behavior parity; measure and fix concrete friction; release signed/checksummed artifacts. |
+| 2 — Daily team use | Bulk exec; full-window Bubble Tea dashboard, repository selectors and workspace actions; doctor; retire/restore; strict versioned config; completion and onboarding docs | Use with the maintainer's actual 50+ repositories; verify UI/CLI behavior parity; measure and fix concrete friction; release signed/checksummed artifacts. |
 | 3 — Provider support | Read-only PR lookup; first implement the provider actually used at work, then the other adapters | Enterprise-host and fork tests; pagination/rate limits; no credential leakage; useful partial failure output. |
 | 4 — Stable 1.0 | Compatibility policy, recovery guide, supported Git/OS matrix, migration guarantees, contributor guide, security reporting | Stable command/JSON contracts; recovery drills; repeatable releases; team adoption feedback incorporated. |
 | Later — Evidence-driven extensions | Groups, pinned releases, inheritance, optional sparse checkout and intent sync | Separate ADR for each behavior that changes lifecycle or data-loss risk. |

@@ -2,13 +2,13 @@
 
 ## Scope
 
-Implement bulk exec, doctor, safe repo retire/restore, explicit catalog migration, onboarding and signed release automation against ADR-0001. Continue on the existing feature branch. User explicitly waived company private-repository validation; use disposable scale fixtures and leave company testing to the maintainer after merge.
+Implement bulk exec, doctor, safe repo retire/restore, strict catalog validation, onboarding and signed release automation against ADR-0001. Continue on the existing feature branch. User explicitly waived company private-repository validation; use disposable scale fixtures and leave company testing to the maintainer after merge. The later schema-support update below supersedes the historical migration implementation recorded here.
 
 ## Decisions
 
 - CLI/service features first; retain the completed dashboard behavior.
 - Exec defaults to one worker, direct argv after --, explicit shell adapters and bounded output; arbitrary commands are never replayed on resume.
-- Catalog v2 adds retired identities and needs an explicit backed-up migration from v1. Workspace schema stays v1.
+- Catalog v2 adds retired identities and is the sole supported catalog format. Workspace schema stays v1. The maintainer removed the requirement for v1 compatibility and migration because the old format has no users.
 - Signed release automation uses GitHub OIDC; implementation and local artifact validation do not imply a release has been published.
 
 ## Progress and evidence
@@ -53,3 +53,11 @@ Implement bulk exec, doctor, safe repo retire/restore, explicit catalog migratio
 - `454f35d feat(cli): add bulk execution and repository maintenance` contains the services, CLI and focused/scale regressions.
 - `3cfb574 feat(release): build and sign reproducible release artifacts` contains the release builder, CI/signing workflow and onboarding/verification guides.
 - A separate documentation commit records the final usage and validation evidence. No remote integration was requested or performed.
+
+## Schema support update
+
+- At the maintainer's request, removed unused catalog schema 1 compatibility and the v1-to-v2 migration path. Catalog reads and saves now require schema 2; unsupported documents are refused without rewriting their bytes.
+- Removed the migration service, storage transformation/backups, command, approval branch, journal field/resume case and migration-only tests. Doctor reports the unsupported schema through catalog validation and no longer recommends migration. Lifecycle operations rely on the same strict catalog loader.
+- Workspace documents, operation journals and machine output retain their independent version 1 formats. No existing roots or Git data were modified.
+- Added regressions for unsupported catalog reads/writes, read-only CLI validation/doctor, absent migration command and schema-2 retired-identity/comment/extension preservation. Observed the expected failures before implementation and passing focused checks afterward.
+- The complete Windows test suite, vet and native build passed after the removal. Full native Linux Go 1.27.4 race tests, Staticcheck, new-code golangci-lint, module tidy diff, imports and whitespace checks passed. All six release targets cross-built successfully as local snapshots. Previous scale and terminal evidence above describes the earlier implementation; these checks validate the schema-only follow-up.

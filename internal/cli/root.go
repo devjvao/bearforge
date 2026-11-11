@@ -65,7 +65,7 @@ func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		switch de.Code {
 		case "invalid":
 			return 2
-		case "conflict", "unsafe_path", "unsafe_removal", "confirmation", "unhealthy", "migration_required":
+		case "conflict", "unsafe_path", "unsafe_removal", "confirmation", "unhealthy":
 			return 3
 		case "unavailable":
 			return 4
@@ -299,11 +299,7 @@ func (o *options) confirm(ctx context.Context, plan app.Result) error {
 		if name == "" {
 			name = item.Check
 		}
-		if migration, ok := plan.Data.(domain.CatalogMigration); ok {
-			if _, err := fmt.Fprintf(o.errOut, "Migrate catalog schema %d -> %d at %s (exact source bytes will be backed up)\n", migration.From, migration.To, item.Path); err != nil {
-				return err
-			}
-		} else if move, ok := plan.Data.(app.RepositoryPlan); ok {
+		if move, ok := plan.Data.(app.RepositoryPlan); ok {
 			if _, err := fmt.Fprintf(o.errOut, "Move %s intact from %s to %s; local history is preserved and trash is never purged automatically\n", name, move.Source, move.Destination); err != nil {
 				return err
 			}

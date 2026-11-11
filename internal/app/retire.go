@@ -35,7 +35,6 @@ type RepositoryPlan struct {
 type directoryMover interface {
 	MoveDirectory([]string, []string) error
 }
-type catalogVersionReader interface{ CatalogVersion() (int, error) }
 
 func (s *Service) RetireRepository(ctx context.Context, req RetireRequest) (Result, error) {
 	return s.repositoryLifecycle(ctx, "repo.retire", req.Repository, "", req.PlanOperation, req.ExpectedPlan, req.DryRun)
@@ -52,21 +51,6 @@ func cloneRepository(repo domain.Repository) domain.Repository {
 
 func sameRepository(a, b domain.Repository) bool {
 	return a.ID == b.ID && a.Base == b.Base && maps.Equal(a.Remotes, b.Remotes) && maps.Equal(a.Provider, b.Provider)
-}
-
-func (s *Service) requireCatalogV2() error {
-	reader, ok := s.Store.(catalogVersionReader)
-	if !ok {
-		return domain.E("unavailable", "catalog lifecycle version checks are unavailable")
-	}
-	version, err := reader.CatalogVersion()
-	if err != nil {
-		return err
-	}
-	if version != 2 {
-		return domain.E("migration_required", "run config migrate --to 2 before repository retirement or restoration")
-	}
-	return nil
 }
 
 func (s *Service) unreferencedRepository(id string) ([]string, error) {
@@ -136,9 +120,6 @@ func (s *Service) repositoryLifecycle(ctx context.Context, kind, id, retirement,
 	}
 	if _, ok := s.Store.(directoryMover); !ok {
 		return r, domain.E("unavailable", "opaque repository moves are unavailable")
-	}
-	if err := s.requireCatalogV2(); err != nil {
-		return r, err
 	}
 	c, revision, err := s.Store.LoadCatalog()
 	if err != nil {

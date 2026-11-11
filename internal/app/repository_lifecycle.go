@@ -43,9 +43,6 @@ func (s *Service) applyRepositoryLifecycle(ctx context.Context, op *Operation) (
 	if err := domain.ValidateID(op.Retirement); err != nil {
 		return finish(err)
 	}
-	if err := s.requireCatalogV2(); err != nil {
-		return finish(err)
-	}
 	if _, err := s.unreferencedRepository(repo.ID); err != nil {
 		return finish(err)
 	}
