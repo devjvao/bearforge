@@ -32,3 +32,10 @@ Baseline: `go test ./...` passed on Windows before implementation.
 - Independent whole-change review completed; all three Important findings were reproduced in tests and fixed. No deferred findings.
 - Publication requested: commit and push feat/read-only-dashboard, open a PR to main, and follow CI through any required fixes. CI results will be recorded in the PR evidence.
 - Before/after PR evidence: `TestListRetainsReadableOperationsAlongsideCorruptJournals` fails against an isolated archive of main (3da998c) with only the new test copied in, then passes against the dashboard branch. Fresh tests, vet, build, module consistency and Staticcheck pass before publication; module consistency required normalizing go.sum line endings, with no dependency/checksum changes.
+
+## PR review remediation
+
+- Review comment 4533886113 reproduced inaccessible detail suffixes at 36x12: clipping hid conflict counts, full operation IDs, HEAD suffixes and long diagnostics even after paging.
+- Detail and notice content now wraps by grapheme display width before rendering and scroll-range calculations. Both paths consume the same wrapped rows; list/header clipping is unchanged.
+- `TestDashboardNarrowTerminalCanReachFullDetailValues` fails against reviewed commit 24f7121 in an isolated archive with only the new test copied in, and passes with the fix. The test reconstructs the detail rows actually displayed across pages and checks full health values, inspection commands, HEAD values and diagnostic suffixes.
+- Full tests, vet, build, formatting, Staticcheck and diff checks pass locally after remediation. The fix will be pushed to the existing PR and CI followed again.

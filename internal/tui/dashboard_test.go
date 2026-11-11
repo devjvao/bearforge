@@ -246,6 +246,50 @@ func TestDashboardSmallTerminalCanReachEveryDetailLine(t *testing.T) {
 	}
 }
 
+func TestDashboardNarrowTerminalCanReachFullDetailValues(t *testing.T) {
+	m := loadedDashboard(t)
+	m.width, m.height, m.focus = 36, 12, 1
+	m.data.Items[0].Status.Conflicts = 7
+	m.data.Items[0].Status.Head = "0123456789abcdef0123456789abcdefdeadbeef"
+	m.data.PendingOperations = []app.OperationSummary{{
+		ID: "abcdef0123456789abcdef0123456789", Kind: "workspace.add", State: "partial",
+	}}
+	m.data.Problems = []app.Problem{{Message: "long journal diagnostic with an otherwise hidden diagnostictail"}}
+	var seen strings.Builder
+	for range 100 {
+		view := m.View().Content
+		lines := strings.Split(view, "\n")
+		detailStart := 0
+		for i, line := range lines {
+			if ansi.StringWidth(line) > 36 {
+				t.Fatalf("wrapped detail exceeds terminal width: %q", line)
+			}
+			if line == strings.Repeat("-", 36) {
+				detailStart = i + 1
+			}
+		}
+		// Reassemble only the visible detail rows across pages. A long OID may
+		// legitimately split within a word, including within its final suffix.
+		seen.WriteString(strings.Join(lines[detailStart:len(lines)-2], ""))
+		previousOffset := m.detailOffset
+		m, _ = dashboardKey(m, tea.KeyPgDown, "")
+		if m.detailOffset == previousOffset {
+			break
+		}
+	}
+	content := strings.ReplaceAll(seen.String(), " ", "")
+	for _, want := range []string{
+		"Conflicts:7",
+		"Inspect:bearforgeoperationsshowabcdef0123456789abcdef0123456789",
+		"diagnostictail",
+		"HEAD:0123456789abcdef0123456789abcdefdeadbeef",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("detail value remains unreachable after scrolling: %q", want)
+		}
+	}
+}
+
 func TestDashboardSmallTerminalRetainsDetailsAndControlsWithNotices(t *testing.T) {
 	m := loadedDashboard(t)
 	m.width, m.height, m.focus = 36, 12, 1

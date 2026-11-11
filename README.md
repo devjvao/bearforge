@@ -68,7 +68,7 @@ The full-window dashboard lists workspaces and inspects only the selected worksp
 - Page Up/Down scroll repository details and operation notices.
 - `q` exits successfully; Ctrl-C cancels. Both cancel and drain active reads.
 
-At widths below 90 columns, the active list appears above the details; Tab switches lists. The minimum usable terminal is 36 columns by 12 rows. The alternate screen is restored on exit. Empty roots/workspaces have explicit empty states and browsing creates no directories, locks or journals. Observations are snapshots; external Git/editor activity may change state during inspection.
+At widths below 90 columns, the active list appears above the details; Tab switches lists. Detail and operation-notice text wraps to the terminal width, so Page Up/Down can reveal full values and inspection commands. The minimum usable terminal is 36 columns by 12 rows. The alternate screen is restored on exit. Empty roots/workspaces have explicit empty states and browsing creates no directories, locks or journals. Observations are snapshots; external Git/editor activity may change state during inspection.
 
 `tui` requires terminal stdin/stdout/stderr, `--ui=auto`, human output and interactive input. It refuses JSON/JSONL, quiet/no-input/dry-run, CI and `TERM=dumb`; use `status WORKSPACE --json` for automation. `--root` and `BEARFORGE_ROOT` work as for other commands. Starting without a workspace selects the first workspace alphabetically.
 

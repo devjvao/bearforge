@@ -196,6 +196,13 @@ func branchLabel(item app.Item) string {
 }
 
 func (m dashboardModel) detailLines() []string {
+	// Rendering and scrolling share the wrapped rows so no suffix is discarded
+	// before the viewport has a chance to display it.
+	text := strings.Join(m.detailContent(), "\n")
+	return strings.Split(ansi.Wrap(text, max(1, m.width), ""), "\n")
+}
+
+func (m dashboardModel) detailContent() []string {
 	rows := m.repositoryRows()
 	if len(rows) == 0 {
 		if m.loading {
