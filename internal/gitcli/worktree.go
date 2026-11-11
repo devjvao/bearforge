@@ -154,6 +154,9 @@ func (c *Client) CheckRemoval(ctx context.Context, bare, path string) error {
 	if !found {
 		return domain.E("conflict", "worktree is not registered")
 	}
+	if err := c.checkOperationState(ctx, path); err != nil {
+		return err
+	}
 	status, err := c.Inspect(ctx, path)
 	if err != nil {
 		return err
@@ -194,6 +197,29 @@ func (c *Client) CheckRemoval(ctx context.Context, bare, path string) error {
 	for _, entry := range strings.Split(string(b), "\x00") {
 		if strings.HasPrefix(entry, "160000 ") {
 			return domain.E("unsafe_removal", "submodules require manual handling")
+		}
+	}
+	return nil
+}
+
+func (c *Client) checkOperationState(ctx context.Context, path string) error {
+	// Clean porcelain status does not expose paused operations or autostashes.
+	for _, state := range []string{
+		"rebase-merge", "rebase-apply", "sequencer",
+		"MERGE_HEAD", "MERGE_AUTOSTASH", "CHERRY_PICK_HEAD", "REVERT_HEAD",
+	} {
+		b, err := c.Run(ctx, path, "rev-parse", "--path-format=absolute", "--git-path", state)
+		if err != nil {
+			return err
+		}
+		statePath := strings.TrimSpace(string(b))
+		if !filepath.IsAbs(statePath) {
+			return domain.E("git_failed", "Git did not resolve an absolute path for %s", state)
+		}
+		if _, err := os.Lstat(statePath); err == nil {
+			return domain.E("unsafe_removal", "unfinished Git operation (%s); finish or abort it before removal", state)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect Git operation state %s: %w", state, err)
 		}
 	}
 	return nil

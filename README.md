@@ -37,7 +37,7 @@ bearforge workspace remove-repo audit-feature report-api --dry-run
 bearforge workspace remove-repo audit-feature report-api --yes
 ```
 
-Removal refuses tracked changes, untracked/ignored content, special index flags, sparse checkouts, locked worktrees and submodules. It never recursively deletes a checkout as a fallback. Branches and otherwise-unreferenced surviving HEAD reflog tips are preserved through Git recovery branches. There is no force/discard option.
+Removal refuses tracked changes, untracked/ignored content, special index flags, sparse checkouts, locked worktrees, unfinished rebase/merge/cherry-pick/revert operations and submodules. It never recursively deletes a checkout as a fallback. Branches and otherwise-unreferenced surviving HEAD reflog tips are preserved through Git recovery branches. There is no force/discard option.
 
 ## Commands
 
