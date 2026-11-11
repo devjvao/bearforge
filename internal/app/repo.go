@@ -30,6 +30,11 @@ func (s *Service) AddRepository(ctx context.Context, id, remote string, dry bool
 	if err != nil {
 		return r, err
 	}
+	for retiredID, retired := range c.Retired {
+		if retiredID == id || strings.TrimSuffix(retired.Repository.Remotes["origin"], ".git") == strings.TrimSuffix(remote, ".git") {
+			return r, domain.E("conflict", "repository identity is retired as %s; use repo restore %s --operation %s", retiredID, retiredID, retired.Operation)
+		}
+	}
 	if repo, ok := c.Repositories[id]; ok {
 		if repo.Remotes["origin"] != remote {
 			return r, domain.E("conflict", "repository %s already has a different origin", id)

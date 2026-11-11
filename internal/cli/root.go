@@ -21,6 +21,7 @@ import (
 	"bearforge/internal/domain"
 	"bearforge/internal/gitcli"
 	"bearforge/internal/operation"
+	"bearforge/internal/process"
 	"bearforge/internal/tui"
 )
 
@@ -31,6 +32,8 @@ type options struct {
 	in                                      io.Reader
 	out, errOut                             io.Writer
 	rendered                                bool
+	sequence                                uint64
+	activeRoot                              string
 }
 
 func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) int {
@@ -62,7 +65,7 @@ func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		switch de.Code {
 		case "invalid":
 			return 2
-		case "conflict", "unsafe_path", "unsafe_removal", "confirmation", "unhealthy":
+		case "conflict", "unsafe_path", "unsafe_removal", "confirmation", "unhealthy", "migration_required":
 			return 3
 		case "unavailable":
 			return 4
@@ -88,7 +91,7 @@ func newRoot(o *options) *cobra.Command {
 	f.BoolVar(&o.noInput, "no-input", false, "Never prompt")
 	f.BoolVar(&o.dry, "dry-run", false, "Preview without writing")
 	f.BoolVar(&o.yes, "yes", false, "Confirm the displayed operation")
-	f.IntVarP(&o.jobs, "jobs", "j", 0, "Concurrent fetches (default 4)")
+	f.IntVarP(&o.jobs, "jobs", "j", 0, "Concurrent workers (fetch default 4, exec default 1)")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		if o.json {
 			o.output = "json"
@@ -110,7 +113,7 @@ func newRoot(o *options) *cobra.Command {
 		}
 		return nil
 	}
-	root.AddCommand(&cobra.Command{Use: "version", Short: "Print version", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { fmt.Fprintln(o.out, "bearforge 0.1.0-dev"); return nil }})
+	addVersionCommand(root, o)
 	addCommands(root, o)
 	return root
 }
@@ -164,7 +167,10 @@ func (o *options) perform(ctx context.Context, needsGit, progress bool, work fun
 		}
 	}
 	service := app.New(store, git, operation.New(store))
+	o.activeRoot = store.RootPath()
+	service.Executor = process.Runner{Input: o.in, Output: o.out, Error: o.errOut}
 	var result app.Result
+	var observerErr error
 	if progress && !o.dry && o.ui != "plain" && o.interactive() {
 		result, err = tui.Run(ctx, o.in, o.errOut, func(ctx context.Context, observe func(app.Event)) (app.Result, error) {
 			service.Observe = observe
@@ -176,13 +182,32 @@ func (o *options) perform(ctx context.Context, needsGit, progress bool, work fun
 			mu.Lock()
 			defer mu.Unlock()
 			if o.output == "jsonl" {
-				_ = json.NewEncoder(o.out).Encode(map[string]any{"schema_version": 1, "type": "progress", "event": e})
+				o.sequence++
+				kind := "progress"
+				if e.Output != nil {
+					kind = "output"
+				} else if e.State == "started" || e.State == "completed" {
+					kind = e.State
+				}
+				observerErr = errors.Join(observerErr, json.NewEncoder(o.out).Encode(map[string]any{"schema_version": 1, "sequence": o.sequence, "type": kind, "event": e}))
+			} else if o.output == "human" && e.Output != nil {
+				writer := o.out
+				if e.Output.Stream == "stderr" {
+					writer = o.errOut
+				}
+				_, writeErr := fmt.Fprintf(writer, "[%s] %s", e.Repository, e.Output.Data)
+				observerErr = errors.Join(observerErr, writeErr)
+				if len(e.Output.Data) > 0 && e.Output.Data[len(e.Output.Data)-1] != '\n' {
+					_, writeErr = fmt.Fprintln(writer)
+					observerErr = errors.Join(observerErr, writeErr)
+				}
 			} else if o.output == "human" && !o.quiet {
 				fmt.Fprintf(o.errOut, "%s: %s\n", e.Repository, e.State)
 			}
 		}
 		result, err = work(ctx, service)
 	}
+	err = errors.Join(err, observerErr)
 	if err != nil {
 		if result.Outcome == "success" {
 			result.Outcome = "failed"
@@ -193,7 +218,15 @@ func (o *options) perform(ctx context.Context, needsGit, progress bool, work fun
 	return errors.Join(err, o.render(result))
 }
 func (o *options) render(r app.Result) error {
-	if o.output == "json" || o.output == "jsonl" {
+	if o.output == "jsonl" {
+		o.sequence++
+		return json.NewEncoder(o.out).Encode(struct {
+			app.Result
+			Type     string `json:"type"`
+			Sequence uint64 `json:"sequence"`
+		}{r, "result", o.sequence})
+	}
+	if o.output == "json" {
 		return json.NewEncoder(o.out).Encode(r)
 	}
 	for _, item := range r.Items {
@@ -201,12 +234,29 @@ func (o *options) render(r app.Result) error {
 		if name == "" {
 			name = item.Workspace
 		}
+		if item.Check != "" {
+			if name == "" {
+				name = item.Check
+			} else {
+				name += " / " + item.Check
+			}
+		}
 		fmt.Fprintf(o.out, "%s\t%s", name, item.Outcome)
 		if item.Branch != "" {
 			fmt.Fprintf(o.out, "\t%s", item.Branch)
 		}
 		if item.Path != "" {
 			fmt.Fprintf(o.out, "\t%s", item.Path)
+		}
+		if item.Execution != nil {
+			if _, err := fmt.Fprintf(o.out, "\texit=%d\tduration=%s", item.Execution.ExitCode, item.Execution.Duration); err != nil {
+				return err
+			}
+			if item.Execution.StdoutTruncated || item.Execution.StderrTruncated {
+				if _, err := fmt.Fprint(o.out, "\tcaptured output truncated"); err != nil {
+					return err
+				}
+			}
 		}
 		fmt.Fprintln(o.out)
 		if item.Problem != nil {
@@ -224,7 +274,13 @@ func (o *options) render(r app.Result) error {
 		fmt.Fprintln(o.errOut, "Error:", r.Problem.Message)
 	}
 	if r.OperationID != "" && (r.Outcome == "partial") {
-		fmt.Fprintln(o.errOut, "Resume with: bearforge operations resume", r.OperationID)
+		if r.Command == "exec" {
+			_, err := fmt.Fprintln(o.errOut, "Inspect execution with:", o.recoveryCommand("show", r.OperationID), "(commands are never replayed)")
+			return err
+		}
+		if _, err := fmt.Fprintln(o.errOut, "Resume with:", o.recoveryCommand("resume", r.OperationID)); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -236,7 +292,26 @@ func (o *options) confirm(ctx context.Context, plan app.Result) error {
 		return domain.E("confirmation", "confirmation required; review --dry-run then use --yes")
 	}
 	for _, item := range plan.Items {
-		fmt.Fprintf(o.errOut, "Remove %s (%s)\n", item.Repository, item.Path)
+		name := item.Repository
+		if name == "" {
+			name = item.Workspace
+		}
+		if name == "" {
+			name = item.Check
+		}
+		if migration, ok := plan.Data.(domain.CatalogMigration); ok {
+			if _, err := fmt.Fprintf(o.errOut, "Migrate catalog schema %d -> %d at %s (exact source bytes will be backed up)\n", migration.From, migration.To, item.Path); err != nil {
+				return err
+			}
+		} else if move, ok := plan.Data.(app.RepositoryPlan); ok {
+			if _, err := fmt.Fprintf(o.errOut, "Move %s intact from %s to %s; local history is preserved and trash is never purged automatically\n", name, move.Source, move.Destination); err != nil {
+				return err
+			}
+		} else {
+			if _, err := fmt.Fprintf(o.errOut, "Apply %s to %s (%s)\n", plan.Command, name, item.Path); err != nil {
+				return err
+			}
+		}
 	}
 	fmt.Fprint(o.errOut, "Proceed? [y/N] ")
 	line, err := readConfirmation(ctx, o.in)

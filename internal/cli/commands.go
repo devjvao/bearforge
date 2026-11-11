@@ -12,10 +12,13 @@ import (
 
 func addCommands(root *cobra.Command, o *options) {
 	addDashboardCommand(root, o)
+	addExecCommand(root, o)
+	addDoctorCommand(root, o)
 	repo := &cobra.Command{Use: "repo", Short: "Manage bare repositories"}
 	workspace := &cobra.Command{Use: "workspace", Short: "Manage workspaces"}
 	ops := &cobra.Command{Use: "operations", Short: "Inspect and recover interrupted operations"}
 	root.AddCommand(repo, workspace, ops)
+	addRepositoryLifecycleCommands(repo, o)
 	command := func(parent *cobra.Command, use, short string, args cobra.PositionalArgs, git, progress bool, fn func(context.Context, *app.Service, []string) (app.Result, error)) *cobra.Command {
 		c := &cobra.Command{Use: use, Short: short, Args: args, RunE: func(cmd *cobra.Command, args []string) error {
 			return o.perform(cmd.Context(), git, progress, func(ctx context.Context, s *app.Service) (app.Result, error) { return fn(ctx, s, args) })
@@ -178,6 +181,20 @@ func addCommands(root *cobra.Command, o *options) {
 	})
 	cfg := &cobra.Command{Use: "config", Short: "Validate configuration"}
 	root.AddCommand(cfg)
+	var migrationTarget int
+	migrate := command(cfg, "migrate", "Preview and explicitly migrate the catalog with an exact backup", cobra.NoArgs, false, false, func(ctx context.Context, s *app.Service, _ []string) (app.Result, error) {
+		req := app.MigrateRequest{To: migrationTarget, DryRun: true}
+		plan, err := s.Migrate(ctx, req)
+		if err != nil || o.dry || plan.Outcome == "unchanged" {
+			return plan, err
+		}
+		if err := o.confirm(ctx, plan); err != nil {
+			return plan, err
+		}
+		req.DryRun, req.ExpectedPlan = false, plan.PlanDigest
+		return s.Migrate(ctx, req)
+	})
+	migrate.Flags().IntVar(&migrationTarget, "to", 2, "Target catalog schema (2)")
 	command(cfg, "validate", "Validate catalog and workspace definitions", cobra.NoArgs, false, false, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
 		r := app.NewResult("config.validate")
 		catalog, _, err := s.Store.LoadCatalog()

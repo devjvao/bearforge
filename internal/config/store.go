@@ -68,10 +68,17 @@ type repoDTO struct {
 	Provider map[string]string `yaml:"provider,omitempty"`
 }
 type catalogDTO struct {
-	Version      int                `yaml:"schema_version"`
-	Defaults     defaultsDTO        `yaml:"defaults"`
-	Repositories map[string]repoDTO `yaml:"repositories"`
-	Extensions   map[string]any     `yaml:"extensions,omitempty"`
+	Version      int                   `yaml:"schema_version"`
+	Defaults     defaultsDTO           `yaml:"defaults"`
+	Repositories map[string]repoDTO    `yaml:"repositories"`
+	Retired      map[string]retiredDTO `yaml:"retired,omitempty"`
+	Extensions   map[string]any        `yaml:"extensions,omitempty"`
+}
+
+type retiredDTO struct {
+	Repository  repoDTO `yaml:"repository"`
+	Operation   string  `yaml:"operation"`
+	Fingerprint string  `yaml:"fingerprint"`
 }
 type mappingDTO struct {
 	Branch   string `yaml:"branch"`
@@ -195,7 +202,7 @@ func validateNode(n *yaml.Node, depth int) error {
 }
 
 func (s *Store) LoadCatalog() (domain.Catalog, string, error) {
-	c := domain.Catalog{Repositories: map[string]domain.Repository{}, Remote: "origin", Jobs: 4}
+	c := domain.Catalog{Repositories: map[string]domain.Repository{}, Retired: map[string]domain.RetiredRepository{}, Remote: "origin", Jobs: 4}
 	p, err := s.SafePath(".bearforge", "catalog.yaml")
 	if err != nil {
 		return c, "", err
@@ -208,8 +215,11 @@ func (s *Store) LoadCatalog() (domain.Catalog, string, error) {
 	if err := decode(b, &dto); err != nil {
 		return c, rev, err
 	}
-	if dto.Version != 1 {
+	if dto.Version != 1 && dto.Version != 2 {
 		return c, rev, domain.E("invalid", "unsupported catalog schema %d", dto.Version)
+	}
+	if dto.Version == 1 && dto.Retired != nil {
+		return c, rev, domain.E("invalid", "retired identities require catalog schema 2")
 	}
 	if dto.Defaults.Remote != "" {
 		c.Remote = dto.Defaults.Remote
@@ -224,31 +234,69 @@ func (s *Store) LoadCatalog() (domain.Catalog, string, error) {
 		return c, rev, domain.E("invalid", "jobs must be between 1 and 64")
 	}
 	for id, r := range dto.Repositories {
-		if err := domain.ValidateID(id); err != nil {
+		repository, err := decodeRepository(id, r)
+		if err != nil {
 			return c, rev, err
 		}
-		if len(r.Remotes) == 0 {
-			return c, rev, domain.E("invalid", "repository %s has no remotes", id)
+		c.Repositories[id] = repository
+	}
+	for id, r := range dto.Retired {
+		if _, ok := c.Repositories[id]; ok {
+			return c, rev, domain.E("invalid", "repository %s is both active and retired", id)
 		}
-		for name, u := range r.Remotes {
-			if err := domain.ValidateRemoteName(name); err != nil {
-				return c, rev, err
-			}
-			if err := domain.ValidateURL(u); err != nil {
-				return c, rev, err
-			}
+		repository, err := decodeRepository(id, r.Repository)
+		if err != nil {
+			return c, rev, err
 		}
-		c.Repositories[id] = domain.Repository{ID: id, Remotes: r.Remotes, Base: r.Base, Provider: r.Provider}
+		if err := domain.ValidateID(r.Operation); err != nil {
+			return c, rev, err
+		}
+		if !validRevision(r.Fingerprint) {
+			return c, rev, domain.E("invalid", "invalid retired repository fingerprint")
+		}
+		c.Retired[id] = domain.RetiredRepository{Repository: repository, Operation: r.Operation, Fingerprint: r.Fingerprint}
 	}
 	return c, rev, nil
 }
 
 func (s *Store) SaveCatalog(c domain.Catalog, rev string) error {
-	d := catalogDTO{Version: 1, Defaults: defaultsDTO{Remote: c.Remote, Jobs: c.Jobs}, Repositories: map[string]repoDTO{}}
+	version := 2
+	if rev != "" {
+		var err error
+		version, err = s.CatalogVersion()
+		if err != nil {
+			return err
+		}
+	}
+	if version == 1 && len(c.Retired) > 0 {
+		return domain.E("migration_required", "run config migrate --to 2 before storing retired identities")
+	}
+	d := catalogDTO{Version: version, Defaults: defaultsDTO{Remote: c.Remote, Jobs: c.Jobs}, Repositories: map[string]repoDTO{}, Retired: map[string]retiredDTO{}}
 	for id, r := range c.Repositories {
 		d.Repositories[id] = repoDTO{Remotes: r.Remotes, Base: r.Base, Provider: r.Provider}
 	}
+	for id, r := range c.Retired {
+		d.Retired[id] = retiredDTO{Repository: repoDTO{Remotes: r.Repository.Remotes, Base: r.Repository.Base, Provider: r.Repository.Provider}, Operation: r.Operation, Fingerprint: r.Fingerprint}
+	}
 	return s.save([]string{".bearforge", "catalog.yaml"}, d, rev)
+}
+
+func decodeRepository(id string, r repoDTO) (domain.Repository, error) {
+	if err := domain.ValidateID(id); err != nil {
+		return domain.Repository{}, err
+	}
+	if len(r.Remotes) == 0 {
+		return domain.Repository{}, domain.E("invalid", "repository %s has no remotes", id)
+	}
+	for name, u := range r.Remotes {
+		if err := domain.ValidateRemoteName(name); err != nil {
+			return domain.Repository{}, err
+		}
+		if err := domain.ValidateURL(u); err != nil {
+			return domain.Repository{}, err
+		}
+	}
+	return domain.Repository{ID: id, Remotes: r.Remotes, Base: r.Base, Provider: r.Provider}, nil
 }
 
 func (s *Store) LoadWorkspace(name string) (domain.Workspace, string, error) {

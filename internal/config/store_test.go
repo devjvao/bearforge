@@ -21,7 +21,7 @@ func fixtureRoot(t *testing.T) string {
 
 func TestStrictYAML(t *testing.T) {
 	for _, input := range []string{
-		"schema_version: 2\nrepositories: {}\n",
+		"schema_version: 3\nrepositories: {}\n",
 		"schema_version: 1\nunknown: true\n",
 		"schema_version: 1\nschema_version: 1\n",
 		"schema_version: 1\nrepositories: &x {}\nextensions: *x\n",

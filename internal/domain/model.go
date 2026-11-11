@@ -3,6 +3,12 @@ package domain
 
 import "fmt"
 
+type DirectoryEntry struct {
+	Name      string
+	Directory bool
+	Link      bool
+}
+
 type Repository struct {
 	ID       string
 	Remotes  map[string]string
@@ -12,8 +18,15 @@ type Repository struct {
 
 type Catalog struct {
 	Repositories map[string]Repository
+	Retired      map[string]RetiredRepository
 	Remote       string
 	Jobs         int
+}
+
+type RetiredRepository struct {
+	Repository  Repository
+	Operation   string
+	Fingerprint string
 }
 
 type Mapping struct {
