@@ -2,6 +2,7 @@ package operation
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -9,7 +10,11 @@ import (
 )
 
 func TestRootLockExcludesOtherWriters(t *testing.T) {
-	files := config.New(t.TempDir())
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := config.New(root)
 	first, second := New(files), New(files)
 	release, err := first.Lock(context.Background())
 	if err != nil {

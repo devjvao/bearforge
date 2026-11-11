@@ -9,6 +9,16 @@ import (
 	"bearforge/internal/domain"
 )
 
+func fixtureRoot(t *testing.T) string {
+	t.Helper()
+	// macOS temporary paths may include the system /var symlink.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
 func TestStrictYAML(t *testing.T) {
 	for _, input := range []string{
 		"schema_version: 2\nrepositories: {}\n",
@@ -18,7 +28,7 @@ func TestStrictYAML(t *testing.T) {
 		"schema_version: 1\n---\nschema_version: 1\n",
 	} {
 		t.Run(input, func(t *testing.T) {
-			s := New(t.TempDir())
+			s := New(fixtureRoot(t))
 			if err := os.MkdirAll(filepath.Dir(s.CatalogPath()), 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -33,7 +43,7 @@ func TestStrictYAML(t *testing.T) {
 }
 
 func TestSaveRevisionAndComments(t *testing.T) {
-	s := New(t.TempDir())
+	s := New(fixtureRoot(t))
 	c, rev, err := s.LoadCatalog()
 	if err != nil {
 		t.Fatal(err)
@@ -70,11 +80,14 @@ func TestSaveRevisionAndComments(t *testing.T) {
 }
 
 func TestUnsafePath(t *testing.T) {
-	s := New(t.TempDir())
+	s := New(fixtureRoot(t))
+	if _, err := s.SafePath(); err != nil {
+		t.Fatal("invalid fixture root:", err)
+	}
 	if _, err := s.SafePath("..", "escape"); err == nil {
 		t.Fatal("accepted traversal")
 	}
-	outside := t.TempDir()
+	outside := fixtureRoot(t)
 	if err := os.Symlink(outside, filepath.Join(s.Root, "link")); err != nil {
 		t.Skip("symlink privilege unavailable")
 	}

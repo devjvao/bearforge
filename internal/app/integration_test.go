@@ -15,7 +15,11 @@ import (
 
 func fixture(t *testing.T) (*app.Service, *config.Store, string) {
 	t.Helper()
-	base := t.TempDir()
+	// macOS temporary paths may include the system /var symlink.
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	remote := filepath.Join(base, "remote")
 	for _, args := range [][]string{{"init", "-b", "main", remote}, {"-C", remote, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "initial"}} {
 		cmd := exec.Command("git", args...)
