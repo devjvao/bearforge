@@ -2,7 +2,7 @@
 
 Manage a single bare Git repository per project and materialize ordinary Git worktrees inside named workspaces.
 
-**Status: local core plus Phase 2 dashboard workspace actions.** The CLI is usable for evaluating local workflows. The dashboard browses workspace health, fetches on request, creates empty workspaces, adds selected registered repositories, and safely removes repository worktrees or whole workspaces through preview and confirmation. Phase 2 still includes bulk execution, doctor, repository retire/restore, config migration, onboarding/release work, and validation with the maintainer's actual 50+ repositories. Completion generation already exists. PR integrations belong to Phase 3. The approved design lives in [the blueprint](docs/architecture/0001-bearforge-blueprint.md).
+**Status: Phase 2 daily-use implementation.** The CLI supports bulk execution, read-only doctor checks, recoverable repository retirement/restoration and explicit catalog migration alongside the interactive workspace dashboard. [Onboarding](docs/onboarding.md) covers setup and daily workflows; [release verification](docs/releases.md) covers deterministic artifacts, checksums and CI signing. Company private-repository validation is deferred to the maintainer after merge; disposable scale tests cover 60 repositories. Signed publication requires a reviewed, merged version tag. PR integrations belong to Phase 3. The design lives in [the blueprint](docs/architecture/0001-bearforge-blueprint.md).
 
 ## Build
 
@@ -43,14 +43,20 @@ Removal refuses tracked changes, untracked/ignored content, special index flags,
 
 ## Commands
 
-- `repo add`, `repo list`, `repo inspect`, `repo sync`
+- `repo add`, `list`, `inspect`, `sync`, `remove` / `retire`, `retired`, `restore --operation ID`
 - `workspace create` / `init`, `add`, `list`, `show` / `ls`, `path`, `remove-repo`, `remove`
 - `sync`, `status` (`--check` for automation)
+- `exec WORKSPACE -- COMMAND ARG...` (`--repo`, `--jobs`, `--fail-fast`, `--shell`, `--interactive`)
+- `doctor [WORKSPACE]` (read-only accumulated health/recovery checks)
 - `tui [WORKSPACE]` (interactive dashboard with sync, repository picker, and previewed workspace actions)
 - `operations list`, `show`, `resume`, `abandon`
-- `config validate`, `completion`, `version`
+- `config validate`, `config migrate --to 2`, `completion`, `version`
 
 `--output=json` emits one result; `--output=jsonl` emits progress and a final result. Bubble Tea provides inline progress for supported commands on interactive terminals. Use `--ui=plain` to disable it; pipes, CI, quiet mode and `--no-input` always remain plain. The dashboard uses Lip Gloss for pane borders, focus and health colors, with explicit text labels and a complete monochrome layout.
+
+Bulk exec runs direct argv after `--` in verified worktree directories and defaults to one worker. A single quoted expression without `--` selects the platform shell; explicit `--shell sh|pwsh|powershell|cmd` is available. JSON captures bounded base64 output; JSONL streams sequenced events. Interrupted commands are never replayed by recovery. See [execution and automation](docs/onboarding.md#run-a-command-across-a-workspace).
+
+New roots use catalog schema 2; compatible writes preserve existing v1 catalogs until explicit migration. Review `config migrate --to 2 --dry-run`, then use `--yes` to save an exact backup and upgrade. Retirement requires v2, no workspace references and no linked worktrees; it moves the entire bare database into local trash without deletion or automatic purge. Restore requires the original retirement operation. See [safe lifecycle workflows](docs/onboarding.md#diagnose-and-retire-safely).
 
 ## Workspace dashboard
 
@@ -95,6 +101,8 @@ bearforge operations resume OPERATION_ID
 ```
 
 Resume verifies paths, repository identity, branches and commit IDs. It refuses changed or ambiguous state. `operations abandon ID --yes` leaves all existing files and Git effects intact and stops automatic recovery tracking; inspect and reconcile the retained state manually before proceeding. Fetch can be repeated safely and is not journaled.
+
+Migration and repository lifecycle operations resume by probing their backups/source/destination and metadata. Bulk exec is deliberately non-replayable: inspect an interrupted execution and explicitly abandon it after reviewing arbitrary child effects. A fully drained execution is complete even after a child command failed, so an ordinary failed test/build does not block later mutations.
 
 If workspace creation was interrupted after making its directory but before saving its manifest, recovery conservatively refuses that unexplained directory. Inspect it and move it aside (or remove it yourself only if empty) before resuming. Bearforge does not guess that an existing directory is disposable.
 
