@@ -6,7 +6,6 @@ import (
 	"strings"
 	"unicode"
 
-	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"bearforge/internal/app"
@@ -35,93 +34,10 @@ func padded(s string, width int) string {
 	return s + strings.Repeat(" ", max(0, width-ansi.StringWidth(s)))
 }
 
-func (m dashboardModel) View() tea.View {
-	if m.width < 36 || m.height < 12 {
-		lines := []string{"Terminal too small", "Resize to at least 36x12", "q quit | Ctrl-C cancel"}
-		return dashboardView(lines[:min(len(lines), m.height)], m.width)
-	}
-	header, listHeight, detailHeight := m.layout()
-	lines := append(header, strings.Repeat("-", m.width))
-	if m.width >= 90 {
-		leftWidth := min(28, m.width/3)
-		left, right := m.workspaceLines(listHeight), m.repositoryLines(listHeight)
-		for i := range listHeight {
-			lines = append(lines, padded(left[i], leftWidth)+" | "+clipped(right[i], m.width-leftWidth-3))
-		}
-	} else if m.focus == 0 {
-		lines = append(lines, m.workspaceLines(listHeight)...)
-	} else {
-		lines = append(lines, m.repositoryLines(listHeight)...)
-	}
-	lines = append(lines, strings.Repeat("-", m.width))
-	details := m.detailLines()
-	start := min(m.detailOffset, max(0, len(details)-1))
-	for i := range detailHeight {
-		line := ""
-		if start+i < len(details) {
-			line = details[start+i]
-		}
-		lines = append(lines, line)
-	}
-	footer := "Tab panes | arrows/j/k move | / filter | Esc clear | r refresh | q quit"
-	if m.width < 70 {
-		footer = "Tab panes / filter r refresh q quit"
-	}
-	if m.editing {
-		footer = "Type to filter | Enter apply | Esc clear | Ctrl-C cancel"
-	}
-	lines = append(lines, "PgUp/PgDn details | Ctrl-C cancel | read-only local observations", footer)
-	return dashboardView(lines[:min(len(lines), m.height)], m.width)
-}
-
-// layout reserves a visible detail row and both footer rows even when there are
-// multiple warnings in the smallest supported terminal. Full warnings remain in
-// the scrollable details.
-func (m dashboardModel) layout() ([]string, int, int) {
-	header := []string{
-		"BEARFORGE  |  WORKSPACE DASHBOARD  |  READ ONLY",
-		"Root: " + displayText(m.data.Root),
-		"Local snapshot; ahead/behind uses fetched refs. r refreshes without fetching.",
-	}
-	state := "Workspace: " + displayText(m.workspace)
-	if m.loading {
-		state += "  |  Loading..."
-	} else if !m.data.ObservedAt.IsZero() {
-		state += "  |  Observed " + m.data.ObservedAt.Format("15:04:05")
-	}
-	header = append(header, state)
-	if m.loadErr != nil {
-		header = append(header, "Error: "+displayText(m.loadErr.Error())+" (r retry)")
-	}
-	if len(m.data.PendingOperations) > 0 {
-		header = append(header, fmt.Sprintf("ATTENTION: %d unfinished operation(s); bearforge operations list", len(m.data.PendingOperations)))
-	}
-	if len(m.data.Problems) > 0 {
-		header = append(header, "Warning: "+displayText(m.data.Problems[0].Message))
-	}
-	header = header[:min(len(header), max(0, m.height-7))]
-	listHeight := max(2, (m.height-len(header)-3)/2)
-	detailHeight := max(0, m.height-len(header)-listHeight-4)
-	return header, listHeight, detailHeight
-}
-
-func dashboardView(lines []string, width int) tea.View {
-	content := make([]string, len(lines))
-	for i, line := range lines {
-		content[i] = clipped(line, width)
-	}
-	v := tea.NewView(strings.Join(content, "\n"))
-	v.AltScreen = true
-	return v
-}
-
 func (m dashboardModel) workspaceLines(height int) []string {
-	title := fmt.Sprintf("WORKSPACES (%d)", len(m.data.Workspaces))
-	if m.focus == 0 {
-		title += " [active]"
-	}
+	title := fmt.Sprintf("Workspaces %d", len(m.data.Workspaces))
 	if m.workspaceFilter != "" || (m.editing && m.focus == 0) {
-		title = "WORKSPACES / " + displayText(m.workspaceFilter)
+		title = "Workspaces / " + displayText(m.workspaceFilter)
 	}
 	names := m.workspaceRows()
 	selected := slices.Index(names, m.workspace)
@@ -131,7 +47,11 @@ func (m dashboardModel) workspaceLines(height int) []string {
 		if i == selected {
 			prefix = "> "
 		}
-		rows = append(rows, prefix+displayText(name))
+		line := prefix + displayText(name)
+		if i == selected {
+			line = m.selectedLine(line, m.workspaceContentWidth(), m.focus == 0)
+		}
+		rows = append(rows, line)
 	}
 	empty := "No matching workspaces"
 	if len(m.data.Workspaces) == 0 {
@@ -140,24 +60,32 @@ func (m dashboardModel) workspaceLines(height int) []string {
 			empty = "Loading workspaces..."
 		}
 	}
-	return listLines(title, rows, selected, height, empty)
+	return listLines(m.paneTitle(title, m.focus == 0), rows, selected, height, m.styles.muted.Render(empty))
 }
 
 func (m dashboardModel) repositoryLines(height int) []string {
-	title := fmt.Sprintf("REPOSITORIES (%d)  BRANCH / HEALTH", len(m.data.Items))
-	if m.focus == 1 {
-		title += " [active]"
-	}
+	title := fmt.Sprintf("Repositories %d", len(m.data.Items))
 	if m.repoFilter != "" || (m.editing && m.focus == 1) {
-		title = "REPOSITORIES / " + displayText(m.repoFilter)
+		title = "Repositories / " + displayText(m.repoFilter)
 	}
+	width := m.repositoryContentWidth()
+	repoWidth, branchWidth := m.repositoryColumns()
 	rows := []string{}
 	for i, item := range m.repositoryRows() {
 		prefix := "  "
 		if i == m.repoIndex {
 			prefix = "> "
 		}
-		rows = append(rows, prefix+padded(displayText(item.Repository), 16)+" "+displayText(branchLabel(item))+"  ["+displayText(item.Outcome)+"]")
+		line := prefix + padded(displayText(item.Repository), repoWidth) + " "
+		if width >= 60 {
+			line += padded(displayText(branchLabel(item)), branchWidth) + " " + m.styles.outcome(item.Outcome)
+		} else {
+			line += m.styles.outcome(item.Outcome) + " " + displayText(branchLabel(item))
+		}
+		if i == m.repoIndex {
+			line = m.selectedLine(line, width, m.focus == 1)
+		}
+		rows = append(rows, line)
 	}
 	empty := "No matching repositories"
 	if len(m.data.Items) == 0 {
@@ -166,7 +94,39 @@ func (m dashboardModel) repositoryLines(height int) []string {
 			empty = "Loading local status..."
 		}
 	}
+	title = m.paneTitle(title, m.focus == 1)
+	empty = m.styles.muted.Render(empty)
+	if width >= 60 && height >= 4 {
+		columns := "  " + padded("Repository", repoWidth) + " " + padded("Branch", branchWidth) + " Health"
+		lines := listLines(title, rows, m.repoIndex, height-1, empty)
+		return append([]string{lines[0], m.styles.muted.Render(columns)}, lines[1:]...)
+	}
 	return listLines(title, rows, m.repoIndex, height, empty)
+}
+
+func (m dashboardModel) paneTitle(title string, active bool) string {
+	if active {
+		return m.styles.brand.Render("> " + title)
+	}
+	return m.styles.title.Render("  " + title)
+}
+
+func (m dashboardModel) selectedLine(line string, width int, focused bool) string {
+	if focused {
+		// A single style across the selected row keeps nested status resets from
+		// interrupting its background. Status text remains explicit.
+		return m.styles.selected.Render(padded(ansi.Strip(line), width))
+	}
+	return m.styles.focus.Render(clipped(line, width))
+}
+
+func (m dashboardModel) repositoryColumns() (int, int) {
+	width := m.repositoryContentWidth()
+	if width < 60 {
+		return min(18, max(10, width/3)), 0
+	}
+	repoWidth := min(26, max(16, (width-22)/2))
+	return repoWidth, width - repoWidth - 22
 }
 
 func listLines(title string, rows []string, selected, height int, empty string) []string {
@@ -199,10 +159,13 @@ func (m dashboardModel) detailLines() []string {
 	// Rendering and scrolling share the wrapped rows so no suffix is discarded
 	// before the viewport has a chance to display it.
 	text := strings.Join(m.detailContent(), "\n")
-	return strings.Split(ansi.Wrap(text, max(1, m.width), ""), "\n")
+	return strings.Split(ansi.Wrap(text, m.detailWidth(), ""), "\n")
 }
 
 func (m dashboardModel) detailContent() []string {
+	if m.showSync && m.syncRun != nil {
+		return m.syncContent()
+	}
 	rows := m.repositoryRows()
 	if len(rows) == 0 {
 		if m.loading {
@@ -212,15 +175,18 @@ func (m dashboardModel) detailContent() []string {
 			return m.appendNotices([]string{"No workspaces registered. Use bearforge workspace create NAME."})
 		}
 		if len(m.data.Items) == 0 {
+			if _, ok := m.reader.source.(DashboardAdder); ok {
+				return m.appendNotices([]string{"No repositories in this workspace. Press a to select registered repositories."})
+			}
 			return m.appendNotices([]string{"No repositories in this workspace. Use bearforge workspace add WORKSPACE REPO..."})
 		}
 		return m.appendNotices([]string{"No repositories match the filter. Escape clears it."})
 	}
 	item := rows[min(m.repoIndex, len(rows)-1)]
 	lines := []string{
-		"DETAILS: " + displayText(item.Repository) + "  [" + displayText(item.Outcome) + "]",
-		"Path: " + displayText(item.Path),
-		"Actual: " + displayText(branchLabel(item)) + "  |  Intended: " + displayText(item.ExpectedBranch),
+		m.styles.title.Render("Details: "+displayText(item.Repository)) + "  " + m.styles.outcome(item.Outcome),
+		m.styles.muted.Render("Path: ") + displayText(item.Path),
+		m.styles.muted.Render("Actual: ") + m.styles.focus.Render(displayText(branchLabel(item))) + "  |  " + m.styles.muted.Render("Intended: ") + displayText(item.ExpectedBranch),
 	}
 	if s := item.Status; s != nil {
 		upstream := s.Upstream
@@ -241,20 +207,20 @@ func (m dashboardModel) detailContent() []string {
 		lines = append(lines, "HEAD: "+displayText(head))
 	}
 	if item.Problem != nil {
-		lines = append(lines, "Error: "+displayText(item.Problem.Message))
+		lines = append(lines, m.styles.bad.Render("Error: "+displayText(item.Problem.Message)))
 	}
 	return m.appendNotices(lines)
 }
 
 func (m dashboardModel) appendNotices(lines []string) []string {
 	if m.loadErr != nil {
-		lines = append(lines, "Error: "+displayText(m.loadErr.Error())+" (r retry)")
+		lines = append(lines, m.styles.bad.Render("Error: "+displayText(m.loadErr.Error())+" (r retry)"))
 	}
 	for _, problem := range m.data.Problems {
-		lines = append(lines, "Warning: "+displayText(problem.Message))
+		lines = append(lines, m.styles.warn.Render("Warning: "+displayText(problem.Message)))
 	}
 	for _, op := range m.data.PendingOperations {
-		lines = append(lines, "Unfinished: "+displayText(op.Kind)+" ["+displayText(op.State)+"] "+displayText(op.Workspace),
+		lines = append(lines, m.styles.warn.Render("Unfinished: "+displayText(op.Kind)+" ["+displayText(op.State)+"] "+displayText(op.Workspace)),
 			"Inspect: bearforge operations show "+displayText(op.ID))
 	}
 	return lines

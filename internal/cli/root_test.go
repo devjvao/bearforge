@@ -64,7 +64,7 @@ func TestTUIHelpDoesNotCreateRoot(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing")
 	var out, errOut bytes.Buffer
 	code := Run(t.Context(), []string{"--root", path, "tui", "--help"}, bytes.NewBuffer(nil), &out, &errOut)
-	if code != 0 || !strings.Contains(out.String(), "tui [WORKSPACE]") || !strings.Contains(out.String(), "read-only") {
+	if code != 0 || !strings.Contains(out.String(), "tui [WORKSPACE]") || !strings.Contains(out.String(), "s syncs") {
 		t.Fatalf("dashboard help unavailable: code=%d out=%s err=%s", code, out.String(), errOut.String())
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
