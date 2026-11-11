@@ -15,6 +15,10 @@ func (s *Service) AddRepository(ctx context.Context, id, remote string, dry bool
 	if err := domain.ValidateURL(remote); err != nil {
 		return r, err
 	}
+	remote, err := normalizeRemote(remote)
+	if err != nil {
+		return r, err
+	}
 	if !dry {
 		release, err := s.lock(ctx, "")
 		if err != nil {

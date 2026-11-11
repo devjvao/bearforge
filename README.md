@@ -29,6 +29,8 @@ The default root is `~/code`. Override with `--root PATH` or `BEARFORGE_ROOT`. D
 
 `workspace create` currently creates an empty workspace; use `workspace add` to select repositories. There are no templates.
 
+Local source paths such as `./remote` are resolved to absolute paths at registration, so sync and recovery keep the same repository identity after directory changes.
+
 ```sh
 bearforge workspace add audit-feature report-api --dry-run
 bearforge status audit-feature --json
