@@ -36,6 +36,10 @@ func (s *Service) Resume(ctx context.Context, id string) (Result, error) {
 		return s.applyAdd(ctx, op)
 	case "workspace.remove", "workspace.remove-repo":
 		return s.applyRemove(ctx, op)
+	case "exec":
+		return r, domain.E("conflict", "bulk commands are never rerun on resume; inspect operation %s, abandon it, then run exec explicitly", op.ID)
+	case "repo.retire", "repo.restore":
+		return s.applyRepositoryLifecycle(ctx, op)
 	default:
 		return r, domain.E("invalid", "unsupported operation kind")
 	}

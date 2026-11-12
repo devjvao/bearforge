@@ -12,10 +12,13 @@ import (
 
 func addCommands(root *cobra.Command, o *options) {
 	addDashboardCommand(root, o)
+	addExecCommand(root, o)
+	addDoctorCommand(root, o)
 	repo := &cobra.Command{Use: "repo", Short: "Manage bare repositories"}
 	workspace := &cobra.Command{Use: "workspace", Short: "Manage workspaces"}
 	ops := &cobra.Command{Use: "operations", Short: "Inspect and recover interrupted operations"}
 	root.AddCommand(repo, workspace, ops)
+	addRepositoryLifecycleCommands(repo, o)
 	command := func(parent *cobra.Command, use, short string, args cobra.PositionalArgs, git, progress bool, fn func(context.Context, *app.Service, []string) (app.Result, error)) *cobra.Command {
 		c := &cobra.Command{Use: use, Short: short, Args: args, RunE: func(cmd *cobra.Command, args []string) error {
 			return o.perform(cmd.Context(), git, progress, func(ctx context.Context, s *app.Service) (app.Result, error) { return fn(ctx, s, args) })
@@ -176,7 +179,9 @@ func addCommands(root *cobra.Command, o *options) {
 		}
 		return s.Abandon(ctx, a[0])
 	})
-	cfg := &cobra.Command{Use: "config", Short: "Validate configuration"}
+	cfg := &cobra.Command{Use: "config", Short: "Validate configuration", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		return cmd.Help()
+	}}
 	root.AddCommand(cfg)
 	command(cfg, "validate", "Validate catalog and workspace definitions", cobra.NoArgs, false, false, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
 		r := app.NewResult("config.validate")

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+
 	"github.com/spf13/cobra"
 
 	"bearforge/internal/app"
@@ -10,14 +12,51 @@ import (
 	"bearforge/internal/tui"
 )
 
+// dashboardService keeps each sync observer local to that operation. Dashboard
+// reads and the original application service never share a mutable callback.
+type dashboardService struct {
+	*app.Service
+	jobs int
+}
+
+func (s dashboardService) Sync(ctx context.Context, names []string, observe func(app.Event)) (app.Result, error) {
+	service := *s.Service
+	service.Observe = observe
+	return service.Sync(ctx, names, s.jobs, false)
+}
+
+func (s dashboardService) AddRepositories(ctx context.Context, req app.AddRequest, observe func(app.Event)) (app.Result, error) {
+	service := *s.Service
+	service.Observe = observe
+	return service.AddRepositories(ctx, req)
+}
+
+func (s dashboardService) CreateWorkspace(ctx context.Context, req app.CreateWorkspaceRequest, observe func(app.Event)) (app.Result, error) {
+	service := *s.Service
+	service.Observe = observe
+	return service.CreateWorkspaceWithPlan(ctx, req)
+}
+
+func (s dashboardService) RemoveRepositories(ctx context.Context, req app.RemoveRequest, observe func(app.Event)) (app.Result, error) {
+	service := *s.Service
+	service.Observe = observe
+	return service.RemoveRepositories(ctx, req)
+}
+
 func addDashboardCommand(root *cobra.Command, o *options) {
 	root.AddCommand(&cobra.Command{
 		Use:   "tui [WORKSPACE]",
-		Short: "Browse a read-only workspace dashboard",
-		Long: "Browse a read-only workspace dashboard in a full-window terminal.\n" +
-			"Refresh observes local Git state without fetching.\n\n" +
+		Short: "Browse workspace health and manage workspace repositories",
+		Long: "Browse workspace health in a full-window terminal.\n" +
+			"Refresh observes local Git state without fetching.\n" +
+			"s fetches/prunes all repositories in the current workspace, including filtered rows.\n" +
+			"Sync uses --jobs and shows progress and per-repository results without changing checkouts.\n\n" +
+			"a opens the registered-repository picker for the current workspace.\n" +
+			"Space selects, Enter previews resolved defaults, and y confirms the reviewed add plan.\n\n" +
+			"n creates an empty workspace; d removes the selected repository; D removes the workspace.\n" +
+			"Each action previews its destinations and requires y to confirm; unsafe worktrees are refused.\n\n" +
 			"Tab changes panes; arrows or j/k navigate; / filters; Escape clears;\n" +
-			"r refreshes; Page Up/Down scroll details; q quits; Ctrl-C cancels.",
+			"r refreshes; s syncs; a adds; n creates; d/D removes; v toggles results; Page Up/Down scroll details; q quits; Ctrl-C cancels.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !o.interactive() || o.ui != "auto" || o.dry {
@@ -43,7 +82,7 @@ func addDashboardCommand(root *cobra.Command, o *options) {
 				return err
 			}
 			service := app.New(store, git, operation.New(store))
-			if err := tui.RunDashboard(cmd.Context(), o.in, o.out, service, workspace); err != nil {
+			if err := tui.RunDashboard(cmd.Context(), o.in, o.out, dashboardService{Service: service, jobs: o.jobs}, workspace, tui.DashboardOptions{Color: o.color}); err != nil {
 				return &domain.Error{Code: "failed", Message: err.Error(), Cause: err}
 			}
 			return nil

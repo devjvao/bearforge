@@ -239,7 +239,7 @@ func TestDashboardSmallTerminalCanReachEveryDetailLine(t *testing.T) {
 		seen.WriteString(m.View().Content)
 		m, _ = dashboardKey(m, tea.KeyPgDown, "")
 	}
-	for _, want := range []string{"DETAILS: api", "Path: /code/alpha/api", "Actual: main", "Staged: 0", "Upstream: (none)", "HEAD: deadbeef", "Unfinished: workspace.add", "Inspect: bearforge operations show"} {
+	for _, want := range []string{"Details: api", "Path: /code/alpha/api", "Actual: main", "Staged: 0", "Upstream: (none)", "HEAD: deadbeef", "Unfinished: workspace.add", "Inspect: bearforge operations show"} {
 		if !strings.Contains(seen.String(), want) {
 			t.Errorf("detail line cannot be reached by scrolling: %q", want)
 		}
@@ -297,7 +297,7 @@ func TestDashboardSmallTerminalRetainsDetailsAndControlsWithNotices(t *testing.T
 	m.data.Problems = []app.Problem{{Message: "broken journal"}}
 	m.loadErr = errors.New("refresh failed")
 	view := m.View().Content
-	for _, want := range []string{"DETAILS: api", "PgUp/PgDn", "q quit"} {
+	for _, want := range []string{"Details: api", "PgUp/PgDn", "q quit"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("notices hide %q in:\n%s", want, view)
 		}

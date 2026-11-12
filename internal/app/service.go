@@ -47,6 +47,7 @@ type Git interface {
 	CheckRemoval(context.Context, string, string) error
 	PreserveHistory(context.Context, string, string, string, string) error
 	Remove(context.Context, string, string) error
+	Fingerprint(context.Context, string) (string, error)
 }
 
 type Journal interface {
@@ -57,29 +58,34 @@ type Journal interface {
 }
 
 type Operation struct {
-	Version       int       `json:"schema_version"`
-	ID            string    `json:"id"`
-	Root          string    `json:"root"`
-	Kind          string    `json:"kind"`
-	Workspace     string    `json:"workspace,omitempty"`
-	DefaultBranch string    `json:"default_branch,omitempty"`
-	Remote        string    `json:"remote,omitempty"`
-	State         string    `json:"state"`
-	Created       time.Time `json:"created"`
-	Steps         []Step    `json:"steps"`
-	Error         string    `json:"error,omitempty"`
+	Version       int                `json:"schema_version"`
+	ID            string             `json:"id"`
+	Root          string             `json:"root"`
+	Kind          string             `json:"kind"`
+	Workspace     string             `json:"workspace,omitempty"`
+	DefaultBranch string             `json:"default_branch,omitempty"`
+	Remote        string             `json:"remote,omitempty"`
+	State         string             `json:"state"`
+	Created       time.Time          `json:"created"`
+	Steps         []Step             `json:"steps"`
+	Error         string             `json:"error,omitempty"`
+	Exec          *ExecRequest       `json:"exec,omitempty"`
+	Repository    *domain.Repository `json:"repository,omitempty"`
+	Retirement    string             `json:"retirement_operation,omitempty"`
+	Fingerprint   string             `json:"fingerprint,omitempty"`
 }
 
 type Step struct {
-	Repository string `json:"repository"`
-	Branch     string `json:"branch,omitempty"`
-	Base       string `json:"base,omitempty"`
-	Tracking   string `json:"tracking,omitempty"`
-	Start      string `json:"start,omitempty"`
-	Upstream   string `json:"upstream,omitempty"`
-	Create     bool   `json:"create"`
-	State      string `json:"state"`
-	Error      string `json:"error,omitempty"`
+	Repository string                 `json:"repository"`
+	Branch     string                 `json:"branch,omitempty"`
+	Base       string                 `json:"base,omitempty"`
+	Tracking   string                 `json:"tracking,omitempty"`
+	Start      string                 `json:"start,omitempty"`
+	Upstream   string                 `json:"upstream,omitempty"`
+	Create     bool                   `json:"create"`
+	State      string                 `json:"state"`
+	Error      string                 `json:"error,omitempty"`
+	Execution  *domain.ProcessSummary `json:"execution,omitempty"`
 }
 
 type Problem struct {
@@ -87,14 +93,20 @@ type Problem struct {
 	Message string `json:"message"`
 }
 type Item struct {
-	Repository     string         `json:"repository,omitempty"`
-	Workspace      string         `json:"workspace,omitempty"`
-	Path           string         `json:"path,omitempty"`
-	Branch         string         `json:"branch,omitempty"`
-	ExpectedBranch string         `json:"expected_branch,omitempty"`
-	Outcome        string         `json:"outcome"`
-	Status         *domain.Status `json:"status,omitempty"`
-	Problem        *Problem       `json:"error,omitempty"`
+	Check          string                `json:"check,omitempty"`
+	Repository     string                `json:"repository,omitempty"`
+	Workspace      string                `json:"workspace,omitempty"`
+	Path           string                `json:"path,omitempty"`
+	Branch         string                `json:"branch,omitempty"`
+	ExpectedBranch string                `json:"expected_branch,omitempty"`
+	Base           string                `json:"base,omitempty"`
+	Start          string                `json:"start,omitempty"`
+	Tracking       string                `json:"tracking,omitempty"`
+	CreateBranch   bool                  `json:"create_branch,omitempty"`
+	Outcome        string                `json:"outcome"`
+	Status         *domain.Status        `json:"status,omitempty"`
+	Problem        *Problem              `json:"error,omitempty"`
+	Execution      *domain.ProcessResult `json:"execution,omitempty"`
 }
 type Result struct {
 	Version     int      `json:"schema_version"`
@@ -107,14 +119,21 @@ type Result struct {
 	Problem     *Problem `json:"error,omitempty"`
 }
 type Event struct {
-	Repository string `json:"repository,omitempty"`
-	State      string `json:"state"`
+	Repository string                 `json:"repository,omitempty"`
+	State      string                 `json:"state"`
+	Output     *domain.OutputChunk    `json:"output,omitempty"`
+	Execution  *domain.ProcessSummary `json:"execution,omitempty"`
+}
+
+type ProcessRunner interface {
+	Run(context.Context, domain.ProcessSpec, func(domain.OutputChunk)) (domain.ProcessResult, error)
 }
 type Service struct {
-	Store   IntentStore
-	Git     Git
-	Journal Journal
-	Observe func(Event)
+	Store    IntentStore
+	Git      Git
+	Journal  Journal
+	Observe  func(Event)
+	Executor ProcessRunner
 }
 
 func New(store IntentStore, git Git, journal Journal) *Service {
@@ -219,17 +238,24 @@ func (s *Service) checkRepository(ctx context.Context, r domain.Repository) (str
 	if err != nil {
 		return "", err
 	}
-	if err := s.Git.VerifyBare(ctx, p); err != nil {
+	if err := s.verifyRepositoryAt(ctx, r, p); err != nil {
 		return "", err
+	}
+	return p, nil
+}
+
+func (s *Service) verifyRepositoryAt(ctx context.Context, r domain.Repository, p string) error {
+	if err := s.Git.VerifyBare(ctx, p); err != nil {
+		return err
 	}
 	for name, want := range r.Remotes {
 		got, err := s.Git.Config(ctx, p, "remote."+name+".url")
 		if err != nil {
-			return "", err
+			return err
 		}
 		if got != want {
-			return "", domain.E("conflict", "remote %s for %s differs from the catalog", name, r.ID)
+			return domain.E("conflict", "remote %s for %s differs from the catalog", name, r.ID)
 		}
 	}
-	return p, nil
+	return nil
 }

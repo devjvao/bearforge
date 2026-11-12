@@ -18,9 +18,23 @@ type AddRequest struct {
 	Base         string
 	Tracking     string
 	DryRun       bool
+	ExpectedPlan string
+}
+
+type CreateWorkspaceRequest struct {
+	Name, Branch string
+	DryRun       bool
+	ExpectedPlan string
 }
 
 func (s *Service) CreateWorkspace(ctx context.Context, name, branch string, dry bool) (Result, error) {
+	return s.CreateWorkspaceWithPlan(ctx, CreateWorkspaceRequest{Name: name, Branch: branch, DryRun: dry})
+}
+
+// CreateWorkspaceWithPlan supports approval of a concrete preview while keeping
+// the existing CLI API compatible. Creation makes an empty workspace only.
+func (s *Service) CreateWorkspaceWithPlan(ctx context.Context, req CreateWorkspaceRequest) (Result, error) {
+	name, branch := req.Name, req.Branch
 	r := NewResult("workspace.create")
 	if err := domain.ValidateID(name); err != nil {
 		return r, err
@@ -31,14 +45,19 @@ func (s *Service) CreateWorkspace(ctx context.Context, name, branch string, dry 
 	if err := s.Git.ValidateBranch(ctx, branch); err != nil {
 		return r, err
 	}
-	if !dry {
+	if !req.DryRun {
 		release, err := s.lock(ctx, "")
 		if err != nil {
 			return r, err
 		}
 		defer release()
 	}
-	w, _, err := s.Store.LoadWorkspace(name)
+	path, err := s.Store.SafePath(name)
+	if err != nil {
+		return r, err
+	}
+	w, revision, err := s.Store.LoadWorkspace(name)
+	outcome := "planned"
 	if err == nil {
 		if w.DefaultBranch != branch {
 			return r, domain.E("conflict", "workspace already has a different default branch")
@@ -50,23 +69,30 @@ func (s *Service) CreateWorkspace(ctx context.Context, name, branch string, dry 
 		if !exists {
 			return r, domain.E("conflict", "registered workspace directory is missing")
 		}
-		r.Items = append(r.Items, Item{Workspace: name, Outcome: "unchanged"})
+		outcome = "unchanged"
+	} else {
+		var de *domain.Error
+		if !errors.As(err, &de) || de.Code != "not_found" {
+			return r, err
+		}
+		exists, err := s.Store.Exists(name)
+		if err != nil {
+			return r, err
+		}
+		if exists {
+			return r, domain.E("conflict", "workspace directory already exists without registration")
+		}
+	}
+	r.Items = append(r.Items, Item{Workspace: name, Path: path, Branch: branch, Outcome: outcome})
+	r.PlanDigest = (workspacePlan{Kind: r.Command, Root: s.Store.RootPath(), Workspace: name, WorkspaceRevision: revision, DefaultBranch: branch, Outcome: outcome}).digest()
+	if req.ExpectedPlan != "" && req.ExpectedPlan != r.PlanDigest {
+		return r, domain.E("conflict", "creation plan changed; review it again")
+	}
+	if req.DryRun {
+		r.Outcome = "planned"
 		return r, nil
 	}
-	var de *domain.Error
-	if !errors.As(err, &de) || de.Code != "not_found" {
-		return r, err
-	}
-	exists, err := s.Store.Exists(name)
-	if err != nil {
-		return r, err
-	}
-	if exists {
-		return r, domain.E("conflict", "workspace directory already exists without registration")
-	}
-	r.Items = append(r.Items, Item{Workspace: name, Outcome: "planned"})
-	if dry {
-		r.Outcome = "planned"
+	if outcome == "unchanged" {
 		return r, nil
 	}
 	op := newOperation(s.Store.RootPath(), "workspace.create", name)
@@ -105,7 +131,8 @@ func (s *Service) applyCreate(ctx context.Context, op *Operation) (Result, error
 			return s.finish(op, r, err)
 		}
 	}
-	r.Items = append(r.Items, Item{Workspace: op.Workspace, Outcome: "created"})
+	path, _ := s.Store.SafePath(op.Workspace) // Validated before creating the directory.
+	r.Items = append(r.Items, Item{Workspace: op.Workspace, Path: path, Branch: op.DefaultBranch, Outcome: "created"})
 	return s.finish(op, r, nil)
 }
 
@@ -121,9 +148,21 @@ func (s *Service) AddRepositories(ctx context.Context, req AddRequest) (Result, 
 		}
 		defer release()
 	}
-	steps, err := s.planAdd(ctx, req)
+	w, workspaceRevision, err := s.Store.LoadWorkspace(req.Workspace)
 	if err != nil {
 		return r, err
+	}
+	c, catalogRevision, err := s.Store.LoadCatalog()
+	if err != nil {
+		return r, err
+	}
+	steps, err := s.planAdd(ctx, req, w, c)
+	if err != nil {
+		return r, err
+	}
+	r.PlanDigest = addPlanDigest(s.Store.RootPath(), req.Workspace, catalogRevision, workspaceRevision, steps)
+	if req.ExpectedPlan != "" && req.ExpectedPlan != r.PlanDigest {
+		return r, domain.E("conflict", "add plan changed; review it again")
 	}
 	allDone := true
 	for _, step := range steps {
@@ -134,7 +173,8 @@ func (s *Service) AddRepositories(ctx context.Context, req AddRequest) (Result, 
 			allDone = false
 		}
 		p, _ := s.treePath(req.Workspace, step.Repository)
-		r.Items = append(r.Items, Item{Repository: step.Repository, Workspace: req.Workspace, Path: p, Branch: step.Branch, Outcome: outcome})
+		r.Items = append(r.Items, Item{Repository: step.Repository, Workspace: req.Workspace, Path: p, Branch: step.Branch,
+			Base: step.Base, Start: step.Start, Tracking: step.Tracking, CreateBranch: step.Create, Outcome: outcome})
 	}
 	if req.DryRun {
 		r.Outcome = "planned"
@@ -151,15 +191,7 @@ func (s *Service) AddRepositories(ctx context.Context, req AddRequest) (Result, 
 	return s.applyAdd(ctx, op)
 }
 
-func (s *Service) planAdd(ctx context.Context, req AddRequest) ([]Step, error) {
-	w, _, err := s.Store.LoadWorkspace(req.Workspace)
-	if err != nil {
-		return nil, err
-	}
-	c, _, err := s.Store.LoadCatalog()
-	if err != nil {
-		return nil, err
-	}
+func (s *Service) planAdd(ctx context.Context, req AddRequest, w domain.Workspace, c domain.Catalog) ([]Step, error) {
 	selected := map[string]bool{}
 	for _, id := range req.Repositories {
 		selected[id] = true
@@ -362,6 +394,7 @@ func (s *Service) applyAdd(ctx context.Context, op *Operation) (Result, error) {
 			break
 		}
 		wasStarted := step.State != "planned"
+		wasComplete := step.State == "succeeded"
 		if step.State != "succeeded" {
 			step.State = "started"
 			if err := s.Journal.Save(op); err != nil {
@@ -370,7 +403,8 @@ func (s *Service) applyAdd(ctx context.Context, op *Operation) (Result, error) {
 		}
 		s.event(step.Repository, "running")
 		err := s.applyAddStep(ctx, op, step, wasStarted)
-		item := Item{Repository: step.Repository, Workspace: op.Workspace, Branch: step.Branch, Outcome: "created"}
+		item := Item{Repository: step.Repository, Workspace: op.Workspace, Branch: step.Branch, Outcome: "created",
+			Base: step.Base, Start: step.Start, Tracking: step.Tracking, CreateBranch: step.Create}
 		item.Path, _ = s.treePath(op.Workspace, step.Repository)
 		if err != nil {
 			step.Error = err.Error()
@@ -379,6 +413,9 @@ func (s *Service) applyAdd(ctx context.Context, op *Operation) (Result, error) {
 			failures = append(failures, err)
 			s.event(step.Repository, "failed")
 		} else {
+			if wasComplete {
+				item.Outcome = "unchanged"
+			}
 			step.State = "succeeded"
 			step.Error = ""
 			s.event(step.Repository, "succeeded")
