@@ -1,6 +1,6 @@
 # Bitbucket Pull-Request Lookup Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Support read-only Bitbucket Cloud and Server/Data Center PR lookup alongside GitHub in the CLI and dashboard.
 
@@ -36,11 +36,11 @@
 
 **Interfaces:** Produce `bitbucket.NewClient() *Client`, `(*Client).Resolve(domain.Repository, string, string) (domain.PullRequestQuery, error)`. Add `PullRequestQuery.Provider string` with `json:"provider,omitempty"`.
 
-- [ ] Write `TestResolveCloudRemotesAndFork`, `TestResolveServerRemotesAndOverrides`, `TestResolveRejectsUnsafeCoordinates`, covering public inference, context/port/personal project inference, complete explicit metadata and rejected passwords/traversal/unknown kind/source-host mismatch.
-- [ ] Run `go test ./internal/bitbucket` and observe missing adapter/behavior failures.
-- [ ] Implement the constructor and resolution/validation helpers. Keep transport state in `client.go`; strict shared query validation precedes lookup.
-- [ ] Run `go test ./internal/bitbucket ./internal/domain`; expect PASS.
-- [ ] Commit `feat(bitbucket): resolve Cloud and company repository coordinates`.
+- [x] Write `TestResolveCloudRemotesAndFork`, `TestResolveServerRemotesAndOverrides`, `TestResolveRejectsUnsafeCoordinates`, covering public inference, context/port/personal project inference, complete explicit metadata and rejected passwords/traversal/unknown kind/source-host mismatch.
+- [x] Run `go test ./internal/bitbucket` and observe missing adapter/behavior failures.
+- [x] Implement the constructor and resolution/validation helpers. Keep transport state in `client.go`; strict shared query validation precedes lookup.
+- [x] Run `go test ./internal/bitbucket ./internal/domain`; expect PASS.
+- [x] Commit `feat(bitbucket): resolve Cloud and company repository coordinates`.
 
 ### Task 2: Cloud/Server API, transport and cache
 
@@ -48,12 +48,12 @@
 
 **Interfaces:** Consume Task 1 queries. Produce `(*Client).Lookup(context.Context, domain.PullRequestQuery, bool) (domain.PullRequestObservation, error)`; the existing `app.PullRequestProvider` interface is unchanged.
 
-- [ ] Write TLS tests for each dialect's GET paths, escaped branch/base/state parameters, fork filtering, normalized metadata, descending update order and pagination. Observe failures before implementation.
-- [ ] Implement dialect-specific pages and bounded GET transport, sanitized errors and environment credentials; malformed or incomplete pages never return success.
-- [ ] Write/observe failing tests for unsafe page/redirect paths, credential isolation/rotation, 429/Retry-After including redirect responses, cancellation/queueing, transient retry bounds, invalid metadata/envelopes and oversized bodies.
-- [ ] Implement those transport guards, per-origin request state and successful cache with TTL/capacity/copy tests watched failing before their implementations.
-- [ ] Run `go test ./internal/bitbucket ./internal/github`; expect PASS with unchanged GitHub contracts.
-- [ ] Commit `feat(bitbucket): add bounded read-only pull request lookup`.
+- [x] Write TLS tests for each dialect's GET paths, escaped branch/base/state parameters, fork filtering, normalized metadata, descending update order and pagination. Observe failures before implementation.
+- [x] Implement dialect-specific pages and bounded GET transport, sanitized errors and environment credentials; malformed or incomplete pages never return success.
+- [x] Write/observe failing tests for unsafe page/redirect paths, credential isolation/rotation, 429/Retry-After including redirect responses, cancellation/queueing, transient retry bounds, invalid metadata/envelopes and oversized bodies.
+- [x] Implement those transport guards, per-origin request state and successful cache with TTL/capacity/copy tests watched failing before their implementations.
+- [x] Run `go test ./internal/bitbucket ./internal/github`; expect PASS with unchanged GitHub contracts.
+- [x] Commit `feat(bitbucket): add bounded read-only pull request lookup`.
 
 ### Task 3: Production dispatch and CLI/dashboard integration
 
@@ -61,11 +61,11 @@
 
 **Interfaces:** Produce `pullrequests.NewProvider() *Provider` implementing `app.PullRequestProvider`; explicit kind wins, unknown kind fails, empty lookup discriminator remains GitHub-compatible. Consumers share one provider instance with its concrete clients/cache.
 
-- [ ] Add failing production-composition tests: mixed GitHub/Cloud/Server actual worktrees through CLI human/JSON/JSONL, default dashboard dispatch/cache and forced refresh, and dry-run zero HTTP.
-- [ ] Implement dispatcher, optional query discriminator and service defaults; change provider-specific help to include Bitbucket.
-- [ ] Test explicit-kind precedence and unknown-host refusal through the real dispatcher; ensure forwarded queries cannot silently switch dialects.
-- [ ] Run `go test ./internal/pullrequests ./internal/cli ./internal/tui ./internal/app`; expect PASS, including visible feedback/cancellation regressions.
-- [ ] Commit `feat(pr): route GitHub and Bitbucket lookup in CLI and dashboard`.
+- [x] Add failing production-composition tests: mixed GitHub/Cloud/Server actual worktrees through CLI human/JSON/JSONL, default dashboard dispatch/cache and forced refresh, and dry-run zero HTTP.
+- [x] Implement dispatcher, optional query discriminator and service defaults; change provider-specific help to include Bitbucket.
+- [x] Test explicit-kind precedence and unknown-host refusal through the real dispatcher; ensure forwarded queries cannot silently switch dialects.
+- [x] Run `go test ./internal/pullrequests ./internal/cli ./internal/tui ./internal/app`; expect PASS, including visible feedback/cancellation regressions.
+- [x] Commit `feat(pr): route GitHub and Bitbucket lookup in CLI and dashboard`.
 
 ### Task 4: Documentation, native verification and review
 
@@ -73,8 +73,8 @@
 
 **Interfaces:** Document existing commands plus Cloud/default token and explicit Server/fork/context/API/token-env configuration; no new flags.
 
-- [ ] Document concrete catalog examples, read scopes, public/private support, authentication boundaries and error remediation.
-- [ ] Run `gofmt`, `git diff --check`, `go test -mod=readonly ./...`, `go vet ./...`, native build and the available Linux CGO race suite. Expect PASS; record exact limits if a platform/tool is unavailable.
-- [ ] Exercise compiled CLI and dashboard against controlled TLS Bitbucket fixtures using disposable Git roots. Verify visible `p`/`P` feedback and that lookup leaves files/refs/catalogs unchanged.
-- [ ] Commit documentation/verification, then request one fresh whole-branch review against the spec and Review Focus. Fix material findings with reproducing failing tests and verify the affected/full suites.
-- [ ] Leave the completed feature branch available in this checkout; publishing/merging is a separate user action.
+- [x] Document concrete catalog examples, read scopes, public/private support, authentication boundaries and error remediation.
+- [x] Run `gofmt`, `git diff --check`, `go test -mod=readonly ./...`, `go vet ./...`, native build and the available Linux CGO race suite. Expect PASS; record exact limits if a platform/tool is unavailable.
+- [x] Exercise compiled CLI and dashboard against controlled TLS Bitbucket fixtures using disposable Git roots. Verify visible `p`/`P` feedback and that lookup leaves files/refs/catalogs unchanged.
+- [x] Commit documentation/verification, then request one fresh whole-branch review against the spec and Review Focus. Fix material findings with reproducing failing tests and verify the affected/full suites.
+- [x] Leave the completed feature branch available in this checkout; publishing/merging is a separate user action.

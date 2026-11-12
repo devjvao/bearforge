@@ -4,7 +4,7 @@
 
 Extend the existing read-only PR lookup to Bitbucket while retaining GitHub support. The user asked to implement Bitbucket lookup and said repositories could be public or belong to a private company. Cover Bitbucket Cloud (`bitbucket.org`, including private repositories) and explicitly configured company-hosted Bitbucket Server/Data Center. Cover the existing CLI first, then its dashboard composition. Continue using Go, the standard HTTP library, Cobra and Bubble Tea; no SDK or new dependency is needed.
 
-This is a feature with a written design. The deployment coverage and defaults below are the implementer's interpretation of that request, subject to the user's design approval.
+The user approved this design and explicitly authorized implementation of Cloud and company-hosted lookup in both CLI and dashboard. Deployment defaults below are the implementer's choices within that approved scope.
 
 ## User behavior
 

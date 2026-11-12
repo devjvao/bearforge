@@ -58,7 +58,7 @@ The dashboard offers `p` open PR lookup, `P` uncached PR refresh, `s` sync, `a` 
 
 Sync fetches/prunes remote-tracking refs. It does not rebase, merge, reset, switch branches or push. Refresh/status/doctor use local observations and do not fetch.
 
-## Look up GitHub pull requests
+## Look up pull requests
 
 ```sh
 bearforge pr list audit-feature
@@ -103,6 +103,51 @@ Set the named environment variable using your normal secret-management process. 
 
 Same-origin redirects must retain the configured repository's PR-list path. A rename or redirect that changes or obscures those coordinates returns a provider error without caching an empty result. Update the actual Git remote or explicit provider repository metadata to the current repository coordinates, then retry.
 
+### Bitbucket Cloud
+
+Public and private Bitbucket Cloud repositories use the same commands and dashboard keys. Actual Git remotes such as `https://bitbucket.org/team/api.git`, `https://alice@bitbucket.org/team/api.git`, `ssh://git@bitbucket.org/team/api.git` and `git@bitbucket.org:team/api.git` are recognized without provider metadata. A username in a Git remote is not reused for API authentication; embedded passwords are refused.
+
+When using HTTPS, repository registration and catalog entries require URLs without userinfo. Register with `bearforge repo add api https://bitbucket.org/team/api.git` and use your Git credential helper for clone/fetch authentication, or use an SSH remote. Username-only HTTPS support above applies when PR lookup observes an actual Git remote that differs from its registered URL. Keep catalog URLs free of usernames and passwords.
+
+Public resources can be read anonymously. Set `BITBUCKET_TOKEN` for authenticated requests to the default `https://api.bitbucket.org/2.0` API. Use an API token with `read:pullrequest:bitbucket`, or an access token with pull-request read permission and access to the target repository. Lookup sends the token as Bearer authentication, as documented by [Atlassian](https://support.atlassian.com/bitbucket-cloud/docs/using-api-tokens/). Git credential helpers, SSH agents and GitHub tokens do not authenticate Bitbucket lookups.
+
+For a fork, configure the target repository. The source is inferred from the actual remote, or can be explicit:
+
+```yaml
+repositories:
+  api:
+    provider:
+      kind: bitbucket
+      host: bitbucket.org
+      repository: team/api
+      source_repository: alice/api # Optional when inferred from the actual remote
+      token_env: TEAM_BITBUCKET_TOKEN # Optional override of BITBUCKET_TOKEN
+```
+
+Cloud closed results include merged, declined and superseded PRs. Merged results display `merged`; declined/superseded results display `closed`. The [Cloud endpoint reference](https://developer.atlassian.com/cloud/bitbucket/rest/api-group-pullrequests/) describes its read scope and state filters.
+
+### Company-hosted Bitbucket Server / Data Center
+
+Company hosts require an explicit kind; the application does not guess the service from an unfamiliar hostname. Coordinates use `PROJECT/repository-slug`, including personal projects such as `~alice/api`:
+
+```yaml
+repositories:
+  api:
+    provider:
+      kind: bitbucket-server
+      host: git.company.example
+      repository: TEAM/api
+      source_repository: ~alice/api # Optional when inferred from the actual remote
+      api_url: https://git.company.example/bitbucket/rest/api/1.0
+      token_env: COMPANY_BITBUCKET_TOKEN
+```
+
+Use an HTTP access token with repository read permission; the adapter sends Bearer authentication. [Atlassian documents Server/Data Center HTTP access tokens](https://confluence.atlassian.com/bitbucketserver093/http-access-tokens-1472430864.html). `token_env` names an environment variable, never its value. An unset explicitly selected variable fails authentication. Without `token_env`, company endpoints are anonymous; default Cloud and GitHub credentials are never forwarded.
+
+The API URL is the REST root, without a repository path. HTTPS remotes such as `https://git.company.example:8443/bitbucket/scm/TEAM/api.git` infer the HTTPS port and installation context. SSH remotes such as `ssh://git@git.company.example:7999/TEAM/api.git` or `git@git.company.example:TEAM/api.git` default to `https://HOST/rest/api/1.0`; an SSH port does not identify the HTTPS port. Set `api_url` for a proxy, different API host or installation context. If the Git remote uses an SSH alias, provide the real `host`, `repository` and `source_repository` explicitly.
+
+API URLs require HTTPS and the system trust store; no TLS-verification bypass is provided. Pagination and redirects retain the configured API origin and exact repository PR-list path. Renames, unsafe pages, access/rate-limit errors and incomplete responses fail per repository without caching an empty result. Mixed GitHub, Cloud and Server members work in one request. The query in JSON/JSONL includes the selected `provider` kind. [Bitbucket verification evidence](development/bitbucket-pr-lookup-progress.md) records local coverage and deployment limits.
+
 To narrow PR matches to a target branch by default, extend the member in the workspace definition with `pr_target` (distinct from worktree creation `base`):
 
 ```yaml
@@ -112,9 +157,9 @@ repositories:
     pr_target: main
 ```
 
-`--base` overrides that target for one CLI request. Dry runs verify local identity and resolve the query without contacting GitHub. Lookup never fetches/checks out, changes refs/files, takes a mutation lock or creates a journal. Human output includes titles, URLs, state/draft, source/target, update time, `observed_at` and `cached`. JSON returns one result document, and JSONL a sequenced final result; successful no-match observations carry an empty PR array.
+`--base` overrides that target for one CLI request. Dry runs verify local identity and resolve the query without contacting provider APIs. Lookup never fetches/checks out, changes refs/files, takes a mutation lock or creates a journal. Human output includes titles, URLs, state/draft, source/target, update time, `observed_at` and `cached`. JSON returns one result document, and JSONL a sequenced final result; successful no-match observations carry an empty PR array.
 
-The provider bounds each lookup to 30 seconds, 100 pages and 8 MiB per response, with two transient retries at most. Rate limits produce errors and a host cooldown; refresh does not bypass that cooldown. Successful observations stay in process memory for 60 seconds, up to 128 entries, separated by complete query and credential identity. No cache is written to disk; separate CLI processes start empty. The dashboard reuses one client: `p` may return a cached snapshot, and `P` bypasses cached successes. Details label observation time/cache status and remain historical snapshots as they age; use `P` for a new observation. Local refresh and workspace changes discard old PR results. [Verification evidence and remaining limits](development/github-pr-lookup-progress.md) distinguish fixture coverage, public smoke testing and maintainer-owned private/enterprise validation.
+The provider bounds each lookup to 30 seconds, 100 pages and 8 MiB per response, with two transient retries at most. Rate limits produce errors and a host cooldown; refresh does not bypass that cooldown. Successful observations stay in process memory for 60 seconds, up to 128 entries per provider client, separated by complete query and credential identity. No cache is written to disk; separate CLI processes start empty. The dashboard reuses its provider clients: `p` may return a cached snapshot, and `P` bypasses cached successes. Details label observation time/cache status and remain historical snapshots as they age; use `P` for a new observation. Local refresh and workspace changes discard old PR results. [GitHub verification](development/github-pr-lookup-progress.md) and [Bitbucket verification](development/bitbucket-pr-lookup-progress.md) distinguish fixture coverage, public smoke testing and maintainer-owned private/enterprise validation.
 
 ## Run a command across a workspace
 
