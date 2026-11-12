@@ -12,18 +12,17 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go: ['1.26.x', '1.27.4']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: ${{ matrix.go }}
+          go-version-file: go.mod
           cache: true
       - run: go test ./...
       - run: go vet ./...
-      - name: Race tests on the release toolchain
-        if: runner.os == 'Linux' && matrix.go == '1.27.4'
+      - name: Race tests on Linux
+        if: runner.os == 'Linux'
         env:
           CGO_ENABLED: '1'
         run: go test -race ./...
@@ -35,7 +34,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.4'
+          go-version-file: go.mod
           cache: true
       - name: Exercise 60 disposable repositories
         env:

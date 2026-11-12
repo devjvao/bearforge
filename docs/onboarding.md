@@ -13,7 +13,7 @@ go build -trimpath -o bin/bearforge.exe ./cmd/bearforge
 .\bin\bearforge.exe version
 ```
 
-On Linux/macOS, build with `go build -trimpath -o bin/bearforge ./cmd/bearforge` and put that executable on PATH. Source builds use the Go version floor in `go.mod`; production releases use the exact toolchain pinned in the release workflow.
+On Linux/macOS, build with `go build -trimpath -o bin/bearforge ./cmd/bearforge` and put that executable on PATH. Source builds, CI and production releases require Go 1.27.4, the latest stable release pinned in `go.mod`. Older Go releases are unsupported.
 
 Choose a new root for managed data. PowerShell:
 

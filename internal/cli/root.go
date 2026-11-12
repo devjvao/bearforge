@@ -34,6 +34,7 @@ type options struct {
 	rendered                                bool
 	sequence                                uint64
 	activeRoot                              string
+	progressTitle                           string
 }
 
 func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) int {
@@ -54,7 +55,7 @@ func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		if o.json || o.output == "json" || o.output == "jsonl" {
 			_ = json.NewEncoder(out).Encode(r)
 		} else {
-			fmt.Fprintln(errOut, "Error:", err)
+			_ = o.diagnostic("Error:", err.Error())
 		}
 	}
 	if errors.Is(err, context.Canceled) {
@@ -93,6 +94,7 @@ func newRoot(o *options) *cobra.Command {
 	f.BoolVar(&o.yes, "yes", false, "Confirm the displayed operation")
 	f.IntVarP(&o.jobs, "jobs", "j", 0, "Concurrent workers (fetch default 4, exec default 1)")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		o.progressTitle = strings.TrimPrefix(cmd.CommandPath(), "bearforge ")
 		if o.json {
 			o.output = "json"
 		}
@@ -115,6 +117,7 @@ func newRoot(o *options) *cobra.Command {
 	}
 	addVersionCommand(root, o)
 	addCommands(root, o)
+	configureHelp(root, o)
 	return root
 }
 func isTerminal(stream any) bool {
@@ -175,7 +178,7 @@ func (o *options) perform(ctx context.Context, needsGit, progress bool, work fun
 		result, err = tui.Run(ctx, o.in, o.errOut, func(ctx context.Context, observe func(app.Event)) (app.Result, error) {
 			service.Observe = observe
 			return work(ctx, service)
-		})
+		}, tui.ProgressOptions{Title: o.progressTitle, Color: o.color})
 	} else {
 		var mu sync.Mutex
 		service.Observe = func(e app.Event) {
@@ -202,7 +205,7 @@ func (o *options) perform(ctx context.Context, needsGit, progress bool, work fun
 					observerErr = errors.Join(observerErr, writeErr)
 				}
 			} else if o.output == "human" && !o.quiet {
-				fmt.Fprintf(o.errOut, "%s: %s\n", e.Repository, e.State)
+				observerErr = errors.Join(observerErr, o.progressLine(e.Repository, e.State))
 			}
 		}
 		result, err = work(ctx, service)
@@ -228,6 +231,12 @@ func (o *options) render(r app.Result) error {
 	}
 	if o.output == "json" {
 		return json.NewEncoder(o.out).Encode(r)
+	}
+	if r.Command == "repo.list" && r.Problem == nil {
+		return o.renderRepositoryList(r, isTerminal(o.out))
+	}
+	if isTerminal(o.out) {
+		return o.renderResult(r)
 	}
 	for _, item := range r.Items {
 		name := item.Repository
@@ -300,16 +309,18 @@ func (o *options) confirm(ctx context.Context, plan app.Result) error {
 			name = item.Check
 		}
 		if move, ok := plan.Data.(app.RepositoryPlan); ok {
-			if _, err := fmt.Fprintf(o.errOut, "Move %s intact from %s to %s; local history is preserved and trash is never purged automatically\n", name, move.Source, move.Destination); err != nil {
+			if err := o.confirmationText("Move %s intact from %s to %s; local history is preserved and trash is never purged automatically\n", name, move.Source, move.Destination); err != nil {
 				return err
 			}
 		} else {
-			if _, err := fmt.Fprintf(o.errOut, "Apply %s to %s (%s)\n", plan.Command, name, item.Path); err != nil {
+			if err := o.confirmationText("Apply %s to %s (%s)\n", plan.Command, name, item.Path); err != nil {
 				return err
 			}
 		}
 	}
-	fmt.Fprint(o.errOut, "Proceed? [y/N] ")
+	if err := o.confirmationText("Proceed? [y/N] "); err != nil {
+		return err
+	}
 	line, err := readConfirmation(ctx, o.in)
 	if err != nil {
 		return err

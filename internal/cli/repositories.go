@@ -21,7 +21,9 @@ func addRepositoryLifecycleCommands(repo *cobra.Command, o *options) {
 				return plan, err
 			}
 			req.DryRun, req.ExpectedPlan, req.PlanOperation = false, plan.PlanDigest, plan.Data.(app.RepositoryPlan).Operation
-			return s.RetireRepository(ctx, req)
+			return o.operationProgress(ctx, s, func(ctx context.Context, s *app.Service) (app.Result, error) {
+				return s.RetireRepository(ctx, req)
+			})
 		})
 	}})
 	var operation string
@@ -36,7 +38,9 @@ func addRepositoryLifecycleCommands(repo *cobra.Command, o *options) {
 				return plan, err
 			}
 			req.DryRun, req.ExpectedPlan, req.PlanOperation = false, plan.PlanDigest, plan.Data.(app.RepositoryPlan).Operation
-			return s.RestoreRepository(ctx, req)
+			return o.operationProgress(ctx, s, func(ctx context.Context, s *app.Service) (app.Result, error) {
+				return s.RestoreRepository(ctx, req)
+			})
 		})
 	}}
 	restore.Flags().StringVar(&operation, "operation", "", "Original retirement operation ID")

@@ -20,7 +20,7 @@ func (m dashboardModel) workspaceView() tea.View {
 			summary = "Preview failed; no changes made"
 		}
 	case workspaceExecuting:
-		summary = "Working; q cancels and quits"
+		summary = m.workspaceProgressAction() + "; q cancels and quits"
 	case workspaceResults:
 		summary = "Result: " + displayText(run.result.Outcome)
 		if run.err != nil {
@@ -102,6 +102,19 @@ func (m dashboardModel) workspaceContent() []string {
 		}
 		return append(lines, "", "Press y to confirm this exact plan.")
 	case workspaceExecuting, workspaceResults:
+		if run.phase == workspaceExecuting {
+			completed := 0
+			for _, id := range run.names {
+				switch run.states[id] {
+				case "removed", "succeeded", "failed":
+					completed++
+				}
+			}
+			lines = append(lines, m.workspaceProgressAction()+"...", fmt.Sprintf("Repositories: %d/%d complete", completed, len(run.names)))
+			if run.action == workspaceCreate {
+				lines = append(lines, "Creating an empty workspace; no repositories are added.")
+			}
+		}
 		if run.result.Problem != nil && run.err == nil {
 			lines = append(lines, m.styles.bad.Render("Error: "+displayText(run.result.Problem.Message)))
 		}
@@ -139,11 +152,20 @@ func (m dashboardModel) workspaceContent() []string {
 				lines = append(lines, "Resume: "+command+"resume "+id)
 			}
 		}
-		if run.phase == workspaceExecuting && len(run.names) == 0 {
-			lines = append(lines, "Applying the workspace plan...")
-		}
 	}
 	return lines
+}
+
+func (m dashboardModel) workspaceProgressAction() string {
+	switch m.workspaceRun.action {
+	case workspaceCreate:
+		return "Creating workspace"
+	case workspaceRemoveRepo:
+		return "Removing worktrees"
+	case workspaceRemoveAll:
+		return "Removing workspace"
+	}
+	return string(m.workspaceRun.action)
 }
 
 // Quote for PowerShell on Windows and a POSIX shell elsewhere, keeping paths

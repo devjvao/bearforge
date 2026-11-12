@@ -50,7 +50,7 @@ Rust with Clap is a credible alternative if it is the maintainer's strongest lan
 
 TOML is a reasonable alternative for preferences, but YAML is easier to scan for nested repository and workspace maps. SQLite gives stronger transactions within its own database but cannot atomically commit Git operations, and binary files make team review harder. Avoid SQLite initially. A future disposable SQLite cache may index PR results or large status histories; it must never become authoritative for Git state.
 
-Use the current patched supported Go release for builds and test the newest two supported Go release families. Freeze an explicit toolchain in CI when implementation starts. The official release policy supports each major release until two newer majors exist. [Go release policy](https://go.dev/doc/devel/release#policy)
+Support only the latest stable Go release for source builds, CI and production releases. Pin its exact version in `go.mod` and use `go-version-file: go.mod` in every CI job; keep the production release toolchain requirement aligned. Test that release natively on Linux, macOS and Windows, with race detection on Linux. Older Go releases have no compatibility guarantee or CI jobs. [Go releases](https://go.dev/dl/)
 
 ## 3. Authority model
 

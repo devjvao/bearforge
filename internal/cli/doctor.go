@@ -15,7 +15,7 @@ func addDoctorCommand(root *cobra.Command, o *options) {
 		if len(args) == 1 {
 			workspace = args[0]
 		}
-		return o.perform(cmd.Context(), false, false, func(ctx context.Context, s *app.Service) (app.Result, error) {
+		return o.perform(cmd.Context(), false, true, func(ctx context.Context, s *app.Service) (app.Result, error) {
 			git, err := gitcli.New()
 			if err == nil {
 				s.Git = git
