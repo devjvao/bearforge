@@ -113,6 +113,10 @@ type dashboardModel struct {
 	workspaceID     uint64
 	workspaceRun    *dashboardWorkspace
 	showWorkspace   bool
+	prID            uint64
+	prRun           *dashboardPullRequestRun
+	prItems         map[string]app.Item
+	prErr           error
 }
 
 func newDashboardModel(ctx context.Context, source DashboardSource, workspace string) dashboardModel {
@@ -155,6 +159,7 @@ func (m dashboardModel) readCommand() tea.Cmd {
 }
 
 func (m dashboardModel) request(workspace string) (tea.Model, tea.Cmd) {
+	m.invalidatePullRequests()
 	m.cancel()
 	m.requestCtx, m.cancel = context.WithCancel(m.reader.ctx)
 	m.requestID++
@@ -189,6 +194,8 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch v := msg.(type) {
+	case dashboardPullRequestsMsg:
+		return m.updatePullRequests(v)
 	case dashboardWorkspacePreviewMsg, dashboardWorkspaceProgressMsg, dashboardWorkspaceDoneMsg:
 		return m.updateWorkspace(msg)
 	case dashboardChoicesMsg, dashboardAddPreviewMsg, dashboardAddProgressMsg, dashboardAddedMsg:
@@ -279,15 +286,22 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q":
 			return m.stop(nil)
 		case "s":
+			m.invalidatePullRequests()
 			return m.startSync()
 		case "a":
+			m.invalidatePullRequests()
 			return m.openAdd()
 		case "n":
+			m.invalidatePullRequests()
 			return m.openWorkspace(workspaceCreate)
 		case "d":
+			m.invalidatePullRequests()
 			return m.openWorkspace(workspaceRemoveRepo)
 		case "D":
+			m.invalidatePullRequests()
 			return m.openWorkspace(workspaceRemoveAll)
+		case "p", "P":
+			return m.startPullRequests(key == "P")
 		case "v":
 			if m.workspaceRun != nil && m.workspaceRun.phase == workspaceResults {
 				m.showWorkspace, m.workspaceRun.offset = !m.showWorkspace, 0

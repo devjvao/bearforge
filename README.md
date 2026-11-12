@@ -2,7 +2,7 @@
 
 Manage a single bare Git repository per project and materialize ordinary Git worktrees inside named workspaces.
 
-**Status: Phase 2 daily-use implementation.** The CLI supports bulk execution, read-only doctor checks and recoverable repository retirement/restoration alongside the interactive workspace dashboard. [Onboarding](docs/onboarding.md) covers setup and daily workflows; [release verification](docs/releases.md) covers deterministic artifacts, checksums and CI signing. Company private-repository validation is deferred to the maintainer after merge; disposable scale tests cover 60 repositories. Signed publication requires a reviewed, merged version tag. PR integrations belong to Phase 3. The design lives in [the blueprint](docs/architecture/0001-bearforge-blueprint.md).
+**Status: Phase 2 daily-use workflows with Phase 3 GitHub PR lookup.** The CLI supports bulk execution, read-only doctor checks, GitHub PR snapshots and recoverable repository retirement/restoration alongside the interactive workspace dashboard. [Onboarding](docs/onboarding.md) covers setup and daily workflows; [release verification](docs/releases.md) covers deterministic artifacts, checksums and CI signing. Company private-repository validation is deferred to the maintainer after merge; disposable scale tests cover 60 repositories. Signed publication requires a reviewed, merged version tag. The design lives in [the blueprint](docs/architecture/0001-bearforge-blueprint.md).
 
 ## Build
 
@@ -48,6 +48,7 @@ Removal refuses tracked changes, untracked/ignored content, special index flags,
 - `sync`, `status` (`--check` for automation)
 - `exec WORKSPACE -- COMMAND ARG...` (`--repo`, `--jobs`, `--fail-fast`, `--shell`, `--interactive`)
 - `doctor [WORKSPACE]` (read-only accumulated health/recovery checks)
+- `pr list WORKSPACE` (read-only GitHub PR lookup; `--repo`, `--base`, `--state`, `--refresh`)
 - `tui [WORKSPACE]` (interactive dashboard with sync, repository picker, and previewed workspace actions)
 - `operations list`, `show`, `resume`, `abandon`
 - `config validate`, `completion`, `version`
@@ -57,6 +58,24 @@ Removal refuses tracked changes, untracked/ignored content, special index flags,
 Bulk exec runs direct argv after `--` in verified worktree directories and defaults to one worker. A single quoted expression without `--` selects the platform shell; explicit `--shell sh|pwsh|powershell|cmd` is available. JSON captures bounded base64 output; JSONL streams sequenced events. Interrupted commands are never replayed by recovery. See [execution and automation](docs/onboarding.md#run-a-command-across-a-workspace).
 
 Catalogs use `schema_version: 2`. Retirement requires no workspace references and no linked worktrees; it moves the entire bare database into local trash without deletion or automatic purge. Restore requires the original retirement operation. See [safe lifecycle workflows](docs/onboarding.md#diagnose-and-retire-safely).
+
+## GitHub pull requests
+
+```sh
+bearforge pr list audit-feature
+bearforge pr list audit-feature --repo report-api --state all --refresh
+bearforge --output=json pr list audit-feature --base main
+bearforge --output=jsonl pr list audit-feature
+bearforge --dry-run pr list audit-feature
+```
+
+Lookup uses each verified worktree's actual branch and configured default remote, with open PRs by default. `--repo` is repeatable; `--base` overrides the workspace mapping's `pr_target`; `--state closed` includes closed/merged PRs. A fork match verifies source repository, branch, target repository and optional base. GitHub HTTPS, SSH and SCP-style remotes are recognized. Enterprise/custom hosts require explicit `provider` metadata; forks can set the upstream target with `repository` and infer `source_repository` from the actual remote. See [configuration examples](docs/onboarding.md#look-up-github-pull-requests).
+
+Public reads may be anonymous. Credentials come only from environment variables: `GH_TOKEN`, then `GITHUB_TOKEN`, for the default public API. Custom APIs require an explicit `token_env` to send a credential; an unset explicitly named variable is an authentication error. Git credentials and SSH agents do not authenticate this REST lookup. Fine-grained tokens need access to the target repository and **Pull requests: read**, as described in [GitHub's endpoint permissions](https://docs.github.com/en/rest/pulls/pulls#fine-grained-access-tokens-for-list-pull-requests). Never put token values in catalog metadata, URLs or command arguments.
+
+Human output includes PR metadata, `observed_at` and `cached`; JSON emits a final result and JSONL emits its sequenced final result. Each member reports matches, no matches, detached/unborn skips or an error. Failed/rate-limited/offline lookups are errors, never successful empty lists; independent members continue, with partial results and a nonzero exit on failure. Ctrl-C cancels/drains active I/O and exits 130. `--dry-run` resolves queries without HTTP. Lookup does not fetch, change refs/checkouts, acquire a mutation lock, or write a journal/cache file.
+
+The shared provider keeps at most 128 observations for 60 seconds in process memory, keyed by query and credential identity. A new CLI invocation starts empty; dashboard lookups reuse one client. `--refresh` (or dashboard `P`) bypasses cached successes, while rate-limit cooldowns still apply. Each provider lookup has a 30-second deadline, up to 100 pages, an 8 MiB response limit and at most two transient retries. Observations are timestamped snapshots; old displayed values are not a live promise. Company/private-enterprise validation remains maintainer-owned; see [verification status](docs/development/github-pr-lookup-progress.md).
 
 ## Workspace dashboard
 
@@ -71,6 +90,7 @@ The full-window dashboard lists workspaces and inspects only the selected worksp
 - Tab or Shift-Tab changes the active pane; arrows or `j`/`k` move selection.
 - `/` filters the active list by name, Enter accepts, and Escape clears.
 - `r` refreshes local observations. It never fetches or changes checkouts.
+- `p` looks up open GitHub PRs for the entire loaded workspace, including members hidden by filters; `P` bypasses the memory cache. Selected-repository details show metadata, no matches, skipped states, errors, observation time and cache status. Page Up/Down reveals complete titles and URLs. Lookup preserves local status, filters and selection, and keys remain usable during HTTP. Startup, navigation and `r` do not contact GitHub. Local refresh/workspace changes cancel and invalidate PR results; repeated `p`/`P` keys do not queue more requests while one is active or draining.
 - `n` opens the workspace creation form. Enter a portable name and optional default branch (blank uses the name); Tab switches fields, Enter previews, and `y` confirms. Creation makes an empty workspace; use `a` afterward to add repositories. Escape returns to edit the form. While typing, `q` is text; Ctrl-C cancels.
 - `d` previews removal of the selected repository in the repository pane. `D` previews removal of every member and the workspace definition, including members hidden by filters. Only `y` confirms. Dirty or unsafe worktrees are refused, branches/history are preserved, and unrelated workspace container files are retained. A changed preview requires review again.
 - `s` fetches/prunes all repositories in the current workspace, including rows hidden by filters. It uses the existing sync service, catalog worker limit (or `--jobs`), mutation lock and fetch safety checks. Only one sync runs at a time; workspace navigation does not retarget it. Sync leaves checked-out branches and files unchanged.
@@ -80,7 +100,7 @@ The full-window dashboard lists workspaces and inspects only the selected worksp
 - Confirmation replans under the existing mutation lock and checks the reviewed plan's root, workspace, definition revisions and resolved Git steps. If they changed, execution refuses before Git/journal effects; close the result and reopen the picker for a new preview. Successful repositories survive partial failures, and results show the operation's inspection/recovery commands. Recovery remains an explicit CLI action.
 - Escape closes the picker before execution or returns from completed results to the dashboard; `v` reopens the latest add results. While adding, the modal keeps its captured workspace and selection, and sync is unavailable. `q` or Ctrl-C cancels and drains active work through the normal stopping screen.
 - `v` reopens or hides the latest action's results. Page Up/Down scroll details, results and operation notices.
-- `q` exits successfully; Ctrl-C cancels. Both show a stopping state while cancelling and draining active reads and sync, then restore the terminal.
+- `q` exits successfully; Ctrl-C cancels. Both show a stopping state while cancelling and draining active reads, PR lookups and sync, then restore the terminal.
 
 At 90 columns and wider, workspace and repository panes appear side by side above the details. Narrower terminals show the active list; Tab switches lists. Pane borders and padding give way to a compact layout below 60 columns or 18 rows. Detail and operation-notice text wraps inside the available content width, so Page Up/Down can reveal full values and inspection commands. The minimum usable terminal is 36 columns by 12 rows. The alternate screen is restored on exit. Empty roots/workspaces have explicit empty states and browsing creates no directories, locks or journals. Observations are snapshots; external Git/editor activity may change state during inspection.
 
