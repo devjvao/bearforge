@@ -50,7 +50,7 @@ go run ./cmd/release --snapshot --version v0.2.0-snapshot --out .tmp/release-two
 
 Compare both `checksums.txt` files. With identical source, toolchain, targets and inputs, they should match byte for byte. `--targets windows/amd64,linux/amd64` limits a smoke build. Snapshot mode allows dirty source or a different supported Go patch and marks both explicitly in the manifest; snapshots have no production signature bundle. Local cross-builds do not prove native behavior on another OS.
 
-`bearforge version --json` reports the injected version, commit, dirty state, actual Go toolchain and platform. Production rebuilds need the exact pinned Go version and clean tagged checkout. The source module's lower Go version is a compatibility floor, not the production release toolchain pin.
+`bearforge version --json` reports the injected version, commit, dirty state, actual Go toolchain and platform. Production rebuilds need the exact pinned Go version and clean tagged checkout. Source builds, CI and production releases use the latest stable Go release pinned in `go.mod`; older Go releases are unsupported. CI and release workflows read that version directly from `go.mod`, and the production release toolchain requirement must match it.
 
 ## Publish a version
 

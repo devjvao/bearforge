@@ -87,10 +87,10 @@ func addCommands(root *cobra.Command, o *options) {
 		return r, err
 	})
 	for _, name := range []string{"show", "ls"} {
-		command(workspace, name+" NAME", "Show live workspace contents", cobra.ExactArgs(1), true, false, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) { return s.Status(ctx, a[0]) })
+		command(workspace, name+" NAME", "Show live workspace contents", cobra.ExactArgs(1), true, true, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) { return s.Status(ctx, a[0]) })
 	}
 	var check bool
-	status := command(root, "status WORKSPACE", "Report live worktree health", cobra.ExactArgs(1), true, false, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
+	status := command(root, "status WORKSPACE", "Report live worktree health", cobra.ExactArgs(1), true, true, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
 		r, err := s.Status(ctx, a[0])
 		if err == nil && check {
 			for _, item := range r.Items {
@@ -143,7 +143,9 @@ func addCommands(root *cobra.Command, o *options) {
 			}
 			req.DryRun = false
 			req.ExpectedPlan = plan.PlanDigest
-			return s.RemoveRepositories(ctx, req)
+			return o.operationProgress(ctx, s, func(ctx context.Context, s *app.Service) (app.Result, error) {
+				return s.RemoveRepositories(ctx, req)
+			})
 		})
 	}
 	command(ops, "list", "List recorded operations", cobra.NoArgs, false, false, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {

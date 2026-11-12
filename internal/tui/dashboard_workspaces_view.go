@@ -20,7 +20,7 @@ func (m dashboardModel) workspaceView() tea.View {
 			summary = "Preview failed; no changes made"
 		}
 	case workspaceExecuting:
-		summary = "Working; q cancels and quits"
+		summary = m.workspaceProgressAction() + "; q cancels and quits"
 	case workspaceResults:
 		summary = "Result: " + displayText(run.result.Outcome)
 		if run.err != nil {
@@ -28,14 +28,7 @@ func (m dashboardModel) workspaceView() tea.View {
 		}
 	}
 	lines := []string{m.styles.brand.Render("Bearforge / " + string(run.action)), "Workspace: " + displayText(run.workspace), m.styles.focus.Render(summary)}
-	content, height := m.workspaceWrappedContent(), m.addViewportHeight()
-	start := min(run.offset, max(0, len(content)-1))
-	body := make([]string, height)
-	for i := range body {
-		if start+i < len(content) {
-			body[i] = content[start+i]
-		}
-	}
+	body := viewportLines(m.workspaceWrappedContent(), run.offset, m.detailWidth(), m.addViewportHeight())
 	if m.framed() {
 		lines = append(lines, strings.Split(m.pane(body, m.width, true), "\n")...)
 	} else {
@@ -56,7 +49,7 @@ func (m dashboardModel) workspaceView() tea.View {
 	case workspaceResults:
 		second = "Esc dashboard | v view | q quit"
 	}
-	lines = append(lines, m.styles.muted.Render(first), second)
+	lines = append(lines, actionHelp(first, m.width, m.styles), actionHelp(second, m.width, m.styles))
 	return dashboardView(lines, m.width)
 }
 
@@ -102,6 +95,25 @@ func (m dashboardModel) workspaceContent() []string {
 		}
 		return append(lines, "", "Press y to confirm this exact plan.")
 	case workspaceExecuting, workspaceResults:
+		if run.phase == workspaceExecuting {
+			completed, failed := 0, 0
+			for _, id := range run.names {
+				switch run.states[id] {
+				case "removed", "succeeded":
+					completed++
+				case "failed":
+					completed++
+					failed++
+				}
+			}
+			lines = append(lines, m.workspaceProgressAction()+"...", fmt.Sprintf("Repositories: %d/%d complete", completed, len(run.names)))
+			if bar := m.batchProgress(completed, len(run.names), failed); bar != "" {
+				lines = append(lines, bar)
+			}
+			if run.action == workspaceCreate {
+				lines = append(lines, "Creating an empty workspace; no repositories are added.")
+			}
+		}
 		if run.result.Problem != nil && run.err == nil {
 			lines = append(lines, m.styles.bad.Render("Error: "+displayText(run.result.Problem.Message)))
 		}
@@ -139,11 +151,20 @@ func (m dashboardModel) workspaceContent() []string {
 				lines = append(lines, "Resume: "+command+"resume "+id)
 			}
 		}
-		if run.phase == workspaceExecuting && len(run.names) == 0 {
-			lines = append(lines, "Applying the workspace plan...")
-		}
 	}
 	return lines
+}
+
+func (m dashboardModel) workspaceProgressAction() string {
+	switch m.workspaceRun.action {
+	case workspaceCreate:
+		return "Creating workspace"
+	case workspaceRemoveRepo:
+		return "Removing worktrees"
+	case workspaceRemoveAll:
+		return "Removing workspace"
+	}
+	return string(m.workspaceRun.action)
 }
 
 // Quote for PowerShell on Windows and a POSIX shell elsewhere, keeping paths

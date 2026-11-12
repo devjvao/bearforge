@@ -44,14 +44,7 @@ func (m dashboardModel) addView() tea.View {
 	if run.phase == addPicking && len(m.addChoices()) > 0 {
 		body = m.addPickerLines(height)
 	} else {
-		content := m.addWrappedContent()
-		start := min(run.offset, max(0, len(content)-1))
-		body = make([]string, height)
-		for i := range body {
-			if start+i < len(content) {
-				body[i] = content[start+i]
-			}
-		}
+		body = viewportLines(m.addWrappedContent(), run.offset, m.detailWidth(), height)
 	}
 	if m.framed() {
 		lines = append(lines, strings.Split(m.pane(body, m.width, true), "\n")...)
@@ -85,7 +78,7 @@ func (m dashboardModel) addFooter() []string {
 	case addResults:
 		first, second = "PgUp/PgDn results", "Esc dashboard | v view | q quit"
 	}
-	return []string{m.styles.muted.Render(first), second}
+	return []string{actionHelp(first, m.width, m.styles), actionHelp(second, m.width, m.styles)}
 }
 
 func (m dashboardModel) addPickerLines(height int) []string {
@@ -120,13 +113,7 @@ func (m dashboardModel) addPickerLines(height int) []string {
 		}
 	}
 	start := max(0, selectedEnd-height)
-	visible := make([]string, height)
-	for i := range visible {
-		if start+i < len(content) {
-			visible[i] = content[start+i]
-		}
-	}
-	return visible
+	return viewportLines(content, start, m.detailWidth(), height)
 }
 
 func (m dashboardModel) addPickerIntroduction() []string {
@@ -189,6 +176,12 @@ func (m dashboardModel) addContent() []string {
 		return lines
 	case addExecuting, addResults:
 		lines := []string{m.styles.title.Render(m.addSummary())}
+		if run.phase == addExecuting {
+			created, unchanged, failed, _ := m.addCounts()
+			if bar := m.batchProgress(created+unchanged+failed, len(run.request.Repositories), failed); bar != "" {
+				lines = append(lines, bar)
+			}
+		}
 		if run.err != nil {
 			lines = append(lines, m.styles.bad.Render("Error: "+displayText(run.err.Error())))
 		}

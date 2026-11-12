@@ -129,22 +129,6 @@ func (m dashboardModel) repositoryColumns() (int, int) {
 	return repoWidth, width - repoWidth - 22
 }
 
-func listLines(title string, rows []string, selected, height int, empty string) []string {
-	lines := make([]string, height)
-	lines[0] = title
-	if len(rows) == 0 {
-		if height > 1 {
-			lines[1] = empty
-		}
-		return lines
-	}
-	start := max(0, selected-(height-2))
-	for i := 1; i < height && start+i-1 < len(rows); i++ {
-		lines[i] = rows[start+i-1]
-	}
-	return lines
-}
-
 func branchLabel(item app.Item) string {
 	if item.Status != nil && item.Status.Detached {
 		return "(detached)"

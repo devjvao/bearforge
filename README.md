@@ -6,7 +6,7 @@ Manage a single bare Git repository per project and materialize ordinary Git wor
 
 ## Build
 
-Requires Go 1.26+ and Git 2.40+.
+Requires Go 1.27.4 and Git 2.40+. Source builds, CI and releases support only the latest stable Go release, pinned in `go.mod`.
 
 ```sh
 go build -o bin/bearforge ./cmd/bearforge
@@ -87,6 +87,10 @@ At 90 columns and wider, workspace and repository panes appear side by side abov
 The dashboard adapts its palette to light or dark terminal backgrounds. Cyan indicates focus, green healthy states, amber attention and red failures; text labels and leading focus/selection markers remain available in every mode. `--color=auto` follows terminal capabilities, `--color=always` forces color, and `--color=never` disables color and text emphasis. Any nonempty `NO_COLOR` value also disables color and emphasis and takes precedence over `--color=always`. Terminal font and background remain under your terminal's control; the dashboard adds no animation.
 
 `tui` requires terminal stdin/stdout/stderr, `--ui=auto`, human output and interactive input. It refuses JSON/JSONL, quiet/no-input/dry-run, CI and `TERM=dumb`; use `status WORKSPACE --json` for automation. `--root` and `BEARFORGE_ROOT` work as for other commands. Starting without a workspace selects the first workspace alphabetically.
+
+CLI commands use Bubbles tables and complete wrapped documents with Lip Gloss styling when stdout is a terminal. Results print and exit without a pager or dismissal key. Workspace status includes change counts and upstream drift; repository inspection, retired repositories, operation history, dry-run plans and execution summaries have readable tables instead of raw JSON. Empty lists include guidance where applicable, and successful validation is explicit. Help headings, version metadata, progress, errors and confirmations use the same terminal color policy. Long names, commit hashes, paths and operation IDs wrap without losing data; static tables print every row. `--color=never`, any nonempty `NO_COLOR`, or `TERM=dumb` disables color and emphasis. Redirected output retains its plain format even with `--color=always`; JSON/JSONL, shell completions, child-process output and `workspace path` remain undecorated.
+
+Interactive `repo add`, `sync`, `workspace add` and `operations resume` use a compact Bubbles spinner with an operation title, elapsed time and repository states. `status`, `workspace show`/`ls` and `doctor` show checking feedback while reading local state. Workspace removal and repository removal/restoration start their execution progress only after confirmation, so the progress view never consumes confirmation input. Result tables switch to wrapped, labeled records when they cannot fit the terminal width, preserving full paths and status details. Progress labels consistently distinguish synced, skipped, not-run and cancelled states. The spinner shows activity, not an estimated Git transfer percentage. Ctrl-C or `q` cancels and waits for cleanup before returning; `--ui=plain`, quiet, noninteractive and machine modes retain their existing behavior. The dashboard uses Bubbles lists, detail viewports and contextual key help. Adding, syncing and removing workspace repositories show static completion bars only when the total is known, including failed items in completed work; empty workspace creation has no invented percentage.
 
 Exit codes: 0 success; 1 operation failure; 2 invalid input; 3 safety/conflict/confirmation refusal; 4 missing Git; 130 cancellation. Fetch updates remote tracking refs and never merges or resets checked-out branches. Status ahead/behind reflects locally fetched refs, not a live server query.
 
