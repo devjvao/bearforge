@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -89,7 +90,7 @@ func TestLookupRejectsIncompleteAndUnsafePages(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
-			c, q, _ := testServer(t, tc.kind, func(w http.ResponseWriter, r *http.Request) { calls++; fmt.Fprint(w, tc.body) })
+			c, q, _ := testServer(t, tc.kind, func(w http.ResponseWriter, r *http.Request) { calls++; _, _ = fmt.Fprint(w, tc.body) })
 			for range 2 {
 				_, err := c.Lookup(t.Context(), q, false)
 				assertCode(t, err, "provider_failed")
@@ -185,7 +186,7 @@ func TestRetriesAreBoundedAndErrorsSanitized(t *testing.T) {
 			c, q, _ := testServer(t, "bitbucket", func(w http.ResponseWriter, r *http.Request) {
 				calls++
 				w.WriteHeader(status)
-				fmt.Fprint(w, "secret body should never be returned")
+				_, _ = fmt.Fprint(w, "secret body should never be returned")
 			})
 			_, err := c.Lookup(t.Context(), q, false)
 			want := "provider_failed"
@@ -215,7 +216,7 @@ func TestRetriesAreBoundedAndErrorsSanitized(t *testing.T) {
 			w.WriteHeader(503)
 			return
 		}
-		fmt.Fprint(w, `{"values":[]}`)
+		_, _ = fmt.Fprint(w, `{"values":[]}`)
 	})
 	if _, err := c.Lookup(t.Context(), q, false); err != nil || calls != 3 {
 		t.Fatalf("transient recovery: %v calls=%d", err, calls)
@@ -229,7 +230,7 @@ func TestCancellationWhileQueued(t *testing.T) {
 		calls.Add(1)
 		close(entered)
 		<-release
-		fmt.Fprint(w, `{"values":[]}`)
+		_, _ = fmt.Fprint(w, `{"values":[]}`)
 	})
 	done := make(chan error, 1)
 	go func() { _, err := c.Lookup(context.Background(), q, false); done <- err }()
@@ -256,7 +257,7 @@ func TestCancellationWhileQueued(t *testing.T) {
 
 func TestLookupBounds(t *testing.T) {
 	t.Run("response bytes", func(t *testing.T) {
-		c, q, _ := testServer(t, "bitbucket", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, strings.Repeat(" ", 8*1024*1024+1)) })
+		c, q, _ := testServer(t, "bitbucket", func(w http.ResponseWriter, r *http.Request) { _, _ = fmt.Fprint(w, strings.Repeat(" ", 8*1024*1024+1)) })
 		_, err := c.Lookup(t.Context(), q, false)
 		assertCode(t, err, "provider_failed")
 		if !strings.Contains(err.Error(), "8 MiB") {
@@ -275,4 +276,24 @@ func TestLookupBounds(t *testing.T) {
 			t.Fatalf("page bound sent %d requests", calls)
 		}
 	})
+}
+
+func TestTransientNetworkFailuresRetry(t *testing.T) {
+	for _, failure := range []error{io.EOF, io.ErrUnexpectedEOF, syscall.ECONNRESET, syscall.ECONNABORTED} {
+		t.Run(failure.Error(), func(t *testing.T) {
+			calls := 0
+			client := NewClient()
+			client.httpClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				calls++
+				if calls < 3 {
+					return nil, failure
+				}
+				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"values":[]}`)), Request: r}, nil
+			})
+			q := domain.PullRequestQuery{Provider: "bitbucket", Host: "bitbucket.org", APIURL: "https://api.example.com/2.0", Repository: "team/api", SourceRepository: "team/api", Branch: "actual", State: "open"}
+			if _, err := client.Lookup(t.Context(), q, false); err != nil || calls != 3 {
+				t.Fatalf("transient read failed instead of retrying: %v calls=%d", err, calls)
+			}
+		})
+	}
 }

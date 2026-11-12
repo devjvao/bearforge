@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -87,7 +88,7 @@ func (c *Client) get(ctx context.Context, origin, endpoint *url.URL, path, token
 		status := response.StatusCode
 		limited := c.observeRateLimit(response, host)
 		if status != http.StatusOK {
-			response.Body.Close()
+			_ = response.Body.Close()
 			if limited {
 				return nil, nil, coolingDown()
 			}
@@ -100,7 +101,7 @@ func (c *Client) get(ctx context.Context, origin, endpoint *url.URL, path, token
 			return nil, nil, statusError(status)
 		}
 		body, err := io.ReadAll(io.LimitReader(response.Body, 8*1024*1024+1))
-		response.Body.Close()
+		_ = response.Body.Close()
 		if ctx.Err() != nil {
 			return nil, nil, ctx.Err()
 		}
@@ -171,7 +172,9 @@ func statusError(status int) error {
 
 func transientNetwork(err error) bool {
 	var network net.Error
-	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || (errors.As(err, &network) && (network.Timeout() || network.Temporary()))
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) ||
+		(errors.As(err, &network) && network.Timeout())
 }
 
 func retryWait(ctx context.Context, attempt int) error {

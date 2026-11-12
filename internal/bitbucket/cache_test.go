@@ -52,7 +52,7 @@ func TestCacheExpiryCopiesCredentialsAndRefresh(t *testing.T) {
 
 func TestCacheCapacity(t *testing.T) {
 	calls := 0
-	c, q, _ := testServer(t, "bitbucket", func(w http.ResponseWriter, r *http.Request) { calls++; fmt.Fprint(w, `{"values":[]}`) })
+	c, q, _ := testServer(t, "bitbucket", func(w http.ResponseWriter, r *http.Request) { calls++; _, _ = fmt.Fprint(w, `{"values":[]}`) })
 	now := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
 	c.now = func() time.Time { return now }
 	for i := range 129 {

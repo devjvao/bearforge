@@ -55,17 +55,17 @@ func lookupFixtureResponse(t *testing.T, w http.ResponseWriter, r *http.Request)
 		if r.URL.Query().Get("head") != "source:review" {
 			t.Error("GitHub lost actual branch")
 		}
-		fmt.Fprint(w, `[{"number":11,"title":"GitHub fixture","html_url":"https://github.com/target/api/pull/11","state":"open","updated_at":"2026-11-12T12:00:00Z","head":{"ref":"review","repo":{"full_name":"source/api"}},"base":{"ref":"main","repo":{"full_name":"target/api"}}}]`)
+		_, _ = fmt.Fprint(w, `[{"number":11,"title":"GitHub fixture","html_url":"https://github.com/target/api/pull/11","state":"open","updated_at":"2026-11-12T12:00:00Z","head":{"ref":"review","repo":{"full_name":"source/api"}},"base":{"ref":"main","repo":{"full_name":"target/api"}}}]`)
 	case "/cloud/repositories/target/web/pullrequests":
 		if !strings.Contains(r.URL.Query().Get("q"), `source.branch.name = "review"`) {
 			t.Error("Cloud lost actual branch")
 		}
-		fmt.Fprint(w, `{"values":[{"id":22,"title":"Bitbucket fixture","state":"OPEN","updated_on":"2026-11-12T12:00:00Z","links":{"html":{"href":"https://bitbucket.org/target/web/pull-requests/22"}},"source":{"branch":{"name":"review"},"repository":{"full_name":"source/web"}},"destination":{"branch":{"name":"main"},"repository":{"full_name":"target/web"}}}]}`)
+		_, _ = fmt.Fprint(w, `{"values":[{"id":22,"title":"Bitbucket fixture","state":"OPEN","updated_on":"2026-11-12T12:00:00Z","links":{"html":{"href":"https://bitbucket.org/target/web/pull-requests/22"}},"source":{"branch":{"name":"review"},"repository":{"full_name":"source/web"}},"destination":{"branch":{"name":"main"},"repository":{"full_name":"target/web"}}}]}`)
 	case "/bb/rest/api/1.0/projects/TEAM/repos/web/pull-requests":
 		if r.URL.Query().Get("direction") != "INCOMING" {
 			t.Error("Server lost target direction")
 		}
-		fmt.Fprint(w, `{"isLastPage":true,"values":[{"id":33,"title":"Bitbucket fixture","state":"OPEN","updatedDate":1794484800000,"links":{"self":[{"href":"https://company.example.com/projects/TEAM/repos/web/pull-requests/33"}]},"fromRef":{"id":"refs/heads/review","repository":{"slug":"web","project":{"key":"~alice"}}},"toRef":{"id":"refs/heads/main","repository":{"slug":"web","project":{"key":"TEAM"}}}}]}`)
+		_, _ = fmt.Fprint(w, `{"isLastPage":true,"values":[{"id":33,"title":"Bitbucket fixture","state":"OPEN","updatedDate":1794484800000,"links":{"self":[{"href":"https://company.example.com/projects/TEAM/repos/web/pull-requests/33"}]},"fromRef":{"id":"refs/heads/review","repository":{"slug":"web","project":{"key":"~alice"}}},"toRef":{"id":"refs/heads/main","repository":{"slug":"web","project":{"key":"TEAM"}}}}]}`)
 	default:
 		t.Errorf("wrong provider endpoint: %s", r.URL)
 		http.NotFound(w, r)
