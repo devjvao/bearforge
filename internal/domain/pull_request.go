@@ -4,6 +4,7 @@ import "time"
 
 // PullRequestQuery identifies the target repository and the actual head identity.
 type PullRequestQuery struct {
+	Provider         string `json:"provider,omitempty"`
 	Host             string `json:"host"`
 	APIURL           string `json:"api_url"`
 	Repository       string `json:"repository"`
