@@ -90,16 +90,19 @@ func (c *Client) readPages(ctx context.Context, origin, endpoint *url.URL, q dom
 }
 
 func sameOrigin(origin, target *url.URL) bool {
-	if target.Scheme != "https" || target.User != nil || target.Fragment != "" || !strings.EqualFold(origin.Hostname(), target.Hostname()) {
+	if target.Scheme != "https" || target.User != nil || target.Fragment != "" {
 		return false
 	}
-	port := func(u *url.URL) string {
-		if u.Port() == "" {
-			return "443"
-		}
-		return u.Port()
+	return apiHost(origin) == apiHost(target)
+}
+
+// apiHost gives HTTPS origin checks and request state one authority identity.
+func apiHost(u *url.URL) string {
+	port := u.Port()
+	if port == "" {
+		port = "443"
 	}
-	return port(origin) == port(target)
+	return net.JoinHostPort(strings.ToLower(u.Hostname()), port)
 }
 
 func nextPage(header http.Header, current, origin *url.URL) (*url.URL, error) {

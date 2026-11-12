@@ -9,9 +9,12 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"bearforge/internal/domain"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -362,5 +365,109 @@ func TestInvalidQueriesNeverReachTransport(t *testing.T) {
 	}
 	if requests != 0 {
 		t.Fatalf("invalid queries reached transport %d times", requests)
+	}
+}
+
+// Route virtual HTTPS origins through one isolated TLS server while retaining
+// the configured URLs at the provider's queue/cooldown boundary.
+func routeAPIOrigins(c *Client, server *httptest.Server) {
+	transport := c.httpClient.Transport
+	target, _ := url.Parse(server.URL)
+	c.httpClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		clone := r.Clone(r.Context())
+		clone.URL.Scheme, clone.URL.Host = target.Scheme, target.Host
+		return transport.RoundTrip(clone)
+	})
+}
+
+func TestEquivalentAPIOriginsShareSerialization(t *testing.T) {
+	for _, tc := range []struct {
+		name, first, second string
+		equivalent          bool
+	}{
+		{"implicit then explicit", "https://ghe.example/api/v3", "https://GHE.EXAMPLE:443/api/v3", true},
+		{"explicit then implicit", "https://GHE.EXAMPLE:443/api/v3", "https://ghe.example/api/v3", true},
+		{"nondefault port remains separate", "https://ghe.example/api/v3", "https://ghe.example:8443/api/v3", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entered, release := make(chan struct{}), make(chan struct{})
+			var requests atomic.Int32
+			c, q, server := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+				if requests.Add(1) == 1 {
+					close(entered)
+					<-release
+				}
+				fmt.Fprint(w, "[]")
+			})
+			routeAPIOrigins(c, server)
+			releaseFirst := sync.OnceFunc(func() { close(release) })
+			defer releaseFirst()
+			q.APIURL = tc.first
+			firstResult := make(chan error, 1)
+			go func() { _, err := c.Lookup(context.Background(), q, true); firstResult <- err }()
+			select {
+			case <-entered:
+			case <-time.After(time.Second):
+				t.Fatal("first lookup did not reach server")
+			}
+			q.APIURL = tc.second
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+			_, err := c.Lookup(ctx, q, true)
+			if tc.equivalent {
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Errorf("equivalent origin bypassed queue: %v", err)
+				}
+				if got := requests.Load(); got != 1 {
+					t.Errorf("overlapping server requests = %d; want 1", got)
+				}
+			} else if err != nil {
+				t.Errorf("nondefault port incorrectly shared queue: %v", err)
+			}
+			releaseFirst()
+			select {
+			case err := <-firstResult:
+				if err != nil {
+					t.Errorf("first lookup failed: %v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("first lookup did not drain")
+			}
+		})
+	}
+}
+
+func TestEquivalentAPIOriginsShareCooldown(t *testing.T) {
+	for _, tc := range []struct{ name, first, second string }{
+		{"implicit then explicit", "https://ghe.example/api/v3", "https://GHE.EXAMPLE:443/api/v3"},
+		{"explicit then implicit", "https://GHE.EXAMPLE:443/api/v3", "https://ghe.example/api/v3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests atomic.Int32
+			c, q, server := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+				if requests.Add(1) == 1 {
+					w.Header().Set("Retry-After", "120")
+					w.WriteHeader(http.StatusTooManyRequests)
+				}
+				fmt.Fprint(w, "[]")
+			})
+			routeAPIOrigins(c, server)
+			q.APIURL = tc.first
+			_, err := c.Lookup(context.Background(), q, true)
+			errorCode(t, err, "rate_limited")
+			q.APIURL = tc.second
+			_, err = c.Lookup(context.Background(), q, true)
+			var de *domain.Error
+			if !errors.As(err, &de) || de.Code != "rate_limited" {
+				t.Errorf("equivalent origin bypassed cooldown: %v", err)
+			}
+			if got := requests.Load(); got != 1 {
+				t.Errorf("requests during cooldown = %d; want 1", got)
+			}
+			q.APIURL = "https://ghe.example:8443/api/v3"
+			if _, err = c.Lookup(context.Background(), q, true); err != nil {
+				t.Errorf("nondefault port incorrectly shared cooldown: %v", err)
+			}
+		})
 	}
 }
