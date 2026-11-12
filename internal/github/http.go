@@ -17,7 +17,10 @@ import (
 
 const maxResponseBytes = 8 * 1024 * 1024
 
-var errUnsafeRedirect = errors.New("unsafe GitHub redirect")
+var (
+	errUnsafeRedirect      = errors.New("unsafe GitHub redirect")
+	errRateLimitedRedirect = errors.New("rate-limited GitHub redirect")
+)
 
 type apiRepository struct {
 	FullName string `json:"full_name"`
@@ -186,14 +189,23 @@ func linkValues(line string) ([]string, error) {
 func (c *Client) get(ctx context.Context, origin, endpoint *url.URL, token string, host *hostState) ([]byte, http.Header, *url.URL, error) {
 	client := *c.httpClient
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if req.Response != nil {
+			c.observeRateLimit(req.Response, host)
+		}
 		if len(via) >= 10 || req.Method != http.MethodGet || !sameOrigin(origin, req.URL) {
 			return errUnsafeRedirect
+		}
+		if c.now().Before(host.cooldown) {
+			return errRateLimitedRedirect
 		}
 		return nil
 	}
 	for attempt := 0; attempt < 3; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, nil, err
+		}
+		if c.now().Before(host.cooldown) {
+			return nil, nil, nil, domain.E("rate_limited", "GitHub API is cooling down; retry later")
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 		if err != nil {
@@ -213,6 +225,9 @@ func (c *Client) get(ctx context.Context, origin, endpoint *url.URL, token strin
 			if errors.Is(err, errUnsafeRedirect) {
 				return nil, nil, nil, domain.E("provider_failed", "GitHub returned an unsafe redirect")
 			}
+			if errors.Is(err, errRateLimitedRedirect) {
+				return nil, nil, nil, domain.E("rate_limited", "GitHub API is cooling down; retry later")
+			}
 			if attempt < 2 && transientNetwork(err) {
 				if err := retryWait(ctx, attempt); err != nil {
 					return nil, nil, nil, err
@@ -223,10 +238,7 @@ func (c *Client) get(ctx context.Context, origin, endpoint *url.URL, token strin
 		}
 		header := response.Header
 		status := response.StatusCode
-		limited := status == 429 || header.Get("Retry-After") != "" || header.Get("X-RateLimit-Remaining") == "0"
-		if limited {
-			host.cooldown = cooldownUntil(header, c.now())
-		}
+		limited := c.observeRateLimit(response, host)
 		if status != http.StatusOK {
 			response.Body.Close()
 			if limited {
@@ -260,6 +272,17 @@ func (c *Client) get(ctx context.Context, origin, endpoint *url.URL, token strin
 		return body, header, response.Request.URL, nil
 	}
 	return nil, nil, nil, domain.E("provider_failed", "GitHub API request failed")
+}
+
+// Redirect responses are inspected before net/http follows them, using the
+// same cooldown policy as responses returned by Do.
+func (c *Client) observeRateLimit(response *http.Response, host *hostState) bool {
+	header := response.Header
+	limited := response.StatusCode == 429 || header.Get("Retry-After") != "" || header.Get("X-RateLimit-Remaining") == "0"
+	if limited {
+		host.cooldown = cooldownUntil(header, c.now())
+	}
+	return limited
 }
 
 func statusError(status int) error {

@@ -471,3 +471,77 @@ func TestEquivalentAPIOriginsShareCooldown(t *testing.T) {
 		})
 	}
 }
+
+func TestSuccessfulPageExhaustionStopsPaginationWithoutCaching(t *testing.T) {
+	for _, mode := range []string{"reset", "retry-after"} {
+		t.Run(mode, func(t *testing.T) {
+			now := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
+			var requests, pageTwo atomic.Int32
+			c, q, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.URL.Query().Get("page") == "2" {
+					pageTwo.Add(1)
+					fmt.Fprint(w, "[]")
+					return
+				}
+				if mode == "reset" {
+					w.Header().Set("X-RateLimit-Remaining", "0")
+					w.Header().Set("X-RateLimit-Reset", fmt.Sprint(now.Add(120*time.Second).Unix()))
+				} else {
+					w.Header().Set("Retry-After", "120")
+				}
+				w.Header().Set("Link", `<https://`+r.Host+`/?page=2>; rel="next"`)
+				fmt.Fprint(w, "["+pullJSON(1, "alice/fork", "feature/pr", "upstream/project", "main", "open", "null")+"]")
+			})
+			c.now = func() time.Time { return now }
+			for range 2 {
+				obs, err := c.Lookup(context.Background(), q, false)
+				errorCode(t, err, "rate_limited")
+				if obs.PullRequests != nil || !obs.ObservedAt.IsZero() || obs.Cached {
+					t.Fatalf("partial result or cached failure: %#v", obs)
+				}
+			}
+			if requests.Load() != 1 || pageTwo.Load() != 0 {
+				t.Fatalf("requests=%d page2=%d; want 1,0", requests.Load(), pageTwo.Load())
+			}
+		})
+	}
+}
+
+func TestRedirectRateLimitStopsFollowupWithoutCaching(t *testing.T) {
+	for _, mode := range []string{"reset", "retry-after"} {
+		t.Run(mode, func(t *testing.T) {
+			now := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
+			var requests, redirected atomic.Int32
+			c, q, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.URL.Path == "/redirected" {
+					redirected.Add(1)
+					fmt.Fprint(w, "[]")
+					return
+				}
+				if mode == "reset" {
+					w.Header().Set("X-RateLimit-Remaining", "0")
+					w.Header().Set("X-RateLimit-Reset", fmt.Sprint(now.Add(120*time.Second).Unix()))
+				} else {
+					w.Header().Set("Retry-After", "120")
+				}
+				http.Redirect(w, r, "/redirected?private=secret", http.StatusFound)
+			})
+			c.now = func() time.Time { return now }
+			for range 2 {
+				obs, err := c.Lookup(context.Background(), q, false)
+				if requests.Load() != 1 || redirected.Load() != 0 {
+					t.Errorf("requests=%d redirect followups=%d; want 1,0", requests.Load(), redirected.Load())
+				}
+				errorCode(t, err, "rate_limited")
+				if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "/redirected") {
+					t.Fatalf("unsafe error: %v", err)
+				}
+				if obs.PullRequests != nil || !obs.ObservedAt.IsZero() || obs.Cached {
+					t.Fatalf("partial result or cached failure: %#v", obs)
+				}
+			}
+		})
+	}
+}
