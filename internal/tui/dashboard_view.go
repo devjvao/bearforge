@@ -193,6 +193,9 @@ func (m dashboardModel) detailContent() []string {
 	if item.Problem != nil {
 		lines = append(lines, m.styles.bad.Render("Error: "+displayText(item.Problem.Message)))
 	}
+	if _, ok := m.reader.source.(DashboardPullRequester); ok {
+		lines = append(lines, m.pullRequestContent(item.Repository)...)
+	}
 	return m.appendNotices(lines)
 }
 

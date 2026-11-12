@@ -10,7 +10,7 @@ import (
 
 func (m dashboardModel) View() tea.View {
 	if m.width < 36 || m.height < 12 {
-		lines := []string{"Terminal too small", "Resize to at least 36x12", "q quit | Ctrl-C cancel"}
+		lines := []string{"Terminal too small", "Resize to at least 36x12", "p PRs | P refresh", "q quit | Ctrl-C cancel"}
 		if m.stopping {
 			lines[0] = "Stopping; waiting for active work..."
 		}
@@ -116,6 +116,9 @@ func (m dashboardModel) headerLines() []string {
 		m.styles.focus.Render(summary),
 		state,
 	}
+	if feedback := m.pullRequestHeader(); feedback != "" {
+		header = append(header, feedback)
+	}
 	if m.loadErr != nil {
 		header = append(header, m.styles.bad.Render("Error: "+displayText(m.loadErr.Error())+" (r retry)"))
 	}
@@ -132,10 +135,10 @@ func (m dashboardModel) footerLines() []string {
 	if m.editing {
 		return []string{m.styles.muted.Render("Type to filter"), actionHelp("Enter apply | Esc clear | Ctrl-C cancel", m.width, m.styles)}
 	}
-	actions := actionHelp("n new | d repo | D workspace | PgUp/PgDn details | Ctrl-C cancel", m.width, m.styles)
+	actions := actionHelp("p PRs | P refresh | n new | d repo | D workspace | PgUp/PgDn details | Ctrl-C cancel", m.width, m.styles)
 	footer := actionHelp("q quit | Tab panes | j/k move | / filter | r refresh | s sync | a add | v view", m.width, m.styles)
 	if m.width < 70 {
-		actions = keyboardHelp(actionBindings("n new", "d/D remove", "PgUp/PgDn", "^C"), m.width, " ", m.styles)
+		actions = keyboardHelp(actionBindings("p PRs", "P refresh", "PgUp/PgDn", "^C", "n new", "d/D remove"), m.width, " ", m.styles)
 		footer = actionHelp("q quit | s sync | a add | Tab panes | / filter | r refresh | v view", m.width, m.styles)
 	}
 	return []string{actions, footer}

@@ -93,20 +93,21 @@ type Problem struct {
 	Message string `json:"message"`
 }
 type Item struct {
-	Check          string                `json:"check,omitempty"`
-	Repository     string                `json:"repository,omitempty"`
-	Workspace      string                `json:"workspace,omitempty"`
-	Path           string                `json:"path,omitempty"`
-	Branch         string                `json:"branch,omitempty"`
-	ExpectedBranch string                `json:"expected_branch,omitempty"`
-	Base           string                `json:"base,omitempty"`
-	Start          string                `json:"start,omitempty"`
-	Tracking       string                `json:"tracking,omitempty"`
-	CreateBranch   bool                  `json:"create_branch,omitempty"`
-	Outcome        string                `json:"outcome"`
-	Status         *domain.Status        `json:"status,omitempty"`
-	Problem        *Problem              `json:"error,omitempty"`
-	Execution      *domain.ProcessResult `json:"execution,omitempty"`
+	Check          string                         `json:"check,omitempty"`
+	Repository     string                         `json:"repository,omitempty"`
+	Workspace      string                         `json:"workspace,omitempty"`
+	Path           string                         `json:"path,omitempty"`
+	Branch         string                         `json:"branch,omitempty"`
+	ExpectedBranch string                         `json:"expected_branch,omitempty"`
+	Base           string                         `json:"base,omitempty"`
+	Start          string                         `json:"start,omitempty"`
+	Tracking       string                         `json:"tracking,omitempty"`
+	CreateBranch   bool                           `json:"create_branch,omitempty"`
+	Outcome        string                         `json:"outcome"`
+	Status         *domain.Status                 `json:"status,omitempty"`
+	Problem        *Problem                       `json:"error,omitempty"`
+	Execution      *domain.ProcessResult          `json:"execution,omitempty"`
+	PullRequests   *domain.PullRequestObservation `json:"pull_requests,omitempty"`
 }
 type Result struct {
 	Version     int      `json:"schema_version"`
@@ -134,6 +135,7 @@ type Service struct {
 	Journal  Journal
 	Observe  func(Event)
 	Executor ProcessRunner
+	PRs      PullRequestProvider
 }
 
 func New(store IntentStore, git Git, journal Journal) *Service {
