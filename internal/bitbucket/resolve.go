@@ -14,6 +14,7 @@ var (
 	hostLabelPattern = regexp.MustCompile(`^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?$`)
 	componentPattern = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$`)
 	envPattern       = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+	sshAliasPattern  = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 )
 
 type remoteIdentity struct {
@@ -87,11 +88,13 @@ func parseRemote(raw string, server bool) (remoteIdentity, error) {
 	}
 	var identity remoteIdentity
 	var path string
+	ssh := true // SCP-style remotes may name an OpenSSH alias rather than DNS.
 	if strings.Contains(raw, "://") {
 		u, err := url.Parse(raw)
-		if err != nil || (u.Scheme != "https" && u.Scheme != "ssh") || u.Host == "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || !validHost(u.Hostname()) || !validPort(u.Port()) || !safePath(u) {
+		if err != nil || (u.Scheme != "https" && u.Scheme != "ssh") || u.Host == "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || !validRemoteHost(u.Hostname(), u.Scheme == "ssh") || !validPort(u.Port()) || !safePath(u) {
 			return identity, invalid
 		}
+		ssh = u.Scheme == "ssh"
 		if u.User != nil {
 			if _, password := u.User.Password(); password || strings.ContainsFunc(u.User.Username(), unicode.IsControl) {
 				return identity, invalid
@@ -117,10 +120,14 @@ func parseRemote(raw string, server bool) (remoteIdentity, error) {
 		identity.host, path = strings.ToLower(authority), coordinates
 	}
 	identity.repository = strings.TrimSuffix(path, ".git")
-	if !validHost(identity.host) || !validRepository(identity.repository, server) {
+	if !validRemoteHost(identity.host, ssh) || !validRepository(identity.repository, server) {
 		return remoteIdentity{}, invalid
 	}
 	return identity, nil
+}
+
+func validRemoteHost(host string, ssh bool) bool {
+	return validHost(host) || (ssh && len(host) <= 253 && sshAliasPattern.MatchString(host))
 }
 
 func validHost(host string) bool {

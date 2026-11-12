@@ -76,6 +76,11 @@ func TestLookupRejectsIncompleteAndUnsafePages(t *testing.T) {
 		{name: "null envelope", kind: "bitbucket", body: `null`},
 		{name: "missing values", kind: "bitbucket", body: `{}`},
 		{name: "null values", kind: "bitbucket", body: `{"values":null}`},
+		{name: "Cloud outstanding pages without next", kind: "bitbucket", body: `{"values":[],"page":1,"pagelen":100,"size":101}`},
+		{name: "Cloud incomplete last page", kind: "bitbucket", body: `{"values":[],"page":1,"pagelen":100,"size":1}`},
+		{name: "Cloud negative size", kind: "bitbucket", body: `{"values":[],"page":1,"pagelen":100,"size":-1}`},
+		{name: "Cloud nonpositive page", kind: "bitbucket", body: `{"values":[],"page":0,"pagelen":100,"size":0}`},
+		{name: "Cloud nonpositive pagelen", kind: "bitbucket", body: `{"values":[],"page":1,"pagelen":0,"size":0}`},
 		{name: "cross origin next", kind: "bitbucket", body: `{"values":[],"next":"https://other.example.com/repositories/upstream/api/pullrequests"}`},
 		{name: "different repository next", kind: "bitbucket", body: `{"values":[],"next":"/repositories/other/api/pullrequests?page=2"}`},
 		{name: "next credentials", kind: "bitbucket", body: `{"values":[],"next":"https://secret@other.example.com/"}`},
@@ -295,5 +300,21 @@ func TestTransientNetworkFailuresRetry(t *testing.T) {
 				t.Fatalf("transient read failed instead of retrying: %v calls=%d", err, calls)
 			}
 		})
+	}
+}
+
+func TestCloudCompletePaginationMetadata(t *testing.T) {
+	calls := 0
+	client, q, _ := testServer(t, "bitbucket", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		page := map[string]any{"values": []any{cloudPR(calls, "OPEN", "alice/fork", "feature/pr", "upstream/api", "main")}, "page": calls, "pagelen": 1, "size": 2}
+		if calls == 1 {
+			page["next"] = "?page=2"
+		}
+		writePage(t, w, page)
+	})
+	obs, err := client.Lookup(t.Context(), q, false)
+	if err != nil || len(obs.PullRequests) != 2 || calls != 2 {
+		t.Fatalf("complete pages: %+v %v calls=%d", obs, err, calls)
 	}
 }

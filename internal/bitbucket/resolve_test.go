@@ -45,6 +45,8 @@ func TestResolveServerRemotesAndOverrides(t *testing.T) {
 		{name: "SCP personal project", remote: "git@git.example.com:~alice/api.git", repository: "~alice/api", api: "https://git.example.com/rest/api/1.0"},
 		{name: "explicit API", remote: "git@git.example.com:TEAM/api.git", repository: "UPSTREAM/api", api: "https://api.example.com/bb/rest/api/latest", provider: map[string]string{"repository": "UPSTREAM/api", "api_url": "https://api.example.com/bb/rest/api/latest/", "token_env": "COMPANY_BITBUCKET_TOKEN"}},
 		{name: "complete explicit SSH alias", remote: "git@company-alias:TEAM/api.git", repository: "UPSTREAM/api", api: "https://git.example.com/rest/api/1.0", provider: map[string]string{"host": "git.example.com", "repository": "UPSTREAM/api", "source_repository": "TEAM/api"}},
+		{name: "complete explicit SCP underscore alias", remote: "git@company_work:TEAM/api.git", repository: "UPSTREAM/api", api: "https://git.example.com/rest/api/1.0", provider: map[string]string{"host": "git.example.com", "repository": "UPSTREAM/api", "source_repository": "TEAM/api"}},
+		{name: "complete explicit SSH underscore alias", remote: "ssh://git@company_work:7999/TEAM/api.git", repository: "UPSTREAM/api", api: "https://git.example.com/rest/api/1.0", provider: map[string]string{"host": "git.example.com", "repository": "UPSTREAM/api", "source_repository": "TEAM/api"}},
 		{name: "complete explicit local remote", remote: "D:/fixtures/api.git", repository: "TEAM/api", api: "https://git.example.com/rest/api/1.0", provider: map[string]string{"host": "git.example.com", "repository": "TEAM/api", "source_repository": "TEAM/api"}},
 	}
 	for _, tc := range cases {
