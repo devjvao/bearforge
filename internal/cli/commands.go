@@ -14,6 +14,7 @@ func addCommands(root *cobra.Command, o *options) {
 	addDashboardCommand(root, o)
 	addExecCommand(root, o)
 	addDoctorCommand(root, o)
+	addPullRequestCommands(root, o)
 	repo := &cobra.Command{Use: "repo", Short: "Manage bare repositories"}
 	workspace := &cobra.Command{Use: "workspace", Short: "Manage workspaces"}
 	ops := &cobra.Command{Use: "operations", Short: "Inspect and recover interrupted operations"}

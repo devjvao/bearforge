@@ -20,6 +20,7 @@ import (
 	"bearforge/internal/config"
 	"bearforge/internal/domain"
 	"bearforge/internal/gitcli"
+	"bearforge/internal/github"
 	"bearforge/internal/operation"
 	"bearforge/internal/process"
 	"bearforge/internal/tui"
@@ -35,6 +36,7 @@ type options struct {
 	sequence                                uint64
 	activeRoot                              string
 	progressTitle                           string
+	pullRequestProvider                     app.PullRequestProvider
 }
 
 func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) int {
@@ -170,6 +172,10 @@ func (o *options) perform(ctx context.Context, needsGit, progress bool, work fun
 		}
 	}
 	service := app.New(store, git, operation.New(store))
+	service.PRs = o.pullRequestProvider
+	if service.PRs == nil {
+		service.PRs = github.NewClient()
+	}
 	o.activeRoot = store.RootPath()
 	service.Executor = process.Runner{Input: o.in, Output: o.out, Error: o.errOut}
 	var result app.Result
@@ -231,6 +237,9 @@ func (o *options) render(r app.Result) error {
 	}
 	if o.output == "json" {
 		return json.NewEncoder(o.out).Encode(r)
+	}
+	if r.Command == "pr.list" {
+		return o.renderPullRequests(r, isTerminal(o.out))
 	}
 	if r.Command == "repo.list" && r.Problem == nil {
 		return o.renderRepositoryList(r, isTerminal(o.out))
