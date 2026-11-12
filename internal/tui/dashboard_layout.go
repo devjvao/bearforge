@@ -116,6 +116,9 @@ func (m dashboardModel) headerLines() []string {
 		m.styles.focus.Render(summary),
 		state,
 	}
+	if feedback := m.pullRequestHeader(); feedback != "" {
+		header = append(header, feedback)
+	}
 	if m.loadErr != nil {
 		header = append(header, m.styles.bad.Render("Error: "+displayText(m.loadErr.Error())+" (r retry)"))
 	}

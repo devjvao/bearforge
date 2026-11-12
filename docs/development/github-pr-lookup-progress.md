@@ -39,6 +39,14 @@ Verified on 2026-11-12 on `feat/github-pr-lookup`, including final code commit `
 - Normal `q` showed stopping, restored the alternate screen/cursor and exited 0. A separate `P` plus Ctrl-C session restored the terminal and exited 130. Gated unit tests cover active-provider cancellation and draining; native smoke does not claim exact in-flight network timing.
 - After final redirect hardening, native dashboard lookup and clean exit were repeated successfully. Every dashboard-root file hash still matched its before-state. Only public GET requests and local fixtures were used; no external repository code was checked out for execution.
 
+## Header feedback regression
+
+- Reproduced the reported issue in the native Windows TUI against the existing `my-feature` workspace and its `bubbles` repository. Both `p` and `P` completed without a visible screen change; Page Down revealed a successful no-match snapshot for that branch at the time of testing. The original smoke check had scrolled to details and missed this lack of immediate feedback.
+- Lookup/forced-refresh progress and completion summaries now appear in the fixed header. Counts, no matches, failures, skipped heads and cache reuse remain visible without moving focus, selection or detail scroll. Local refresh invalidates the summary along with PR results.
+- `TestDashboardPRFeedbackVisibleWithoutScrolling` observed runtime RED before the change, then GREEN for pending, refresh, no-match, cached, found, failed, partial and skipped states at 80x24, 36x12, 60x18 and 90x24. Full TUI tests passed (1.283s), dependent CLI tests passed (67.465s), and Linux race tests passed for TUI (5.374s) and CLI (9.557s). Focused vet and patch whitespace checks passed.
+- Rebuilt `bin/bearforge.exe` and repeated `p`, `P` and cache reuse in the actual `my-feature`/`bubbles` TUI. Header messages changed visibly without Page Down. No workspace mutation actions were invoked.
+- Focused independent review found no material issues. Normal quit restored the terminal and exited 0 after the actual-workspace test.
+
 ## Remaining limits
 
 - Company/private-repository and GitHub Enterprise live validation remain maintainer-owned and have not been run. Configuration examples and synthetic transport tests are not evidence of access to a company installation.

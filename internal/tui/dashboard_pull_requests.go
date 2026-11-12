@@ -21,6 +21,8 @@ type dashboardPullRequestRun struct {
 	id      uint64
 	cancel  context.CancelFunc
 	running bool
+	total   int
+	refresh bool
 }
 
 type dashboardPullRequestsMsg struct {
@@ -61,7 +63,7 @@ func (m dashboardModel) startPullRequests(refresh bool) (tea.Model, tea.Cmd) {
 	}
 	m.prID++
 	ctx, cancel := context.WithCancel(m.reader.ctx)
-	m.prRun = &dashboardPullRequestRun{id: m.prID, cancel: cancel, running: true}
+	m.prRun = &dashboardPullRequestRun{id: m.prID, cancel: cancel, running: true, total: len(names), refresh: refresh}
 	m.prErr = nil
 	m.showSync = false
 	id, workspace, reader := m.prID, m.workspace, m.reader
@@ -92,6 +94,72 @@ func (m dashboardModel) updatePullRequests(msg dashboardPullRequestsMsg) (tea.Mo
 	}
 	m.prErr = msg.err
 	return m, nil
+}
+
+// Keep action feedback outside the scrollable details: ordinary Git information
+// can fill the entire viewport before the pull-request section is reached.
+func (m dashboardModel) pullRequestHeader() string {
+	run := m.prRun
+	if run == nil || run.id != m.prID {
+		return ""
+	}
+	repositories := len(m.prItems)
+	if run.running {
+		repositories = run.total
+	}
+	repoLabel := fmt.Sprintf("%d repos", repositories)
+	if repositories == 1 {
+		repoLabel = "1 repo"
+	}
+	if run.running {
+		action := "looking up"
+		if run.refresh {
+			action = "refreshing"
+		}
+		return m.styles.focus.Render(fmt.Sprintf("PRs: %s %s...", action, repoLabel))
+	}
+	open, failed, skipped, empty := 0, 0, 0, 0
+	hasObservation, allCached := false, true
+	for _, item := range m.prItems {
+		if item.Problem != nil || item.Outcome == "failed" {
+			failed++
+			continue
+		}
+		switch item.Outcome {
+		case "detached", "unborn":
+			skipped++
+		case "none":
+			empty++
+		}
+		if observation := item.PullRequests; observation != nil {
+			open += len(observation.PullRequests)
+			hasObservation = true
+			allCached = allCached && observation.Cached
+		}
+	}
+	if failed > 0 || m.prErr != nil {
+		message := "PRs: lookup failed | PgDn details"
+		if open > 0 {
+			message = fmt.Sprintf("PRs: %d open | lookup error", open)
+			if failed > 0 {
+				message = fmt.Sprintf("PRs: %d open | %d failed", open, failed)
+			}
+		}
+		return m.styles.bad.Render(message)
+	}
+	message := "PRs: no results returned"
+	switch {
+	case open > 0:
+		message = fmt.Sprintf("PRs: %d open | %s", open, repoLabel)
+	case skipped > 0:
+		message = fmt.Sprintf("PRs: %d skipped | PgDn details", skipped)
+	case empty > 0:
+		message = "PRs: no open PRs | " + repoLabel
+	}
+	if hasObservation && allCached && skipped == 0 {
+		message += " | cached"
+	}
+	return m.styles.focus.Render(message)
 }
 
 func (m dashboardModel) pullRequestContent(repository string) []string {

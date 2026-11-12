@@ -32,6 +32,73 @@ func prDashboard(t *testing.T, lookup func(context.Context, app.PRRequest) (app.
 	return m
 }
 
+func TestDashboardPRFeedbackVisibleWithoutScrolling(t *testing.T) {
+	observation := func(cached bool, pulls ...domain.PullRequest) *domain.PullRequestObservation {
+		return &domain.PullRequestObservation{ObservedAt: time.Now(), Cached: cached, PullRequests: pulls}
+	}
+	for _, scenario := range []struct {
+		name   string
+		items  []app.Item
+		err    error
+		status string
+	}{
+		{name: "no matches", items: []app.Item{{Repository: "bubbles", Outcome: "none", PullRequests: observation(false)}}, status: "PRs: no open PRs | 1 repo"},
+		{name: "cached", items: []app.Item{{Repository: "bubbles", Outcome: "none", PullRequests: observation(true)}}, status: "PRs: no open PRs | 1 repo | cached"},
+		{name: "found", items: []app.Item{{Repository: "bubbles", Outcome: "found", PullRequests: observation(false, domain.PullRequest{Number: 1, State: "open", Title: "A pull request"})}}, status: "PRs: 1 open | 1 repo"},
+		{name: "failed", items: []app.Item{{Repository: "bubbles", Outcome: "failed", Problem: &app.Problem{Message: "access denied"}}}, err: errors.New("access denied"), status: "PRs: lookup failed"},
+		{name: "partial", items: []app.Item{{Repository: "bubbles", Outcome: "found", PullRequests: observation(false, domain.PullRequest{Number: 1, State: "open"})}, {Repository: "other", Outcome: "failed"}}, err: errors.New("one repository failed"), status: "PRs: 1 open | 1 failed"},
+		{name: "skipped", items: []app.Item{{Repository: "bubbles", Outcome: "detached"}}, status: "PRs: 1 skipped"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			for _, size := range [][2]int{{80, 24}, {36, 12}, {60, 18}, {90, 24}} {
+				m := prDashboard(t, func(context.Context, app.PRRequest) (app.Result, error) {
+					return app.Result{Items: scenario.items}, scenario.err
+				})
+				m.width, m.height, m.focus = size[0], size[1], 1
+				m.workspace, m.data.Workspace = "my-feature", "my-feature"
+				m.data.Workspaces = []string{"my-feature"}
+				m.data.Items = []app.Item{{Repository: "bubbles", Path: `C:\Users\joaoa\code\my-feature\bubbles`, Branch: "my-feature", ExpectedBranch: "my-feature", Outcome: "clean", Status: &domain.Status{Branch: "my-feature", Head: strings.Repeat("a", 40)}}}
+				if scenario.name == "partial" {
+					m.data.Items = append(m.data.Items, app.Item{Repository: "other", Outcome: "clean"})
+				}
+				m, cmd := dashboardKey(m, 'p', "p")
+				if cmd == nil {
+					t.Fatal("lookup did not start")
+				}
+				if !strings.Contains(m.View().Content, "PRs: looking up") {
+					t.Errorf("loading feedback hidden at %v without scrolling", size)
+				}
+				u, _ := m.Update(cmd())
+				m = u.(dashboardModel)
+				view := m.View().Content
+				if !strings.Contains(view, scenario.status) {
+					t.Errorf("completion feedback %q hidden at %v without scrolling", scenario.status, size)
+				}
+				if m.detailOffset != 0 || len(strings.Split(view, "\n")) > m.height {
+					t.Fatal("feedback moved scroll position or overflowed terminal")
+				}
+				for _, line := range strings.Split(view, "\n") {
+					if ansi.StringWidth(line) > m.width {
+						t.Fatal("feedback overflowed terminal width")
+					}
+				}
+				m, cmd = dashboardKey(m, 'P', "P")
+				if cmd == nil || !strings.Contains(m.View().Content, "PRs: refreshing") {
+					t.Errorf("forced refresh feedback hidden at %v", size)
+				}
+				if cmd != nil {
+					u, _ = m.Update(cmd())
+					m = u.(dashboardModel)
+				}
+				m, _ = dashboardKey(m, 'r', "r")
+				if strings.Contains(m.View().Content, scenario.status) {
+					t.Fatal("local refresh retained stale PR feedback")
+				}
+			}
+		})
+	}
+}
+
 func TestDashboardPRExplicitWorkspaceSelectionAndRefresh(t *testing.T) {
 	calls := 0
 	m := prDashboard(t, func(_ context.Context, req app.PRRequest) (app.Result, error) {
