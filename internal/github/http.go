@@ -20,6 +20,7 @@ const maxResponseBytes = 8 * 1024 * 1024
 var (
 	errUnsafeRedirect      = errors.New("unsafe GitHub redirect")
 	errRateLimitedRedirect = errors.New("rate-limited GitHub redirect")
+	errRepositoryRedirect  = errors.New("GitHub redirect changed repository coordinates")
 )
 
 type apiRepository struct {
@@ -44,12 +45,14 @@ type apiPullRequest struct {
 func (c *Client) readPages(ctx context.Context, origin, endpoint *url.URL, q domain.PullRequestQuery, token string, host *hostState) ([]domain.PullRequest, error) {
 	prs := []domain.PullRequest{}
 	seen := make(map[string]bool)
+	// Keep the configured repository's list path identifiable across all pages.
+	targetPath := endpoint.Path
 	for page := 0; page < 100; page++ {
 		if seen[endpoint.String()] {
 			return nil, domain.E("provider_failed", "GitHub pagination repeated a page")
 		}
 		seen[endpoint.String()] = true
-		body, header, responseURL, err := c.get(ctx, origin, endpoint, token, host)
+		body, header, responseURL, err := c.get(ctx, origin, endpoint, targetPath, token, host)
 		if err != nil {
 			return nil, err
 		}
@@ -186,7 +189,7 @@ func linkValues(line string) ([]string, error) {
 	return append(values, line[start:]), nil
 }
 
-func (c *Client) get(ctx context.Context, origin, endpoint *url.URL, token string, host *hostState) ([]byte, http.Header, *url.URL, error) {
+func (c *Client) get(ctx context.Context, origin, endpoint *url.URL, targetPath, token string, host *hostState) ([]byte, http.Header, *url.URL, error) {
 	client := *c.httpClient
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if req.Response != nil {
@@ -197,6 +200,9 @@ func (c *Client) get(ctx context.Context, origin, endpoint *url.URL, token strin
 		}
 		if c.now().Before(host.cooldown) {
 			return errRateLimitedRedirect
+		}
+		if !strings.EqualFold(req.URL.Path, targetPath) {
+			return errRepositoryRedirect
 		}
 		return nil
 	}
@@ -227,6 +233,9 @@ func (c *Client) get(ctx context.Context, origin, endpoint *url.URL, token strin
 			}
 			if errors.Is(err, errRateLimitedRedirect) {
 				return nil, nil, nil, domain.E("rate_limited", "GitHub API is cooling down; retry later")
+			}
+			if errors.Is(err, errRepositoryRedirect) {
+				return nil, nil, nil, domain.E("provider_failed", "GitHub redirected away from the configured repository; update remotes or provider metadata and retry")
 			}
 			if attempt < 2 && transientNetwork(err) {
 				if err := retryWait(ctx, attempt); err != nil {

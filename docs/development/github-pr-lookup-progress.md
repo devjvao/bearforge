@@ -21,6 +21,14 @@ Status recorded on 2026-11-12. This document records the evidence available at t
 - The production dashboard composition test uses disposable Git fixtures and the real application/GitHub adapter against an isolated HTTPS server. Repeated lookup produces `cached=true` without another HTTP request; explicit refresh reads HTTP again. No personal credentials or company endpoints are used.
 - Task 3 `go vet ./internal/tui ./internal/cli` and `git diff --check` passed. This task performed a scoped author self-review; whole-feature independent review remains a separate parent step.
 
+## Final review fix evidence: repository redirects
+
+- On base `5691bfe26ba5c722f081e276c9fd07be06c3af95`, isolated TLS rename/obscured-coordinate fixtures reproduced the Important finding: matching source/head PRs with a renamed target were skipped, and the second lookup returned a cached empty success. `TestRepositoryChangingRedirectFailsWithoutCaching` observed runtime RED for `/repos/upstream/renamed/pulls`, `/repositories/12345/pulls` and an opaque `/redirected` route.
+- Redirects now retain the original configured PR-list path (case-insensitive repository spelling) or fail before the follow-up request with sanitized `provider_failed` remediation to update remotes/provider metadata. Failed lookups return no partial observation and are not cached. Strict source repository/branch and target/base matching remain unchanged; no canonical repository-ID lookup or extra provider request was introduced.
+- `TestSameOriginCoordinatePreservingRedirectSucceeds` confirms a same-path query-only redirect still returns the matching PR and retains an explicit credential. The former arbitrary-path success fixture was narrowed because an unrelated route no longer establishes target coordinates. Cooldown fixtures now also retain the PR-list path so they independently test rate-limit enforcement.
+- Covering rename/coordinate-preserving/origin/credential/cooldown command passed (`github 1.370s`): `go test ./internal/github -run 'TestRepositoryChangingRedirectFailsWithoutCaching|TestSameOriginCoordinatePreservingRedirectSucceeds|TestCrossOriginRedirectAndPaginationAreRejectedBeforeTransmission|TestCredentialsStayWithinExplicitBoundary|TestRedirectRateLimitStopsFollowupWithoutCaching' -count=1 -v`.
+- Focused `go test ./internal/github ./internal/domain` passed (`github 2.896s`, domain cached); `go vet ./internal/github ./internal/domain` passed. Parent final-head integration verification follows separately.
+
 ## Pending and maintainer-owned checks
 
 - Parent final whole-feature tests, full Linux race run, native build and dashboard PTY/UI smoke are pending at this handoff. Unit/model layout tests do not replace interactive terminal validation.

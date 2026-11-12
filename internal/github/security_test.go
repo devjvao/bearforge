@@ -108,16 +108,69 @@ func TestCrossOriginRedirectAndPaginationAreRejectedBeforeTransmission(t *testin
 	}
 }
 
-func TestSameOriginRedirectSucceeds(t *testing.T) {
+func TestSameOriginCoordinatePreservingRedirectSucceeds(t *testing.T) {
+	var requests atomic.Int32
 	c, q, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/redirected" {
-			http.Redirect(w, r, "/redirected", http.StatusTemporaryRedirect)
+		requests.Add(1)
+		if r.URL.Query().Get("redirected") != "1" {
+			target := *r.URL
+			query := target.Query()
+			query.Set("redirected", "1")
+			target.RawQuery = query.Encode()
+			http.Redirect(w, r, target.RequestURI(), http.StatusTemporaryRedirect)
 			return
 		}
-		fmt.Fprint(w, "[]")
+		if r.Header.Get("Authorization") != "Bearer explicit-secret" {
+			t.Error("coordinate-preserving redirect lost explicit credential")
+		}
+		fmt.Fprint(w, "["+pullJSON(1, "alice/fork", "feature/pr", "upstream/project", "main", "open", "null")+"]")
 	})
-	if _, err := c.Lookup(context.Background(), q, false); err != nil {
+	t.Setenv("BEARFORGE_TEST_TOKEN", "explicit-secret")
+	q.TokenEnv = "BEARFORGE_TEST_TOKEN"
+	obs, err := c.Lookup(context.Background(), q, false)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if requests.Load() != 2 || len(obs.PullRequests) != 1 || obs.PullRequests[0].Number != 1 {
+		t.Fatalf("requests=%d observation=%#v", requests.Load(), obs)
+	}
+}
+
+func TestRepositoryChangingRedirectFailsWithoutCaching(t *testing.T) {
+	for _, path := range []string{"/repos/upstream/renamed/pulls", "/repositories/12345/pulls", "/redirected"} {
+		t.Run(path, func(t *testing.T) {
+			var requests, redirected atomic.Int32
+			c, q, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.URL.Path == path {
+					redirected.Add(1)
+					fmt.Fprint(w, "["+pullJSON(1, "alice/fork", "feature/pr", "upstream/renamed", "main", "open", "null")+"]")
+					return
+				}
+				http.Redirect(w, r, path+"?private=secret", http.StatusMovedPermanently)
+			})
+			for range 2 {
+				obs, err := c.Lookup(context.Background(), q, false)
+				var de *domain.Error
+				if !errors.As(err, &de) || de.Code != "provider_failed" {
+					t.Errorf("redirect should fail instead of empty success: error=%v observation=%#v", err, obs)
+				}
+				if obs.PullRequests != nil || !obs.ObservedAt.IsZero() || obs.Cached {
+					t.Errorf("partial or cached redirect result: %#v", obs)
+				}
+				if err != nil {
+					if !strings.Contains(err.Error(), "update") || !strings.Contains(err.Error(), "provider metadata") {
+						t.Errorf("missing coordinate remediation: %v", err)
+					}
+					if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), path) {
+						t.Errorf("unsafe redirect error: %v", err)
+					}
+				}
+			}
+			if requests.Load() != 2 || redirected.Load() != 0 {
+				t.Errorf("requests=%d redirected=%d; want 2 uncached attempts, 0 followups", requests.Load(), redirected.Load())
+			}
+		})
 	}
 }
 
@@ -515,7 +568,7 @@ func TestRedirectRateLimitStopsFollowupWithoutCaching(t *testing.T) {
 			var requests, redirected atomic.Int32
 			c, q, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
 				requests.Add(1)
-				if r.URL.Path == "/redirected" {
+				if r.URL.Query().Get("redirected") == "1" {
 					redirected.Add(1)
 					fmt.Fprint(w, "[]")
 					return
@@ -526,7 +579,7 @@ func TestRedirectRateLimitStopsFollowupWithoutCaching(t *testing.T) {
 				} else {
 					w.Header().Set("Retry-After", "120")
 				}
-				http.Redirect(w, r, "/redirected?private=secret", http.StatusFound)
+				http.Redirect(w, r, r.URL.Path+"?redirected=1&private=secret", http.StatusFound)
 			})
 			c.now = func() time.Time { return now }
 			for range 2 {
