@@ -33,7 +33,7 @@ An explicit `--root PATH` overrides this environment variable. Otherwise Bearfor
 
 ## Configuration formats
 
-Bearforge writes and accepts catalog schema 2. Workspace documents use their independent schema 1. Other catalog versions are rejected without changing their contents. Catalog schema 1 has no compatibility or migration path.
+The repository catalog uses `schema_version: 2` and records active and retired repository identities.
 
 After registering repositories, use `bearforge config validate` to check the catalog and workspace definitions, and `bearforge doctor` to inspect storage and Git health. Ordinary catalog updates preserve comments and extension data.
 

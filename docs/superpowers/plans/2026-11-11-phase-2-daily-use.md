@@ -8,7 +8,7 @@
 
 **Tech stack:** Go 1.26 module, Cobra, installed Git 2.40+, existing YAML/operation adapters, GitHub Actions and Sigstore keyless release signatures.
 
-**Spec:** `docs/architecture/0001-bearforge-blueprint.md`, especially sections on retirement, execution, cancellation, output, migrations and Phase 2 exit criteria.
+**Spec:** `docs/architecture/0001-bearforge-blueprint.md`, especially sections on retirement, execution, cancellation, output, configuration and Phase 2 exit criteria.
 
 ## Global constraints and decisions
 
@@ -18,7 +18,7 @@
 - Exec uses the existing root mutation lock, verifies every selected worktree/common directory, caps captured output, emits structured progress/output events, stops scheduling on cancellation/fail-fast and never reruns arbitrary commands through resume.
 - Doctor is read-only, accumulates independent findings, performs no fetch/prune/repair and returns a failing check status for actionable findings.
 - Retirement preserves the entire bare repository via an opaque same-root rename, refuses all references/linked worktrees, journals before effects and has no automatic purge. Restore uses the retired identity and explicit retirement operation ID, refuses conflicts and never clones.
-- Catalog schema v2 records retired repository identities durably; workspace schema remains v1. Revised at the maintainer's request: catalog v1 has no users, so remove compatibility and migration code. Accept only catalog v2 and refuse other versions without rewriting them.
+- Catalog schema 2 records active and retired repository identities durably. Workspace documents have an independent schema. Validate document versions without rewriting unsupported files.
 - Release automation builds reproducible archives/checksums with version/commit metadata, signs checksums with GitHub OIDC, verifies the signature and supplies verification instructions. No invented signing identity or local production signing key. Actual publication/version tagging is a separate concrete release step after implementation and checks.
 
 ## Review focus
@@ -47,13 +47,13 @@ Files: `internal/app/doctor.go`, `internal/cli/doctor.go`, tests and storage/Git
 - [x] Implement accumulated findings with actionable messages and stable check IDs; inspect only with supported Git commands.
 - [x] Add CLI check/result integration and verify no files, locks, refs or journals change.
 
-## Task 3: Catalog schema (revised by maintainer)
+## Task 3: Catalog schema
 
-Files: `internal/domain/model.go`, `internal/config/store.go`, config DTO/load/save validation and CLI/config tests. Remove the superseded migration service, adapter, journal fields and command.
+Files: `internal/domain/model.go`, `internal/config/store.go`, config DTO/load/save validation and CLI/config tests.
 
-- [x] Accept only catalog v2, retaining retired identities and independent workspace schema v1.
+- [x] Use catalog schema 2 to retain active and retired identities, with independently versioned workspace documents.
 - [x] Refuse unsupported schemas on reads and writes without changing source bytes; retain v2 comments/extensions and revision protection.
-- [x] Remove catalog v1 compatibility, migration command/service/storage/journal code and obsolete tests; update diagnostics and current documentation.
+- [x] Report schema validation failures through diagnostics and document the current configuration format.
 
 ## Task 4: Repository retire/restore
 

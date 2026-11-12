@@ -56,7 +56,7 @@ Removal refuses tracked changes, untracked/ignored content, special index flags,
 
 Bulk exec runs direct argv after `--` in verified worktree directories and defaults to one worker. A single quoted expression without `--` selects the platform shell; explicit `--shell sh|pwsh|powershell|cmd` is available. JSON captures bounded base64 output; JSONL streams sequenced events. Interrupted commands are never replayed by recovery. See [execution and automation](docs/onboarding.md#run-a-command-across-a-workspace).
 
-Catalogs use schema 2 exclusively; workspace documents use their independent schema 1. Other catalog versions are rejected without rewriting them. Retirement requires no workspace references and no linked worktrees; it moves the entire bare database into local trash without deletion or automatic purge. Restore requires the original retirement operation. See [safe lifecycle workflows](docs/onboarding.md#diagnose-and-retire-safely).
+Catalogs use `schema_version: 2`. Retirement requires no workspace references and no linked worktrees; it moves the entire bare database into local trash without deletion or automatic purge. Restore requires the original retirement operation. See [safe lifecycle workflows](docs/onboarding.md#diagnose-and-retire-safely).
 
 ## Workspace dashboard
 
@@ -102,7 +102,7 @@ bearforge operations resume OPERATION_ID
 
 Resume verifies paths, repository identity, branches and commit IDs. It refuses changed or ambiguous state. `operations abandon ID --yes` leaves all existing files and Git effects intact and stops automatic recovery tracking; inspect and reconcile the retained state manually before proceeding. Fetch can be repeated safely and is not journaled.
 
-Migration and repository lifecycle operations resume by probing their backups/source/destination and metadata. Bulk exec is deliberately non-replayable: inspect an interrupted execution and explicitly abandon it after reviewing arbitrary child effects. A fully drained execution is complete even after a child command failed, so an ordinary failed test/build does not block later mutations.
+Repository lifecycle operations resume by probing their source/destination and metadata. Bulk exec is deliberately non-replayable: inspect an interrupted execution and explicitly abandon it after reviewing arbitrary child effects. A fully drained execution is complete even after a child command failed, so an ordinary failed test/build does not block later mutations.
 
 If workspace creation was interrupted after making its directory but before saving its manifest, recovery conservatively refuses that unexplained directory. Inspect it and move it aside (or remove it yourself only if empty) before resuming. Bearforge does not guess that an existing directory is disposable.
 

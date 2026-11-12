@@ -548,7 +548,7 @@ bearforge/
     platform/
       paths.go paths_windows.go paths_unix.go
   schemas/
-    catalog-v1.schema.json workspace-v1.schema.json
+    catalog-v2.schema.json workspace-v1.schema.json
     output-v1.schema.json
   tests/
     integration/ e2e/ fixtures/
@@ -861,7 +861,7 @@ This validates those command assumptions on one Windows Git version. It is not e
 
 Version the CLI with SemVer, configuration with integer `schema_version`, and machine output independently. During 0.x, document breaking changes and migration steps; by 1.0, command and JSON compatibility become public contracts.
 
-The current release accepts catalog schema 2 exclusively; workspace documents and operation journals have independent schema 1 formats. Catalog schema 1 support was dropped at the maintainer's request because it has no users. Reject other catalog versions without rewriting them; there is no current migration command. Do not silently drop unknown fields.
+Catalogs use `schema_version: 2`. Workspace documents, operation journals and machine output have independent versioned formats. Validate schema versions before reading or updating documents, and preserve unsupported files without rewriting them. Do not silently drop unknown fields.
 
 When a future change needs migration from a published format, introduce explicit preview, approval, exact backups and journaled replacements under the mutation lock. Validate every result and retain original files until successful validation. Such a migration must not change Git storage formats or relocate worktrees implicitly. Rollback is allowed only when consistent with filesystem effects.
 
