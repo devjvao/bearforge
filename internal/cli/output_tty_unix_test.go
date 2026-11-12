@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"golang.org/x/term"
 
 	"bearforge/internal/app"
 	"bearforge/internal/buildinfo"
@@ -151,6 +152,11 @@ func captureTerminalOutput(t *testing.T, width int, render func(*os.File) error)
 			t.Error(err)
 		}
 	})
+	// Byte-contract checks must observe application output directly, without
+	// the terminal driver's newline translation or other output processing.
+	if _, err := term.MakeRaw(int(terminal.Fd())); err != nil {
+		t.Fatal(err)
+	}
 	if err := pty.Setsize(terminal, &pty.Winsize{Rows: 24, Cols: uint16(width)}); err != nil {
 		_ = terminal.Close()
 		t.Fatal(err)
@@ -194,7 +200,7 @@ func captureTerminalOutput(t *testing.T, width int, render func(*os.File) error)
 		if result.err != nil {
 			t.Fatal(result.err)
 		}
-		return strings.ReplaceAll(string(result.content), "\r\n", "\n")
+		return string(result.content)
 	case <-time.After(5 * time.Second):
 		t.Fatal("terminal output did not drain after the command returned")
 		return ""
