@@ -22,6 +22,8 @@ Use the GitHub REST list-PR endpoint, head owner/actual branch, optional base, r
 
 Use cancellable GET requests only, a 30-second total lookup deadline, serial requests per API host, no more than 100 pages or 8 MiB per response, and bounded transient retries (two retries for eligible network/502/503/504 failures). Honor rate-limit headers with a per-host cooldown and a rate-limited result; never immediately retry during Retry-After/reset. Follow pagination and redirects only within the configured HTTPS API origin; reject cross-origin redirects/links without transmitting credentials. Error text uses safe status/remediation, never arbitrary response bodies or request URLs containing secrets.
 
+Redirects must retain the original PR-list path as well as the API origin. Renamed or obscured repository coordinates produce a sanitized error asking users to update remotes/provider metadata; that failure is not cached. This preserves strict fork identity without guessing repository aliases.
+
 Use an in-memory cache with 60-second TTL and at most 128 observations, keyed by full query and credential identity. Never write PR lookup state to disk. Copy cached slices so callers cannot mutate shared observations. Failed reads cannot become fresh empty results. Expose observed_at and cached in all presentations; expired observations are not silently shown as current.
 
 ## Shared interfaces
