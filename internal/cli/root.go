@@ -20,9 +20,9 @@ import (
 	"bearforge/internal/config"
 	"bearforge/internal/domain"
 	"bearforge/internal/gitcli"
-	"bearforge/internal/github"
 	"bearforge/internal/operation"
 	"bearforge/internal/process"
+	"bearforge/internal/pullrequests"
 	"bearforge/internal/tui"
 )
 
@@ -174,7 +174,7 @@ func (o *options) perform(ctx context.Context, needsGit, progress bool, work fun
 	service := app.New(store, git, operation.New(store))
 	service.PRs = o.pullRequestProvider
 	if service.PRs == nil {
-		service.PRs = github.NewClient()
+		service.PRs = pullrequests.NewProvider()
 	}
 	o.activeRoot = store.RootPath()
 	service.Executor = process.Runner{Input: o.in, Output: o.out, Error: o.errOut}

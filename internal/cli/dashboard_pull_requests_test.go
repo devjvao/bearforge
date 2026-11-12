@@ -11,7 +11,6 @@ import (
 
 	"bearforge/internal/app"
 	"bearforge/internal/domain"
-	"bearforge/internal/github"
 	"bearforge/internal/tui"
 )
 
@@ -56,9 +55,8 @@ func TestDashboardServiceSharesInjectedPullRequestProvider(t *testing.T) {
 		t.Fatal("dashboard composition lost options")
 	}
 	defaultSource := newDashboardService(source.Service, &options{})
-	client, ok := defaultSource.PRs.(*github.Client)
-	if !ok || client == nil {
-		t.Fatal("production dashboard lacks GitHub client")
+	if defaultSource.PRs == nil {
+		t.Fatal("production dashboard lacks pull-request provider")
 	}
 	if defaultSource.PRs != defaultSource.Service.PRs {
 		t.Fatal("provider not shared on dashboard service")

@@ -8,8 +8,8 @@ import (
 	"bearforge/internal/app"
 	"bearforge/internal/domain"
 	"bearforge/internal/gitcli"
-	"bearforge/internal/github"
 	"bearforge/internal/operation"
+	"bearforge/internal/pullrequests"
 	"bearforge/internal/tui"
 )
 
@@ -24,7 +24,7 @@ func newDashboardService(service *app.Service, o *options) dashboardService {
 	configured := *service
 	configured.PRs = o.pullRequestProvider
 	if configured.PRs == nil {
-		configured.PRs = github.NewClient()
+		configured.PRs = pullrequests.NewProvider()
 	}
 	return dashboardService{Service: &configured, jobs: o.jobs}
 }
@@ -59,8 +59,8 @@ func addDashboardCommand(root *cobra.Command, o *options) {
 		Short: "Browse workspace health and manage workspace repositories",
 		Long: "Browse workspace health in a full-window terminal.\n" +
 			"Refresh observes local Git state without fetching.\n" +
-			"p looks up open GitHub PRs for every loaded workspace member; P bypasses the memory cache.\n" +
-			"Startup, navigation and r never contact GitHub. PR snapshots appear in repository details.\n" +
+			"p looks up open GitHub and Bitbucket PRs for every loaded workspace member; P bypasses the memory cache.\n" +
+			"Startup, navigation and r never contact provider APIs. PR snapshots appear in repository details.\n" +
 			"s fetches/prunes all repositories in the current workspace, including filtered rows.\n" +
 			"Sync uses --jobs and shows progress and per-repository results without changing checkouts.\n\n" +
 			"a opens the registered-repository picker for the current workspace.\n" +
