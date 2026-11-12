@@ -13,7 +13,10 @@ import (
 )
 
 func TestConfigRejectsLegacyCatalogWithoutMigrationAdviceOrWrites(t *testing.T) {
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	store := config.New(root)
 	original := []byte("schema_version: 1\nrepositories: {}\n")
 	if err := store.Write([]string{".bearforge", "catalog.yaml"}, original); err != nil {
