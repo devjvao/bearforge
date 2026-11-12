@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -69,7 +70,10 @@ func TestRepositoryListTerminalColorAndSanitization(t *testing.T) {
 }
 
 func TestRepositoryListPipedAndMachineOutput(t *testing.T) {
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	store := config.New(root)
 	if err := store.Write([]string{".bearforge", "catalog.yaml"}, []byte("schema_version: 2\nrepositories:\n  zebra:\n    remotes:\n      origin: /local/zebra\n  api:\n    remotes:\n      origin: /local/api\n")); err != nil {
 		t.Fatal(err)
