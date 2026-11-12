@@ -25,15 +25,16 @@ func (o *options) renderRepositoryList(r app.Result, terminal bool) error {
 		return nil
 	}
 	writer := o.presentation(o.out, terminal)
+	width := outputWidth(o.out)
 	if len(items) == 0 {
-		_, err := fmt.Fprintln(writer, "No repositories registered.\nAdd one with: bearforge repo add NAME URL")
+		_, err := fmt.Fprintln(writer, terminalDocument("No repositories registered.\nAdd one with: bearforge repo add NAME URL", width))
 		return err
 	}
 	rows := make([][]string, 0, len(items))
 	for _, item := range items {
 		rows = append(rows, []string{repositoryListText(item.Repository), repositoryListText(item.Outcome)})
 	}
-	view := terminalTable(writer, []string{"REPOSITORY", "STATUS"}, rows)
+	view := renderResultRows(writer, []string{"REPOSITORY", "STATUS"}, rows, width)
 	label := "repositories"
 	if len(items) == 1 {
 		label = "repository"

@@ -115,3 +115,21 @@ func TestHelpTextPreservesEmptyText(t *testing.T) {
 		t.Fatalf("empty help changed: %q", got)
 	}
 }
+
+func TestHelpTextWrapsCompleteDocuments(t *testing.T) {
+	text := "Usage:\n  bearforge " + strings.Repeat("argument-", 24) + "\n\n"
+	for index := range 43 {
+		text += "  command " + strings.Repeat("description ", 12) + "end-of-entry\n"
+		if index == 42 {
+			text += "last-command-suffix\n"
+		}
+	}
+	view := helpText(text, &colorprofile.Writer{Profile: colorprofile.ASCII})
+	assertResultLinesFit(t, view, 80)
+	if strings.Count(view, "end-of-entry") != 43 || !strings.Contains(view, "last-command-suffix") {
+		t.Fatalf("help document clipped entries: %q", view)
+	}
+	if !strings.HasSuffix(view, "\n") {
+		t.Fatal("help document lost its final newline")
+	}
+}

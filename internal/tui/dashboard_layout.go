@@ -54,14 +54,7 @@ func (m dashboardModel) View() tea.View {
 		}
 		lines = append(lines, m.styles.muted.Render(strings.Repeat("-", m.width)))
 	}
-	details := m.detailLines()
-	start := min(m.detailOffset, max(0, len(details)-1))
-	visible := make([]string, detailHeight)
-	for i := range visible {
-		if start+i < len(details) {
-			visible[i] = details[start+i]
-		}
-	}
+	visible := viewportLines(m.detailLines(), m.detailOffset, m.detailWidth(), detailHeight)
 	if m.framed() {
 		lines = append(lines, strings.Split(m.pane(visible, m.width, false), "\n")...)
 	} else {
@@ -136,19 +129,16 @@ func (m dashboardModel) headerLines() []string {
 }
 
 func (m dashboardModel) footerLines() []string {
-	key := m.styles.focus.Render
-	footer := key("Tab") + " panes  " + key("j/k") + " move  " + key("/") + " filter  " + key("r") + " refresh  " + key("s") + " sync  " + key("a") + " add  " + key("v") + " view  " + key("q") + " quit"
-	if m.width < 70 {
-		footer = key("Tab") + " " + key("/") + " " + key("r") + " " + key("s") + " sync " + key("a") + " add " + key("v") + " " + key("q") + " quit"
-	}
 	if m.editing {
-		footer = "Type to filter | " + key("Enter") + " apply | " + key("Esc") + " clear"
+		return []string{m.styles.muted.Render("Type to filter"), actionHelp("Enter apply | Esc clear | Ctrl-C cancel", m.width, m.styles)}
 	}
-	actions := "n new | d repo | D workspace | PgUp/PgDn | Ctrl-C cancel"
+	actions := actionHelp("n new | d repo | D workspace | PgUp/PgDn details | Ctrl-C cancel", m.width, m.styles)
+	footer := actionHelp("q quit | Tab panes | j/k move | / filter | r refresh | s sync | a add | v view", m.width, m.styles)
 	if m.width < 70 {
-		actions = "n new d/D remove PgUp/PgDn ^C"
+		actions = keyboardHelp(actionBindings("n new", "d/D remove", "PgUp/PgDn", "^C"), m.width, " ", m.styles)
+		footer = actionHelp("q quit | s sync | a add | Tab panes | / filter | r refresh | v view", m.width, m.styles)
 	}
-	return []string{m.styles.muted.Render(actions), footer}
+	return []string{actions, footer}
 }
 
 func (m dashboardModel) framed() bool { return m.width >= 60 && m.height >= 18 }

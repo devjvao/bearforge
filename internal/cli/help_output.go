@@ -25,11 +25,11 @@ func configureHelp(root *cobra.Command, o *options) {
 			defaultHelp(cmd, args)
 		}()
 		p := o.presentation(out, true)
-		_, _ = fmt.Fprint(p, helpText(buffer.String(), p))
+		_, _ = fmt.Fprint(p, helpText(buffer.String(), p, outputWidth(out)))
 	})
 }
 
-func helpText(text string, p *colorprofile.Writer) string {
+func helpText(text string, p *colorprofile.Writer, widths ...int) string {
 	lines := strings.Split(text, "\n")
 	heading := lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
 	for index, line := range lines {
@@ -43,5 +43,9 @@ func helpText(text string, p *colorprofile.Writer) string {
 		}
 		lines[index] = line
 	}
-	return strings.Join(lines, "\n")
+	width := 80
+	if len(widths) > 0 {
+		width = widths[0]
+	}
+	return terminalDocument(strings.Join(lines, "\n"), width)
 }

@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"charm.land/lipgloss/v2/table"
 	"github.com/charmbracelet/colorprofile"
 )
 
@@ -36,31 +35,6 @@ func outcomeStyle(value string) lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(color))
 }
 
-func terminalTable(p *colorprofile.Writer, headers []string, rows [][]string) string {
-	clean := make([][]string, len(rows))
-	for row, cells := range rows {
-		clean[row] = make([]string, len(cells))
-		for column, cell := range cells {
-			clean[row][column] = repositoryListText(cell)
-		}
-	}
-	return table.New().Headers(headers...).Rows(clean...).
-		Border(lipgloss.Border{}).BorderHeader(false).
-		StyleFunc(func(row, column int) lipgloss.Style {
-			style := lipgloss.NewStyle().PaddingRight(3)
-			if p.Profile <= colorprofile.ASCII {
-				return style
-			}
-			if row == table.HeaderRow {
-				return style.Bold(true).Foreground(lipgloss.Color("6"))
-			}
-			if column < len(headers) && (headers[column] == "STATUS" || headers[column] == "STATE") && row < len(clean) && column < len(clean[row]) {
-				return outcomeStyle(clean[row][column]).PaddingRight(3)
-			}
-			return style
-		}).String()
-}
-
 func (o *options) diagnostic(label, message string) error {
 	if !isTerminal(o.errOut) {
 		_, err := fmt.Fprintln(o.errOut, label, message)
@@ -71,7 +45,7 @@ func (o *options) diagnostic(label, message string) error {
 	if p.Profile > colorprofile.ASCII {
 		label = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("1")).Render(label)
 	}
-	_, err := fmt.Fprintln(p, label, repositoryListText(message))
+	_, err := fmt.Fprintln(p, terminalDocument(label+" "+repositoryListText(message), outputWidth(o.errOut)))
 	return err
 }
 
@@ -85,7 +59,7 @@ func (o *options) progressLine(repository, state string) error {
 	if p.Profile > colorprofile.ASCII {
 		label = outcomeStyle(state).Render(label)
 	}
-	_, err := fmt.Fprintf(p, "%s: %s\n", repositoryListText(repository), label)
+	_, err := fmt.Fprintln(p, terminalDocument(repositoryListText(repository)+": "+label, outputWidth(o.errOut)))
 	return err
 }
 
@@ -141,6 +115,6 @@ func (o *options) confirmationText(format string, args ...any) error {
 	if p.Profile > colorprofile.ASCII {
 		text = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render(text)
 	}
-	_, err := io.WriteString(p, text)
+	_, err := io.WriteString(p, terminalDocument(text, outputWidth(o.errOut)))
 	return err
 }

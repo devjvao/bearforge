@@ -15,7 +15,7 @@ import (
 
 func TestResultsCoverCommands(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
-	commands := []string{"workspace.list", "workspace.create", "workspace.add", "workspace.remove", "workspace.remove-repo", "status", "doctor", "sync", "repo.add", "repo.retire", "repo.restore", "config.validate", "operations.abandon", "exec"}
+	commands := []string{"workspace.list", "workspace.create", "workspace.add", "workspace.remove", "workspace.remove-repo", "status", "doctor", "sync", "repo.add", "repo.list", "repo.inspect", "repo.retired", "repo.retire", "repo.restore", "config.validate", "operations.list", "operations.show", "operations.resume", "operations.abandon", "exec"}
 	for _, command := range commands {
 		t.Run(command, func(t *testing.T) {
 			var out, errOut bytes.Buffer

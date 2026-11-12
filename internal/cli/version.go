@@ -4,9 +4,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"charm.land/lipgloss/v2"
-	"charm.land/lipgloss/v2/table"
-	"github.com/charmbracelet/colorprofile"
 	"github.com/spf13/cobra"
 
 	"bearforge/internal/app"
@@ -32,20 +29,13 @@ func addVersionCommand(root *cobra.Command, o *options) {
 
 func (o *options) renderVersion(metadata buildinfo.Metadata) error {
 	writer := o.presentation(o.out, true)
-	view := table.New().Rows(
-		[]string{"Version", repositoryListText(metadata.Version)},
-		[]string{"Commit", repositoryListText(metadata.Commit)},
-		[]string{"Dirty", strconv.FormatBool(metadata.Dirty)},
-		[]string{"Go", repositoryListText(metadata.GoVersion)},
-		[]string{"Platform", repositoryListText(metadata.Platform)},
-	).Border(lipgloss.Border{}).BorderTop(false).BorderBottom(false).BorderHeader(false).
-		StyleFunc(func(row, column int) lipgloss.Style {
-			style := lipgloss.NewStyle().PaddingRight(2)
-			if column == 0 && writer.Profile > colorprofile.ASCII {
-				return style.Bold(true).Foreground(lipgloss.Color("6"))
-			}
-			return style
-		})
+	view := terminalRecords(writer, [][]string{
+		{"Version", metadata.Version},
+		{"Commit", metadata.Commit},
+		{"Dirty", strconv.FormatBool(metadata.Dirty)},
+		{"Go", metadata.GoVersion},
+		{"Platform", metadata.Platform},
+	}, outputWidth(o.out))
 	_, err := fmt.Fprintf(writer, "bearforge\n\n%s\n", view)
 	return err
 }

@@ -3,7 +3,6 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -11,26 +10,20 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
-	"golang.org/x/term"
 
 	"bearforge/internal/app"
 )
 
 func (o *options) renderResult(r app.Result) error {
 	p := o.presentation(o.out, true)
-	width := 80
-	if output, ok := o.out.(*os.File); ok {
-		if columns, _, err := term.GetSize(int(output.Fd())); err == nil && columns > 0 {
-			width = columns
-		}
-	}
+	width := outputWidth(o.out)
 	title := repositoryListText(strings.ReplaceAll(r.Command, ".", " "))
 	outcome := repositoryListText(r.Outcome)
 	if p.Profile > colorprofile.ASCII {
 		title = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6")).Render(title)
 		outcome = outcomeStyle(r.Outcome).Render(outcome)
 	}
-	if _, err := fmt.Fprintf(p, "%s  [%s]\n", title, outcome); err != nil {
+	if _, err := fmt.Fprintln(p, terminalDocument(title+"  ["+outcome+"]", width)); err != nil {
 		return err
 	}
 	items := slices.Clone(r.Items)
@@ -148,7 +141,7 @@ func (o *options) renderResult(r app.Result) error {
 				message = "Operation " + r.Outcome + "."
 			}
 		}
-		if _, err := fmt.Fprintln(p, message); err != nil {
+		if _, err := fmt.Fprintln(p, terminalDocument(message, width)); err != nil {
 			return err
 		}
 	}
@@ -161,12 +154,12 @@ func (o *options) renderResult(r app.Result) error {
 		}
 	}
 	if r.OperationID != "" {
-		if _, err := fmt.Fprintln(p, "\nOperation:", repositoryListText(r.OperationID)); err != nil {
+		if _, err := fmt.Fprintln(p, terminalDocument("\nOperation: "+repositoryListText(r.OperationID), width)); err != nil {
 			return err
 		}
 	}
 	if r.PlanDigest != "" {
-		if _, err := fmt.Fprintln(p, "Plan:", repositoryListText(r.PlanDigest)); err != nil {
+		if _, err := fmt.Fprintln(p, terminalDocument("Plan: "+repositoryListText(r.PlanDigest), width)); err != nil {
 			return err
 		}
 	}
@@ -223,7 +216,7 @@ func renderResultRows(p *colorprofile.Writer, headers []string, rows [][]string,
 		}
 		records = append(records, strings.Join(fields, "\n"))
 	}
-	return strings.Join(records, "\n\n")
+	return terminalDocument(strings.Join(records, "\n\n"), width)
 }
 
 func itemName(item app.Item) string {

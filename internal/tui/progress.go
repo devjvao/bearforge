@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
@@ -38,7 +40,8 @@ type model struct {
 	err            error
 	title          string
 	width, height  int
-	frame          int
+	spinner        spinner.Model
+	keys           progressKeyMap
 	started, now   time.Time
 	colorMode      string
 	colorProfile   colorprofile.Profile
@@ -60,6 +63,8 @@ func newProgressModel(options ProgressOptions, noColor string) model {
 	}
 	now := time.Now()
 	m := model{states: map[string]string{}, title: title, width: 80, height: 24, started: now, now: now, colorMode: mode, darkBackground: true}
+	m.spinner = spinner.New(spinner.WithSpinner(spinner.Line))
+	m.keys = newProgressKeys()
 	m.styles = newDashboardStyles(m.colorsEnabled(), m.darkBackground)
 	return m
 }
@@ -85,7 +90,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = max(1, v.Width), max(1, v.Height)
 	case tea.KeyPressMsg:
-		if (v.String() == "ctrl+c" || v.String() == "q") && !m.stopping {
+		if key.Matches(v, m.keys.cancel, m.keys.quit) && !m.stopping {
 			m.stopping = true
 			if m.cancel != nil {
 				m.cancel()
@@ -100,7 +105,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.ctx != nil && m.ctx.Err() != nil {
 			m.stopping = true
 		}
-		m.frame = (m.frame + 1) % 4
+		// One poll owns animation and bounded event draining. Do not schedule
+		// the spinner's separate tick command alongside this work loop.
+		m.spinner, _ = m.spinner.Update(m.spinner.Tick())
 		m.now = time.Now()
 		if m.states == nil {
 			m.states = map[string]string{}
@@ -146,7 +153,10 @@ func (m model) View() tea.View {
 	if m.finished {
 		return tea.NewView("")
 	}
-	frames := [...]string{"|", "/", "-", "\\"}
+	width := m.width
+	if width <= 0 {
+		width = 80
+	}
 	title := strings.TrimSpace(displayText(m.title))
 	if title == "" {
 		title = "Working"
@@ -155,7 +165,7 @@ func (m model) View() tea.View {
 	if !m.started.IsZero() && m.now.After(m.started) {
 		elapsed = m.now.Sub(m.started).Truncate(time.Second)
 	}
-	lines := []string{m.styles.focus.Render(frames[m.frame%len(frames)]) + " " + m.styles.title.Render(progressDisplayTitle(title)) + m.styles.muted.Render("  ·  "+elapsed.String())}
+	lines := []string{m.styles.focus.Render(m.spinner.View()) + " " + m.styles.title.Render(progressDisplayTitle(title)) + m.styles.muted.Render("  ·  "+elapsed.String())}
 	keys := make([]string, 0, len(m.states))
 	for id := range m.states {
 		keys = append(keys, id)
@@ -217,14 +227,10 @@ func (m model) View() tea.View {
 	if m.stopping {
 		lines = append(lines, m.styles.warn.Render("Stopping; draining work and preserving recovery information..."))
 	} else {
-		lines = append(lines, m.styles.muted.Render("Ctrl-C to cancel · q to cancel"))
+		lines = append(lines, m.keys.help(width, m.styles))
 	}
 	if height == 1 {
 		lines = lines[len(lines)-1:]
-	}
-	width := m.width
-	if width <= 0 {
-		width = 80
 	}
 	for i := range lines {
 		lines[i] = ansi.Truncate(lines[i], width, "...")

@@ -18,12 +18,16 @@ import (
 )
 
 func renderData(data any, p *colorprofile.Writer, widths ...int) error {
+	width := math.MaxInt
+	if len(widths) > 0 {
+		width = widths[0]
+	}
 	if data == nil {
 		return nil
 	}
 	value := reflect.ValueOf(data)
 	if (value.Kind() == reflect.Slice || value.Kind() == reflect.Array) && value.Len() == 0 {
-		_, err := fmt.Fprintln(p, "No entries.")
+		_, err := fmt.Fprintln(p, terminalDocument("No entries.", width))
 		return err
 	}
 	var headers []string
@@ -67,7 +71,7 @@ func renderData(data any, p *colorprofile.Writer, widths ...int) error {
 			return nil
 		}
 		if text, ok := decoded.(string); ok {
-			_, err := fmt.Fprintln(p, repositoryListText(text))
+			_, err := fmt.Fprintln(p, terminalDocument(repositoryListText(text), width))
 			return err
 		}
 		headers, rows = dataRecordTable(decoded)
@@ -80,10 +84,6 @@ func renderData(data any, p *colorprofile.Writer, widths ...int) error {
 		for index := range row {
 			row[index] = repositoryListText(row[index])
 		}
-	}
-	width := math.MaxInt
-	if len(widths) > 0 {
-		width = widths[0]
 	}
 	_, err := fmt.Fprintln(p, renderResultRows(p, headers, rows, width))
 	return err

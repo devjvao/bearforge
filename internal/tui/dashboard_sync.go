@@ -128,6 +128,12 @@ func (m dashboardModel) syncCounts() (synced, failed, notRun int) {
 func (m dashboardModel) syncContent() []string {
 	run := m.syncRun
 	lines := []string{m.styles.title.Render(m.syncSummary()), m.styles.muted.Render("Workspace repositories (filters do not limit sync)."), "Fetch/prune only; checkouts are unchanged. v repository details"}
+	if run.running {
+		synced, failed, _ := m.syncCounts()
+		if bar := m.batchProgress(synced+failed, len(run.names), failed); bar != "" {
+			lines = append(lines, bar)
+		}
+	}
 	if run.err != nil {
 		lines = append(lines, m.styles.bad.Render("Sync error: "+displayText(run.err.Error())))
 	}

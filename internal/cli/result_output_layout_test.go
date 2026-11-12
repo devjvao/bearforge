@@ -111,6 +111,28 @@ func TestResultDefaultsToEightyColumnLayout(t *testing.T) {
 	}
 }
 
+func TestResultMetadataAndTextDocumentsRemainComplete(t *testing.T) {
+	var out, errOut bytes.Buffer
+	o := &options{out: &out, errOut: &errOut, color: "never"}
+	r := app.NewResult("operations.show")
+	r.OperationID = strings.Repeat("operation", 15)
+	r.PlanDigest = strings.Repeat("0123456789abcdef", 8)
+	r.Data = strings.Repeat("document-content-", 19) + "document-end"
+	if err := o.renderResult(r); err != nil {
+		t.Fatal(err)
+	}
+	assertResultLinesFit(t, out.String(), 80)
+	compact := compactResultText(out.String())
+	for _, want := range []string{r.OperationID, r.PlanDigest, r.Data.(string)} {
+		if !strings.Contains(compact, want) {
+			t.Errorf("result document lost %q", want)
+		}
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("unexpected diagnostics: %q", errOut.String())
+	}
+}
+
 func TestDataNarrowRecordsPreserveFields(t *testing.T) {
 	path := "/workspaces/" + strings.Repeat("unbroken-path", 10)
 	id := strings.Repeat("0123456789abcdef", 7)
