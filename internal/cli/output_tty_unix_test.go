@@ -4,6 +4,7 @@ package cli
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"io"
@@ -11,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -82,7 +82,7 @@ func TestTerminalRawOutputsRemainUnadorned(t *testing.T) {
 				return nil
 			})
 			if view != plain.String() {
-				t.Fatal("terminal components changed shell completion bytes")
+				t.Fatalf("terminal components changed shell completion bytes: got %d bytes, want %d", len(view), plain.Len())
 			}
 		})
 	}
@@ -160,25 +160,43 @@ func captureTerminalOutput(t *testing.T, width int, render func(*os.File) error)
 		err     error
 	}
 	readDone := make(chan terminalRead, 1)
+	boundary := []byte("\x00bearforge-output-" + rand.Text() + "\x00")
 	go func() {
-		content, err := io.ReadAll(master)
-		readDone <- terminalRead{content: content, err: err}
+		var content []byte
+		buffer := make([]byte, 4096)
+		for {
+			count, err := master.Read(buffer)
+			content = append(content, buffer[:count]...)
+			if bytes.HasSuffix(content, boundary) {
+				readDone <- terminalRead{content: content[:len(content)-len(boundary)]}
+				return
+			}
+			if err != nil {
+				readDone <- terminalRead{content: content, err: err}
+				return
+			}
+		}
 	}()
 	if err := render(terminal); err != nil {
 		_ = terminal.Close()
 		t.Fatal(err)
 	}
-	if err := terminal.Close(); err != nil {
+	// macOS discards queued PTY output on close; wait for the reader to
+	// acknowledge the boundary before closing the writer side.
+	if _, err := terminal.Write(boundary); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case result := <-readDone:
-		if result.err != nil && !errors.Is(result.err, syscall.EIO) {
+		if err := terminal.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if result.err != nil {
 			t.Fatal(result.err)
 		}
 		return strings.ReplaceAll(string(result.content), "\r\n", "\n")
 	case <-time.After(5 * time.Second):
-		t.Fatal("terminal output did not close after the command returned")
+		t.Fatal("terminal output did not drain after the command returned")
 		return ""
 	}
 }
