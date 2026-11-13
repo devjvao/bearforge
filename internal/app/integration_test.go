@@ -20,6 +20,16 @@ func fixture(t *testing.T) (*app.Service, *config.Store, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Newer Git versions may detach automatic maintenance after fetch. Keep
+	// fixture maintenance synchronous so it cannot race filesystem snapshots.
+	template := filepath.Join(base, "git-template")
+	if err := os.Mkdir(template, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(template, "config"), []byte("[gc]\n\tautoDetach = false\n[maintenance]\n\tautoDetach = false\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_TEMPLATE_DIR", template)
 	remote := filepath.Join(base, "remote")
 	for _, args := range [][]string{{"init", "-b", "main", remote}, {"-C", remote, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "initial"}} {
 		cmd := exec.Command("git", args...)
