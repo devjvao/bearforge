@@ -35,6 +35,7 @@ type dashboardAdd struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	workspace string
+	root      string
 	phase     addPhase
 	choices   app.RepositoryChoices
 	selected  map[string]bool
@@ -81,7 +82,7 @@ func (m dashboardModel) openAdd() (tea.Model, tea.Cmd) {
 	m.cancel()
 	m.requestID++
 	ctx, cancel := context.WithCancel(m.reader.ctx)
-	m.addRun = &dashboardAdd{ctx: ctx, cancel: cancel, workspace: m.workspace, phase: addLoading, selected: map[string]bool{}}
+	m.addRun = &dashboardAdd{ctx: ctx, cancel: cancel, workspace: m.workspace, root: m.data.Root, phase: addLoading, selected: map[string]bool{}}
 	m.showAdd = true
 	return m.loadAddChoices()
 }
