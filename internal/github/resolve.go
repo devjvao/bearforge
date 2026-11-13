@@ -11,9 +11,10 @@ import (
 )
 
 var (
-	ownerPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
-	repoPattern  = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
-	envPattern   = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+	ownerPattern    = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
+	repoPattern     = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
+	envPattern      = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+	sshAliasPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 )
 
 // Resolve derives a PR target and source from metadata and the actual Git remote.
@@ -63,17 +64,35 @@ func parseRemote(raw string) (string, string, error) {
 	if strings.ContainsFunc(raw, unicode.IsControl) {
 		return "", "", domain.E("invalid", "invalid GitHub remote URL")
 	}
+	// Local Git remotes have no provider identity to infer.
+	if !strings.Contains(raw, "://") && (strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, ".") || strings.HasPrefix(raw, `\`) || (len(raw) >= 3 && raw[1] == ':' && (raw[2] == '/' || raw[2] == '\\'))) {
+		return "", "", domain.E("unsupported_provider", "remote is not a supported GitHub remote")
+	}
 	var host, path string
+	ssh := true // SCP-style remotes may use an OpenSSH alias instead of DNS.
 	if strings.Contains(raw, "://") {
 		u, err := url.Parse(raw)
+		if err == nil && u.Scheme == "file" {
+			if u.Host != "" || u.User != nil || !strings.HasPrefix(u.Path, "/") || u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") || strings.ContainsFunc(u.Path, unicode.IsControl) || strings.Contains(u.Path, `\`) {
+				return "", "", domain.E("invalid", "invalid GitHub remote URL")
+			}
+			return "", "", domain.E("unsupported_provider", "local file remote requires explicit GitHub provider coordinates")
+		}
 		if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "ssh") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.ContainsAny(raw, "\r\n\x00") {
 			return "", "", domain.E("invalid", "invalid GitHub remote URL")
 		}
+		if port := u.Port(); port != "" {
+			number, err := strconv.Atoi(port)
+			if err != nil || number < 1 || number > 65535 {
+				return "", "", domain.E("invalid", "invalid GitHub remote URL")
+			}
+		}
 		if u.User != nil {
-			if _, password := u.User.Password(); password || u.Scheme != "ssh" {
+			if _, password := u.User.Password(); password || u.Scheme != "ssh" || strings.ContainsFunc(u.User.Username(), unicode.IsControl) {
 				return "", "", domain.E("invalid", "credentials in remote URLs are not supported")
 			}
 		}
+		ssh = u.Scheme == "ssh"
 		host, path = u.Hostname(), strings.TrimPrefix(u.Path, "/")
 	} else {
 		parts := strings.SplitN(raw, ":", 2)
@@ -87,7 +106,13 @@ func parseRemote(raw string) (string, string, error) {
 		path = parts[1]
 	}
 	path = strings.TrimSuffix(path, ".git")
-	if !validHost(host) || !validRepository(path) {
+	if !validRepository(path) {
+		return "", "", domain.E("invalid", "invalid GitHub remote coordinates")
+	}
+	if !validHost(host) {
+		if ssh && len(host) <= 253 && sshAliasPattern.MatchString(host) {
+			return "", "", domain.E("unsupported_provider", "SSH alias requires explicit GitHub provider coordinates")
+		}
 		return "", "", domain.E("invalid", "invalid GitHub remote coordinates")
 	}
 	return strings.ToLower(host), path, nil

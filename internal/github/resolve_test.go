@@ -61,3 +61,57 @@ func TestResolveRejectsUnsafeCoordinates(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveCompleteMetadataWithUninferableRemote(t *testing.T) {
+	for _, remote := range []string{
+		"git@company_work:team/api.git",
+		"ssh://git@company_work:7999/team/api.git",
+		"D:/fixtures/api.git",
+		`D:\fixtures\api.git`,
+		"file:///D:/fixtures/api.git",
+		"file:///tmp/api.git",
+	} {
+		t.Run(remote, func(t *testing.T) {
+			repo := domain.Repository{Provider: map[string]string{
+				"kind": "github", "host": "git.example.com",
+				"repository": "upstream/api", "source_repository": "team/api",
+			}}
+			q, err := NewClient().Resolve(repo, remote, "actual")
+			want := domain.PullRequestQuery{Host: "git.example.com", APIURL: "https://git.example.com/api/v3", Repository: "upstream/api", SourceRepository: "team/api", Branch: "actual", State: "open"}
+			if err != nil || q != want {
+				t.Fatalf("Resolve = %#v, %v; want %#v", q, err, want)
+			}
+		})
+	}
+}
+
+func TestResolveCompleteMetadataStillRejectsUnsafeRemote(t *testing.T) {
+	repo := domain.Repository{Provider: map[string]string{
+		"kind": "github", "host": "git.example.com",
+		"repository": "upstream/api", "source_repository": "team/api",
+	}}
+	for _, remote := range []string{
+		"https://secret@github.com/team/api.git",
+		"ssh://git:secret@company_work:7999/team/api.git",
+		"x://secret@company_work/team/api.git",
+		"ssh://git@company_work:70000/team/api.git",
+		"ssh://bad%0Auser@company_work:7999/team/api.git",
+		"git@company_work:team/api\n.git",
+		"D:/fixtures/api\x00.git",
+		"ssh://git@company_work:7999/team/%0Aapi.git",
+		"git@company_work:../api.git",
+		"file://secret@localhost/tmp/api.git",
+		"file:///tmp/api.git?token=secret",
+		"file:///tmp/api.git?",
+		"file:///tmp/api.git#secret",
+		"file:///tmp/api.git#",
+		"file:///tmp/api%0A.git",
+		"file:///D:/fixtures/api%00.git",
+		"file:///tmp/api%5C.git",
+	} {
+		t.Run(remote, func(t *testing.T) {
+			_, err := NewClient().Resolve(repo, remote, "actual")
+			errorCode(t, err, "invalid")
+		})
+	}
+}
