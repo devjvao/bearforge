@@ -85,6 +85,33 @@ func TestExecDefaultSequentialFailFastAndCompletedFailureJournal(t *testing.T) {
 	}
 }
 
+func TestExecLargeFailuresKeepCompletedJournalReadable(t *testing.T) {
+	s := execFixture(t)
+	diagnostic := strings.Repeat("command could not start\n", 32<<10)
+	s.Executor = execRunnerFunc(func(_ context.Context, spec domain.ProcessSpec, _ func(domain.OutputChunk)) (domain.ProcessResult, error) {
+		return domain.ProcessResult{ExitCode: -1, Argv: spec.Argv}, errors.New(diagnostic)
+	})
+	r, err := s.Exec(t.Context(), app.ExecRequest{Workspace: "review", Argv: []string{"tool"}})
+	if err == nil || len(r.Items) != 2 {
+		t.Fatalf("expected two independent command failures, got %d results and %v", len(r.Items), err)
+	}
+	for _, item := range r.Items {
+		if item.Outcome != "failed" || item.Problem == nil || item.Problem.Message != diagnostic {
+			t.Fatal("journal bounds changed the current command's failure diagnostics")
+		}
+	}
+	op, err := s.Journal.Load(r.OperationID)
+	if err != nil {
+		t.Fatalf("completed execution wrote an unreadable journal: %v", err)
+	}
+	if op.State != "complete" {
+		t.Fatalf("fully drained execution remains unfinished: %s", op.State)
+	}
+	if _, err := s.CreateWorkspace(t.Context(), "after-large-failure", "", false); err != nil {
+		t.Fatalf("completed execution blocked later mutations: %v", err)
+	}
+}
+
 func TestExecCompletesIndependentJobsAndNeverReplaysInterruptedCode(t *testing.T) {
 	s := execFixture(t)
 	var calls int
