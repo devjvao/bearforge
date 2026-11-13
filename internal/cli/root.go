@@ -55,7 +55,10 @@ func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		r.Outcome = "failed"
 		r.Problem = app.ProblemFor(err)
 		if o.json || o.output == "json" || o.output == "jsonl" {
-			_ = json.NewEncoder(out).Encode(r)
+			if o.json {
+				o.output = "json"
+			}
+			_ = o.render(r)
 		} else {
 			_ = o.diagnostic("Error:", err.Error())
 		}
@@ -259,12 +262,18 @@ func (o *options) render(r app.Result) error {
 				name += " / " + item.Check
 			}
 		}
-		fmt.Fprintf(o.out, "%s\t%s", name, item.Outcome)
+		if _, err := fmt.Fprintf(o.out, "%s\t%s", name, item.Outcome); err != nil {
+			return err
+		}
 		if item.Branch != "" {
-			fmt.Fprintf(o.out, "\t%s", item.Branch)
+			if _, err := fmt.Fprintf(o.out, "\t%s", item.Branch); err != nil {
+				return err
+			}
 		}
 		if item.Path != "" {
-			fmt.Fprintf(o.out, "\t%s", item.Path)
+			if _, err := fmt.Fprintf(o.out, "\t%s", item.Path); err != nil {
+				return err
+			}
 		}
 		if item.Execution != nil {
 			if _, err := fmt.Fprintf(o.out, "\texit=%d\tduration=%s", item.Execution.ExitCode, item.Execution.Duration); err != nil {
@@ -276,9 +285,13 @@ func (o *options) render(r app.Result) error {
 				}
 			}
 		}
-		fmt.Fprintln(o.out)
+		if _, err := fmt.Fprintln(o.out); err != nil {
+			return err
+		}
 		if item.Problem != nil {
-			fmt.Fprintln(o.errOut, item.Problem.Message)
+			if _, err := fmt.Fprintln(o.errOut, item.Problem.Message); err != nil {
+				return err
+			}
 		}
 	}
 	if r.Data != nil {
@@ -286,10 +299,14 @@ func (o *options) render(r app.Result) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(o.out, string(b))
+		if _, err := fmt.Fprintln(o.out, string(b)); err != nil {
+			return err
+		}
 	}
 	if r.Problem != nil {
-		fmt.Fprintln(o.errOut, "Error:", r.Problem.Message)
+		if _, err := fmt.Fprintln(o.errOut, "Error:", r.Problem.Message); err != nil {
+			return err
+		}
 	}
 	if r.OperationID != "" && (r.Outcome == "partial") {
 		if r.Command == "exec" {
