@@ -87,3 +87,56 @@ func TestMalformedMatchingStateCannotBecomeNoMatches(t *testing.T) {
 	_, err := c.Lookup(context.Background(), q, false)
 	errorCode(t, err, "provider_failed")
 }
+
+func TestLookupRetainsFirstPRWhenPagesOverlap(t *testing.T) {
+	requests := 0
+	c, q, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Query().Get("page") == "2" {
+			changed := pullJSON(1, "alice/fork", "feature/pr", "upstream/project", "main", "closed", `"2026-11-12T11:00:00Z"`)
+			changed = strings.ReplaceAll(changed, "A useful PR", "Changed title")
+			changed = strings.ReplaceAll(changed, "2026-11-12T10:00:00Z", "2026-11-12T11:00:00Z")
+			fmt.Fprint(w, "["+changed+","+pullJSON(2, "alice/fork", "feature/pr", "upstream/project", "main", "open", "null")+"]")
+			return
+		}
+		w.Header().Set("Link", `<?page=2>; rel="next"`)
+		fmt.Fprint(w, "["+pullJSON(1, "alice/fork", "feature/pr", "upstream/project", "main", "open", "null")+","+pullJSON(3, "alice/fork", "feature/pr", "upstream/project", "main", "open", "null")+"]")
+	})
+	obs, err := c.Lookup(context.Background(), q, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 || len(obs.PullRequests) != 3 {
+		t.Fatalf("requests=%d PRs=%#v; want two pages and three unique PRs", requests, obs.PullRequests)
+	}
+	for i, want := range []int{1, 3, 2} {
+		if obs.PullRequests[i].Number != want {
+			t.Fatalf("PR order = %#v; want [1 3 2]", obs.PullRequests)
+		}
+	}
+	first := obs.PullRequests[0]
+	if first.Title != "A useful PR" || first.State != "open" || first.UpdatedAt.Format(time.RFC3339) != "2026-11-12T10:00:00Z" {
+		t.Fatalf("duplicate replaced first occurrence: %#v", first)
+	}
+}
+
+func TestLookupRelativePaginationPreservesConfiguredAPIPath(t *testing.T) {
+	requests := 0
+	c, q, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/api/v3/repos/upstream/project/pulls" {
+			t.Errorf("pagination path = %q", r.URL.Path)
+		}
+		if r.URL.Query().Get("page") == "1" {
+			w.Header().Set("Link", `<?page=2>; rel="next"`)
+		}
+		fmt.Fprint(w, "[]")
+	})
+	q.APIURL += "/api/v3"
+	if _, err := c.Lookup(context.Background(), q, false); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d; want 2", requests)
+	}
+}

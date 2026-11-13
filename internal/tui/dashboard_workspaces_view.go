@@ -145,10 +145,9 @@ func (m dashboardModel) workspaceContent() []string {
 		}
 		if run.result.OperationID != "" {
 			id := displayText(run.result.OperationID)
-			command := "bearforge --root " + workspaceShellQuote(displayText(run.root)) + " operations "
-			lines = append(lines, "", "Operation: "+id, "Inspect: "+command+"show "+id)
+			lines = append(lines, "", "Operation: "+id, "Inspect: "+dashboardRecoveryCommand(run.root, "show", id))
 			if run.err != nil || run.result.Outcome == "partial" {
-				lines = append(lines, "Resume: "+command+"resume "+id)
+				lines = append(lines, "Resume: "+dashboardRecoveryCommand(run.root, "resume", id))
 			}
 		}
 	}
@@ -165,6 +164,10 @@ func (m dashboardModel) workspaceProgressAction() string {
 		return "Removing workspace"
 	}
 	return string(m.workspaceRun.action)
+}
+
+func dashboardRecoveryCommand(root, action, id string) string {
+	return "bearforge --root " + workspaceShellQuote(displayText(root)) + " operations " + action + " " + displayText(id)
 }
 
 // Quote for PowerShell on Windows and a POSIX shell elsewhere, keeping paths

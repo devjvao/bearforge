@@ -208,7 +208,7 @@ func (m dashboardModel) appendNotices(lines []string) []string {
 	}
 	for _, op := range m.data.PendingOperations {
 		lines = append(lines, m.styles.warn.Render("Unfinished: "+displayText(op.Kind)+" ["+displayText(op.State)+"] "+displayText(op.Workspace)),
-			"Inspect: bearforge operations show "+displayText(op.ID))
+			"Inspect: "+dashboardRecoveryCommand(m.data.Root, "show", op.ID))
 	}
 	return lines
 }

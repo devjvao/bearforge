@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -17,6 +18,8 @@ import (
 	"bearforge/internal/config"
 	"bearforge/internal/domain"
 )
+
+const maxDocument = 2 << 20
 
 type Store struct{ files *config.Store }
 
@@ -50,8 +53,39 @@ func (s *Store) Save(op *app.Operation) error {
 	if err != nil {
 		return err
 	}
+	limit := maxDocument
+	if op.State != "complete" && op.State != "abandoned" {
+		// A refused later snapshot must still be recoverable by abandonment.
+		limit -= max(0, len("abandoned")-len(op.State))
+	}
+	if len(b)+1 > limit {
+		// Keep full diagnostics in the caller's result, but never replace a
+		// readable journal with an oversized snapshot of repeated failures.
+		snapshot := *op
+		snapshot.Steps = slices.Clone(op.Steps)
+		snapshot.Error = journalDiagnostic(snapshot.Error)
+		for i := range snapshot.Steps {
+			snapshot.Steps[i].Error = journalDiagnostic(snapshot.Steps[i].Error)
+		}
+		b, err = json.MarshalIndent(&snapshot, "", "  ")
+		if err != nil {
+			return err
+		}
+		if len(b)+1 > limit {
+			return domain.E("invalid", "operation exceeds 2 MiB")
+		}
+	}
 	return s.files.Write([]string{".bearforge", "state", "operations", op.ID + ".json"}, append(b, '\n'))
 }
+
+func journalDiagnostic(message string) string {
+	const limit = 4 << 10
+	if len(message) <= limit {
+		return message
+	}
+	return strings.ToValidUTF8(message[:limit], "\uFFFD") + "\n[diagnostic truncated]"
+}
+
 func (s *Store) Load(id string) (*app.Operation, error) {
 	if err := domain.ValidateID(id); err != nil {
 		return nil, err
@@ -65,7 +99,7 @@ func (s *Store) Load(id string) (*app.Operation, error) {
 		return nil, err
 	}
 	defer f.Close()
-	d := json.NewDecoder(io.LimitReader(f, 2<<20))
+	d := json.NewDecoder(io.LimitReader(f, maxDocument))
 	d.DisallowUnknownFields()
 	var op app.Operation
 	if err := d.Decode(&op); err != nil {

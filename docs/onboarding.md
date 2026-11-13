@@ -101,7 +101,7 @@ repositories:
 
 Set the named environment variable using your normal secret-management process. `token_env` is a variable name, never a token value. Explicitly naming an unset/empty variable fails authentication. Default public `GH_TOKEN`/`GITHUB_TOKEN` credentials are never forwarded to custom APIs; without `token_env`, a custom API is accessed anonymously. API URLs must use HTTPS without embedded credentials, query or fragment. Cross-origin pagination/redirects are refused. Configure `source_repository` explicitly when the actual remote cannot identify the head repository or its host differs from the provider host. Use `github.com` with `api_url: https://api.github.com` for explicit public configuration.
 
-Same-origin redirects must retain the configured repository's PR-list path. A rename or redirect that changes or obscures those coordinates returns a provider error without caching an empty result. Update the actual Git remote or explicit provider repository metadata to the current repository coordinates, then retry.
+Pagination links and same-origin redirects must retain the configured repository's PR-list path. A rename, redirect or pagination link that changes or obscures those coordinates returns a provider error without caching an empty result. Update the actual Git remote or explicit provider repository metadata to the current repository coordinates, then retry.
 
 ### Bitbucket Cloud
 

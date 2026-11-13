@@ -174,6 +174,40 @@ func TestRepositoryChangingRedirectFailsWithoutCaching(t *testing.T) {
 	}
 }
 
+func TestRepositoryChangingPaginationFailsBeforeTransmissionWithoutCaching(t *testing.T) {
+	for _, path := range []string{"/repos/other/repo/pulls", "/repos/upstream/project/issues", "/"} {
+		t.Run(path, func(t *testing.T) {
+			var requests, foreign atomic.Int32
+			c, q, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.URL.Path == path {
+					foreign.Add(1)
+					fmt.Fprint(w, "[]")
+					return
+				}
+				w.Header().Set("Link", "<"+path+`?page=2&private=secret>; rel="next"`)
+				fmt.Fprint(w, "["+pullJSON(1, "alice/fork", "feature/pr", "upstream/project", "main", "open", "null")+"]")
+			})
+			for range 2 {
+				obs, err := c.Lookup(context.Background(), q, false)
+				var de *domain.Error
+				if !errors.As(err, &de) || de.Code != "provider_failed" {
+					t.Errorf("pagination should fail: error=%v observation=%#v", err, obs)
+				}
+				if obs.PullRequests != nil || !obs.ObservedAt.IsZero() || obs.Cached {
+					t.Errorf("partial or cached pagination result: %#v", obs)
+				}
+				if err != nil && strings.Contains(err.Error(), "secret") {
+					t.Errorf("unsafe pagination error: %v", err)
+				}
+			}
+			if requests.Load() != 2 || foreign.Load() != 0 {
+				t.Errorf("requests=%d foreign=%d; want 2 uncached attempts, 0 foreign requests", requests.Load(), foreign.Load())
+			}
+		})
+	}
+}
+
 func TestFailedPagesAndMalformedBodiesNeverBecomeSuccessfulEmptyCache(t *testing.T) {
 	for _, body := range []string{"null", "{}", "[", "[] trailing", strings.Repeat(" ", 8*1024*1024) + "[]"} {
 		t.Run(fmt.Sprint(len(body), body[:min(3, len(body))]), func(t *testing.T) {
@@ -197,7 +231,7 @@ func TestFailedPagesAndMalformedBodiesNeverBecomeSuccessfulEmptyCache(t *testing
 			fmt.Fprint(w, "secret body")
 			return
 		}
-		w.Header().Set("Link", `<https://`+r.Host+`/?page=2>; rel="next"`)
+		w.Header().Set("Link", `<https://`+r.Host+`/repos/upstream/project/pulls?page=2>; rel="next"`)
 		fmt.Fprint(w, "["+pullJSON(1, "alice/fork", "feature/pr", "upstream/project", "main", "open", "null")+"]")
 	})
 	obs, err := c.Lookup(context.Background(), q, false)
@@ -334,7 +368,7 @@ func TestPaginationIsBoundedAndCycleRejected(t *testing.T) {
 				if cycle {
 					page = 2
 				}
-				w.Header().Set("Link", fmt.Sprintf(`<https://%s/?page=%d>; rel="next"`, r.Host, page))
+				w.Header().Set("Link", fmt.Sprintf(`<https://%s/repos/upstream/project/pulls?page=%d>; rel="next"`, r.Host, page))
 				fmt.Fprint(w, "[]")
 			})
 			_, err := c.Lookup(context.Background(), q, false)
@@ -373,7 +407,7 @@ func TestPaginationHandlesCommaInsideURL(t *testing.T) {
 	c, q, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		if requests == 1 {
-			w.Header().Set("Link", `<https://`+r.Host+`/?branch=with,comma&page=2>; rel="next", <https://`+r.Host+`/?page=2>; rel="last"`)
+			w.Header().Set("Link", `<https://`+r.Host+`/repos/upstream/project/pulls?branch=with,comma&page=2>; rel="next", <https://`+r.Host+`/repos/upstream/project/pulls?page=2>; rel="last"`)
 		}
 		fmt.Fprint(w, "[]")
 	})
@@ -543,7 +577,7 @@ func TestSuccessfulPageExhaustionStopsPaginationWithoutCaching(t *testing.T) {
 				} else {
 					w.Header().Set("Retry-After", "120")
 				}
-				w.Header().Set("Link", `<https://`+r.Host+`/?page=2>; rel="next"`)
+				w.Header().Set("Link", `<https://`+r.Host+`/repos/upstream/project/pulls?page=2>; rel="next"`)
 				fmt.Fprint(w, "["+pullJSON(1, "alice/fork", "feature/pr", "upstream/project", "main", "open", "null")+"]")
 			})
 			c.now = func() time.Time { return now }

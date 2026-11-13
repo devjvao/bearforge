@@ -45,6 +45,7 @@ type apiPullRequest struct {
 func (c *Client) readPages(ctx context.Context, origin, endpoint *url.URL, q domain.PullRequestQuery, token string, host *hostState) ([]domain.PullRequest, error) {
 	prs := []domain.PullRequest{}
 	seen := make(map[string]bool)
+	seenNumbers := make(map[int]bool)
 	// Keep the configured repository's list path identifiable across all pages.
 	targetPath := endpoint.Path
 	for page := 0; page < 100; page++ {
@@ -70,6 +71,11 @@ func (c *Client) readPages(ctx context.Context, origin, endpoint *url.URL, q dom
 			if q.State != "all" && pr.State != q.State {
 				continue
 			}
+			// Updated-order pagination can repeat entries as PRs change between pages.
+			if seenNumbers[pr.Number] {
+				continue
+			}
+			seenNumbers[pr.Number] = true
 			state := pr.State
 			if pr.MergedAt != nil {
 				state = "merged"
@@ -139,7 +145,7 @@ func nextPage(header http.Header, current, origin *url.URL) (*url.URL, error) {
 				continue
 			}
 			u, err := current.Parse(part[1:end])
-			if err != nil || !sameOrigin(origin, u) || next != nil {
+			if err != nil || !sameOrigin(origin, u) || !strings.EqualFold(u.Path, current.Path) || next != nil {
 				return nil, domain.E("provider_failed", "GitHub returned unsafe pagination")
 			}
 			next = u
