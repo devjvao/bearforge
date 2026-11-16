@@ -119,7 +119,7 @@ func randomID() string {
 	}
 	return hex.EncodeToString(b)
 }
-func (m *Manager) save(ctx context.Context, c Connection, access, refresh, clientSecret string) (Connection, error) {
+func (m *Manager) save(ctx context.Context, c Connection, access string) (Connection, error) {
 	unlock, e := m.lock(ctx)
 	if e != nil {
 		return Connection{}, e
@@ -130,7 +130,7 @@ func (m *Manager) save(ctx context.Context, c Connection, access, refresh, clien
 		return Connection{}, e
 	}
 	old := r.Connections[c.Name]
-	if e = m.saveGeneration(ctx, &c, access, refresh, clientSecret); e != nil {
+	if e = m.saveGeneration(ctx, &c, access); e != nil {
 		return Connection{}, e
 	}
 	r.Connections[c.Name] = c
@@ -141,25 +141,15 @@ func (m *Manager) save(ctx context.Context, c Connection, access, refresh, clien
 	m.deleteSecrets(context.WithoutCancel(ctx), old)
 	return c, nil
 }
-func (m *Manager) saveGeneration(ctx context.Context, c *Connection, access, refresh, clientSecret string) error {
+func (m *Manager) saveGeneration(ctx context.Context, c *Connection, access string) error {
 	generation := randomID()
 	c.SecretRef = "bearforge/" + c.GrantID + "/" + generation + "/access"
 	c.RefreshRef = ""
 	c.ClientSecretRef = ""
-	values := map[string]string{c.SecretRef: access}
-	if refresh != "" {
-		c.RefreshRef = "bearforge/" + c.GrantID + "/" + generation + "/refresh"
-		values[c.RefreshRef] = refresh
-	}
-	if clientSecret != "" {
-		c.ClientSecretRef = "bearforge/" + c.GrantID + "/" + generation + "/client"
-		values[c.ClientSecretRef] = clientSecret
-	}
-	for key, value := range values {
-		if e := m.secrets.Set(ctx, key, value); e != nil {
-			m.deleteSecrets(context.WithoutCancel(ctx), *c)
-			return fmt.Errorf("save credential: %w", ErrSecureStore)
-		}
+	c.ClientID, c.TokenURL = "", ""
+	if e := m.secrets.Set(ctx, c.SecretRef, access); e != nil {
+		m.deleteSecrets(context.WithoutCancel(ctx), *c)
+		return fmt.Errorf("save credential: %w", ErrSecureStore)
 	}
 	return nil
 }

@@ -35,7 +35,7 @@ func addAuthCommands(root *cobra.Command, o *options) {
 	var provider, host, api, name, method, username, tokenEnv string
 	var tokenStdin bool
 	login := &cobra.Command{
-		Use: "login", Short: "Sign in to GitHub or Bitbucket using a browser or guided token setup",
+		Use: "login", Short: "Sign in to GitHub or Bitbucket using guided token setup",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			manager, err := o.authentication()
@@ -45,11 +45,11 @@ func addAuthCommands(root *cobra.Command, o *options) {
 			if tokenStdin && tokenEnv != "" {
 				return domain.E("invalid", "choose only one of --token-stdin or --token-env")
 			}
-			if method != "auto" && method != "browser" && method != "token" {
-				return domain.E("invalid", "method must be auto, browser, or token")
+			if method == "browser" {
+				return domain.E("invalid", "OAuth authentication has been removed; use guided token setup or --token-stdin/--token-env")
 			}
-			if method == "browser" && (o.output != "human" || o.quiet) {
-				return domain.E("invalid", "browser login requires human output without --quiet so authorization instructions are visible; use --token-stdin or --token-env for machine output")
+			if method != "auto" && method != "token" {
+				return domain.E("invalid", "authentication method must be token")
 			}
 			if provider == "" {
 				if !o.interactive() {
@@ -76,13 +76,8 @@ func addAuthCommands(root *cobra.Command, o *options) {
 			if err != nil {
 				return domain.E("invalid", "%v", err)
 			}
-			if method != "auto" {
-				request.Method = method
-			}
+			request.Method = auth.MethodToken
 			request.NoBrowser = tokenStdin || tokenEnv != "" || o.noInput
-			if tokenStdin || tokenEnv != "" {
-				request.Method = auth.MethodToken
-			}
 			if request.Username == "" && strings.HasPrefix(request.Provider, "bitbucket") && o.interactive() {
 				label := "Git username"
 				if request.Provider == "bitbucket-cloud" {
@@ -98,8 +93,8 @@ func addAuthCommands(root *cobra.Command, o *options) {
 				r.Outcome, r.Data = "planned", map[string]string{"connection": request.Name, "provider": request.Provider, "host": request.Host}
 				return o.finishAuthentication(r, nil)
 			}
-			if !o.interactive() && !tokenStdin && tokenEnv == "" && request.Method != auth.MethodBrowser {
-				return domain.E("invalid", "noninteractive login requires --token-stdin, --token-env NAME, or an explicitly configured --method browser")
+			if !o.interactive() && !tokenStdin && tokenEnv == "" {
+				return domain.E("invalid", "noninteractive login requires --token-stdin or --token-env NAME")
 			}
 			hooks := auth.LoginHooks{
 				ReadSecret: func(ctx context.Context, label string) (string, error) {
@@ -117,7 +112,8 @@ func addAuthCommands(root *cobra.Command, o *options) {
 				},
 				Notify: func(message string) {
 					if o.output == "human" && !o.quiet {
-						_, _ = fmt.Fprintln(o.errOut, repositoryListText(message))
+						p := o.presentation(o.errOut, isTerminal(o.errOut))
+						_, _ = fmt.Fprintln(p, terminalDocument(repositoryListText(message), outputWidth(o.errOut)))
 					}
 				},
 				Confirm: func(ctx context.Context, connection auth.Connection) error {
@@ -140,14 +136,6 @@ func addAuthCommands(root *cobra.Command, o *options) {
 					return nil
 				},
 			}
-			if o.interactive() {
-				hooks.ChooseMethod = func(ctx context.Context, methods []string) (string, error) {
-					if len(methods) == 1 {
-						return methods[0], nil
-					}
-					return o.authPrompt(ctx, "Login method (browser or token)", methods[0])
-				}
-			}
 			connection, loginErr := manager.Login(cmd.Context(), request, hooks)
 			r := app.NewResult("auth.login")
 			if loginErr == nil {
@@ -160,7 +148,8 @@ func addAuthCommands(root *cobra.Command, o *options) {
 	login.Flags().StringVar(&host, "host", "", "Server URL (defaults to public provider)")
 	login.Flags().StringVar(&api, "api-url", "", "Explicit HTTPS API base for enterprise installations")
 	login.Flags().StringVar(&name, "connection", "", "Name of the saved connection")
-	login.Flags().StringVar(&method, "method", "auto", "Login method: auto, browser, or token")
+	login.Flags().StringVar(&method, "method", "token", "Compatibility option: token setup only")
+	_ = login.Flags().MarkHidden("method")
 	login.Flags().StringVar(&username, "username", "", "Git username or Bitbucket Cloud account email")
 	login.Flags().StringVar(&tokenEnv, "token-env", "", "Read token from this environment variable")
 	login.Flags().BoolVar(&tokenStdin, "token-stdin", false, "Read a token from stdin without echoing it")

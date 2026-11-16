@@ -20,6 +20,27 @@ func importControl(m dashboardModel, code rune) (dashboardModel, tea.Cmd) {
 	return updated.(dashboardModel), cmd
 }
 
+func TestDashboardImportLoginFormOffersGuidedTokensOnly(t *testing.T) {
+	for _, provider := range []string{"github", "bitbucket"} {
+		t.Run(provider, func(t *testing.T) {
+			m := importDashboard(t, dashboardImportSource{connections: func(context.Context) ([]auth.Connection, error) { return nil, nil }})
+			m, command := dashboardKey(m, 'i', "i")
+			updated, _ := m.Update(command())
+			m = updated.(dashboardModel)
+			if provider == "bitbucket" {
+				m, _ = dashboardKey(m, ' ', " ")
+			}
+			view := strings.ToLower(strings.Join(m.importContent(), "\n"))
+			if strings.Contains(view, "browser authorization") || strings.Contains(view, "oauth") {
+				t.Fatal("token-only login still offers OAuth authorization")
+			}
+			if !strings.Contains(view, "guided token setup") {
+				t.Fatal("login does not explain guided token setup")
+			}
+		})
+	}
+}
+
 func TestDashboardImportNarrowLoginResetsScrolledFormAndSignals(t *testing.T) {
 	m := importDashboard(t, dashboardImportSource{connections: func(context.Context) ([]auth.Connection, error) { return nil, nil }})
 	m.width, m.height = 36, 12
@@ -42,9 +63,8 @@ func TestDashboardImportNarrowLoginResetsScrolledFormAndSignals(t *testing.T) {
 		signal  dashboardImportSignal
 		visible string
 	}{
-		{dashboardImportSignal{kind: "method", methods: []string{auth.MethodToken}}, "unavailable"},
 		{dashboardImportSignal{kind: "secret", text: "Token"}, "Token:"},
-		{dashboardImportSignal{kind: "notice", text: "Enter device code 1234"}, "1234"},
+		{dashboardImportSignal{kind: "notice", text: "Create a token at https://example.invalid/settings/tokens"}, "Create a token"},
 	} {
 		m.importRun.offset = 20 // Scroll the preceding prompt before replacement.
 		updated, _ = m.Update(dashboardImportSignalMsg{id: m.importID, signal: tc.signal})
@@ -131,17 +151,13 @@ func TestDashboardImportSharedLoginHooksAndHiddenToken(t *testing.T) {
 				if r.Provider != provider {
 					t.Errorf("wrong provider: %s", r.Provider)
 				}
+				if r.Method != auth.MethodToken {
+					t.Errorf("shared login did not select token setup: %s", r.Method)
+				}
 				if err := h.Confirm(ctx, auth.Connection{Provider: provider, Host: r.Host, APIURL: "https://api.example.invalid"}); err != nil {
 					return auth.Connection{}, err
 				}
-				method, err := h.ChooseMethod(ctx, []string{auth.MethodToken})
-				if err != nil {
-					return auth.Connection{}, err
-				}
-				if method != auth.MethodToken {
-					t.Errorf("wrong method: %s", method)
-				}
-				h.Notify("Open https://example.invalid/device and enter code 1234")
+				h.Notify("Create a token at https://example.invalid/settings/tokens")
 				secret, err := h.ReadSecret(ctx, "Token")
 				if err != nil {
 					return auth.Connection{}, err
@@ -171,13 +187,7 @@ func TestDashboardImportSharedLoginHooksAndHiddenToken(t *testing.T) {
 			m, _ = dashboardKey(m, 'y', "y")
 			updated, next = m.Update(next())
 			m = updated.(dashboardModel)
-			if !strings.Contains(m.View().Content, "unavailable") {
-				t.Fatal("missing guided token fallback")
-			}
-			m, _ = dashboardKey(m, 't', "t")
-			updated, next = m.Update(next())
-			m = updated.(dashboardModel)
-			if !strings.Contains(m.View().Content, "1234") {
+			if !strings.Contains(m.View().Content, "settings/tokens") {
 				t.Fatal("live notification was hidden")
 			}
 			updated, _ = m.Update(next())

@@ -10,11 +10,13 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-16-repository-discovery-and-ref-collisions-design.md` (approved).
 
+**Authentication update:** The user subsequently removed OAuth authentication from the scope. Guided token setup is now the only login flow for GitHub and Bitbucket. The earlier device/callback/refresh implementation is superseded; the validation history below records the original onboarding delivery, not a requirement to retain those flows.
+
 ## Global Constraints
 
 - Preserve successful clone steps, exact refs, all existing reflogs, and user worktrees; never discard/reclone retained state as recovery.
 - Ordinary Git 2.40+ repositories remain supported; probe reftable capabilities when required.
-- Both GitHub and Bitbucket support login/status/logout and guided tokens; browser login requires a configured supported provider registration.
+- Both GitHub and Bitbucket support token-only login/status/logout through guided setup. No application registration, device authorization, callback listener, client secret, or automatic token refresh is required or supported.
 - No secret values in URLs, argv, logs, journals, catalog metadata, or plaintext credential files.
 - API and Git access are separate observations; anonymous read success is not proof of authenticated identity.
 - The TUI remains offline until an explicit network action; import is usable without a workspace.
@@ -27,7 +29,7 @@
 - Bitbucket Cloud API-token Basic versus legacy Bearer credentials: isolate schemes and test both API and Git usernames.
 - A saved explicit connection disappears or changes accounts: fail closed, permit reviewed repair of partial imports.
 - A provider page/redirect changes origin or query scope: refuse credential leakage and incomplete results.
-- Cancelling a modal or shutting down during browser/network/clone work: invalidate messages, drain I/O, preserve recovery.
+- Cancelling a modal or shutting down during token-entry/network/clone work: invalidate messages, drain I/O, preserve recovery.
 
 ## Task 1: Git ref storage and recovery
 
@@ -43,14 +45,14 @@
 
 ## Task 2: Secure shared authentication core
 
-**Files:** new `internal/auth/{model,store,secrets,login,browser,resolve,status,git}.go` with platform-specific secret storage; new `internal/domain/credentials.go`; auth tests; `go.mod`, `go.sum` only if needed.
+**Files:** `internal/auth/{model,store,secrets,login,resolve,status}.go` with platform-specific secret storage; `internal/domain/credentials.go`; auth tests; `go.mod`, `go.sum` only if needed. The former authorization-flow implementation and tests are removed by the token-only update.
 
-**Interfaces:** `domain.CredentialRequest` describes provider, host/API origin, repository, connection and token-env selection. `domain.Credential` carries nonserializable username/secret/scheme and an opaque identity key. `domain.CredentialResolver` resolves credentials by context and request. `auth.Manager` provides saved `Connection` listing, `Login`, `Status`, `Logout`, connection lookup and resolver access. Public constructors perform no network, registry writes, or secret-store reads. Export typed requests/results and browser/prompt hooks for CLI/TUI. Final exact signatures are published in the task report and consumed by Tasks 3-6.
+**Interfaces:** `domain.CredentialRequest` describes provider, host/API origin, repository, connection and token-env selection. `domain.Credential` carries nonserializable username/secret/scheme and an opaque identity key. `domain.CredentialResolver` resolves credentials by context and request. `auth.Manager` provides saved `Connection` listing, `Login`, `Status`, `Logout`, connection lookup and resolver access. Public constructors perform no network, registry writes, or secret-store reads. Export typed requests/results, a token-page opener and hidden-prompt hooks for CLI/TUI. Final exact signatures are published in the task report and consumed by Tasks 3-6.
 
 - [x] Add failing tests with temporary registries/fake native stores/TLS fixtures covering secure persistence, root-independent login, account/grant references and explicit-source precedence.
 - [x] Implement an atomic versioned nonsecret registry with interprocess lock; native keyring adapter, with a hard error on unavailable secure storage and no plaintext fallback.
 - [x] Implement guided token verification and scheme-specific credentials for GitHub, Bitbucket Cloud, and Server/DC. Legacy public env credentials preserve current precedence and Bearer contract.
-- [x] Implement browser/device authorization with external application configuration, state/PKCE/callback checks, deadlines and cancellation; support refresh rotation and cross-process serialization. If a host lacks suitable OAuth configuration, direct token setup is a supported functional path.
+- [x] The original browser/device implementation was superseded by the user's token-only decision. Remove authorization configuration, device/callback/exchange/refresh code and method selection. Keep guided provider token setup, legacy-record inspection/logout cleanup, and a clear token-login error for old OAuth connections.
 - [x] Implement local and live status without claiming anonymous reachability proves identity; logout is local and targets one connection. Define scoped helper resolution that fails closed on disconnected/replaced explicit bindings.
 - [x] Run `go test ./internal/auth ./internal/domain`, native Windows tests and cross-platform compile checks for adapters. Review core before discovery depends on it.
 
@@ -61,7 +63,7 @@
 **Interfaces:** Existing provider constructors keep environment-only defaults; add constructors accepting `domain.CredentialResolver`. Propagate a `connection` provider-metadata reference through PR queries. CLI production wiring constructs one shared manager/resolver, reused by TUI and provider clients. Repository-scoped helper routing carries only nonsecret connection references.
 
 - [x] Add failing CLI tests for root-independent `auth login --provider github|bitbucket`, `status --repo NAME|--local`, `logout --connection NAME`, noninteractive token stdin, and machine-output redaction.
-- [x] Add prompts with hidden token input, host/provider validation, browser opening fallback and named connections. Implement status grouping and independent API/Git checks, keeping invalid/forbidden/offline/cancelled states distinct.
+- [x] Add prompts with hidden token input, host/provider validation, token-page opening with a manual setup-link fallback, and named connections. Implement status grouping and independent API/Git checks, keeping invalid/forbidden/offline/cancelled states distinct.
 - [x] Add resolver-aware provider requests with correct Basic/Bearer behavior and credential-aware cache identity, preserving exact-origin restrictions and explicit unset-env errors.
 - [x] Implement invocation-scoped cloning credentials and persistent remote-scoped helper integration with stable executable path; preserve unrelated Git settings. An explicit disconnected binding stops helper fallback to another account.
 - [x] Support reviewed associations to registered remotes under the root lock, without requiring auth-only operations to mutate roots.
@@ -94,23 +96,23 @@
 
 **Files:** `internal/tui/dashboard_import*.go`, `dashboard.go`, `dashboard_view.go`, `dashboard_layout.go`; `internal/cli/dashboard.go`; existing help/empty-state views and TUI tests.
 
-**Interfaces:** A separate `DashboardImporter` capability supplies connections/login/discovery, preview/import, and per-operation observers. Use Task 5 request/result shapes, Task 2 typed prompt/browser hooks, and existing reader cancellation/progress patterns. Keep existing `a` registered-to-workspace picker.
+**Interfaces:** A separate `DashboardImporter` capability supplies connections/login/discovery, preview/import, and per-operation observers. Use Task 5 request/result shapes, Task 2 typed token-setup hooks, and existing reader cancellation/progress patterns. Keep existing `a` registered-to-workspace picker.
 
 - [x] Add failing model tests for `i` on empty roots, connection/source form and shared login, filter-stable selections, per-item ID editing, disabled existing/retired rows, review-only Enter and explicit `y` confirmation.
 - [x] Implement a distinct import state machine with source/connection selection, asynchronous login/discovery, picking/review/execution/results. Load only on explicit action; display API and Git auth failures independently.
 - [x] Integrate catalog/workspace refresh, result toggle, cancellation/draining and stale reply invalidation; show recovery commands after partial imports.
-- [x] Cover progress, narrow/monochrome output, browser-unavailable guided-token fallback, and quit/cancel during I/O.
+- [x] Cover progress, narrow/monochrome output, token-page opening failures with manual setup instructions, and quit/cancel during I/O.
 - [x] Run `go test ./internal/tui ./internal/cli`; scoped review.
 
 ## Task 7: Documentation, complete validation, and integration
 
 **Files:** `docs/onboarding.md`, implementation progress/plan ledger, command help; preserve original README edits when transferring changes.
 
-- [x] Document ref storage/recovery, auth configuration and both provider login methods, secure-store prerequisites, scoped Git/GoLand behavior, discovery and partial batch recovery; explain OAuth registrations as release/runtime configuration.
+- [x] Document ref storage/recovery, guided token setup for both providers, secure-store prerequisites, scoped Git/GoLand behavior, discovery and partial batch recovery. The token-only update removes application-registration instructions and explains legacy-record handling and manual token renewal.
 - [x] Format changed Go files; pass `go test ./...`, `go vet ./...`, Windows ref/auth regressions, and Linux/macOS source cross-builds. Record attempted race/lint checks and native-platform limits below.
-- [x] Build CLI and smoke-test auth/login help, local status, token fallback help, repo ref-format help and empty-token safety without real credentials.
+- [x] Build CLI and smoke-test auth/login help, local status, guided token help, repo ref-format help and empty-token safety without real credentials.
 - [x] Obtain whole-change review for security boundaries, recovery and TUI lifecycle. Fix actionable findings and rerun affected checks.
-- [x] Transfer reviewed implementation changes to the original checkout without replacing user README/desktop discussion changes; verify root diff and final relevant checks. Report actual limitations, especially external provider registrations and private-host validation.
+- [x] Transfer reviewed implementation changes to the original checkout without replacing user README/desktop discussion changes; verify root diff and final relevant checks. Report actual limitations, especially private-host token permissions/policies and native-platform validation.
 
 ## Final local validation — 2026-11-16
 
@@ -118,4 +120,4 @@ The complete suite passed after the integration fixes. Focused app/CLI tests als
 
 All 94 transferred implementation/documentation files matched the reviewed worktree after newline normalization. Original README and desktop-discussion edits retained their pre-handoff hashes. The subsequent commit request restores the README and removes the untracked desktop discussion before committing the implementation locally. The isolated feature branch retains the original implementation commits. No tags, pushes, production publication, or real provider/keyring changes were performed.
 
-Race execution is unavailable locally because cgo is disabled and no C compiler is installed. The available golangci-lint 2.12.2 tooling cannot analyze Go 1.27 export data, including after rebuilding it with the project toolchain; its incomplete analysis is not a lint pass. `go vet` passed independently. Native macOS cgo/release builds, both Darwin architectures and Keychain runtime need macOS CI; source cross-compilation does not establish them. Linux Secret Service runtime, Unix terminal behavior, older/newer Git migration matrices, real OAuth registrations/private hosts, and GoLand interoperability remain environment-specific validation. Disposable fixtures cover the implemented contracts without asserting those external results.
+Race execution is unavailable locally because cgo is disabled and no C compiler is installed. The available golangci-lint 2.12.2 tooling cannot analyze Go 1.27 export data, including after rebuilding it with the project toolchain; its incomplete analysis is not a lint pass. `go vet` passed independently. Native macOS cgo/release builds, both Darwin architectures and Keychain runtime need macOS CI; source cross-compilation does not establish them. Linux Secret Service runtime, Unix terminal behavior, older/newer Git migration matrices, private-provider token permissions/policies, and GoLand interoperability remain environment-specific validation. Disposable fixtures cover the implemented contracts without asserting those external results. Application-registration validation is no longer applicable to the token-only scope.

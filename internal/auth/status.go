@@ -44,6 +44,8 @@ func (m *Manager) Status(ctx context.Context, r StatusRequest) ([]StatusResult, 
 					s.State = ve.state
 				case errors.Is(err, ErrExpired):
 					s.State = StateExpired
+				case errors.Is(err, ErrOAuthRemoved):
+					s.State, s.Detail = StateExpired, ErrOAuthRemoved.Error()
 				case errors.Is(err, context.DeadlineExceeded):
 					s.State = StateOffline
 				}

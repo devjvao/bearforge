@@ -70,7 +70,7 @@ func addDashboardCommand(root *cobra.Command, o *options) {
 			"s fetches/prunes all repositories in the current workspace, including filtered rows.\n" +
 			"Sync uses --jobs and shows progress and per-repository results without changing checkouts.\n\n" +
 			"a opens the registered-repository picker for the current workspace.\n" +
-			"i imports provider repositories, including when the root has no workspaces. Choose a saved connection or shared login, then explicitly Load.\n" +
+			"i imports provider repositories, including when the root has no workspaces. Choose a saved connection or guided token setup, then explicitly Load.\n" +
 			"Space selects remote repositories, e edits local IDs, Enter reviews, and y confirms cloning without workspace attachment.\n" +
 			"Space selects, Enter previews resolved defaults, and y confirms the reviewed add plan.\n\n" +
 			"n creates an empty workspace; d removes the selected repository; D removes the workspace.\n" +

@@ -26,6 +26,10 @@ type memorySecrets struct {
 	reads  int
 }
 
+type browserFunc func(context.Context, string) error
+
+func (f browserFunc) Open(ctx context.Context, target string) error { return f(ctx, target) }
+
 func (s *memorySecrets) Get(_ context.Context, k string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -331,17 +335,5 @@ func TestTokenLoginBrowserPolicy(t *testing.T) {
 				t.Fatalf("browser opened %d times, want %d", opened, want)
 			}
 		})
-	}
-}
-
-func TestServerOAuthScopeRejectsWritePermissions(t *testing.T) {
-	for _, scope := range []string{"REPO_WRITE", "REPO_ADMIN", "PROJECT_ADMIN", "ACCOUNT_WRITE", "ADMIN_WRITE", "SYSTEM_ADMIN", "REPO_READ REPO_WRITE"} {
-		if _, err := NormalizeLoginRequest(LoginRequest{Provider: "bitbucket-server", Host: "https://bb.example/context", OAuth: OAuthConfig{Scope: scope}}); err == nil {
-			t.Errorf("accepted scope %q", scope)
-		}
-	}
-	request, err := NormalizeLoginRequest(LoginRequest{Provider: "bitbucket-server", Host: "https://bb.example/context", OAuth: OAuthConfig{Scope: "PUBLIC_REPOS"}})
-	if err != nil || request.OAuth.Scope != "PUBLIC_REPOS" {
-		t.Fatalf("narrower scope rejected: %v", err)
 	}
 }

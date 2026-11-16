@@ -32,6 +32,7 @@ func (m dashboardModel) startImportLogin() (tea.Model, tea.Cmd) {
 	run.err = nil
 	run.notice = ""
 	run.secret = ""
+	run.login.Method = auth.MethodToken
 	run.prompt = nil
 	run.signals = make(chan dashboardImportSignal, 8)
 	run.loginDone = make(chan struct{})
@@ -46,9 +47,6 @@ func (m dashboardModel) startImportLogin() (tea.Model, tea.Cmd) {
 		}
 		defer release()
 		hooks := auth.LoginHooks{
-			ChooseMethod: func(ctx context.Context, methods []string) (string, error) {
-				return importAsk(ctx, signals, dashboardImportSignal{kind: "method", methods: methods})
-			},
 			ReadSecret: func(ctx context.Context, label string) (string, error) {
 				return importAsk(ctx, signals, dashboardImportSignal{kind: "secret", text: label})
 			},

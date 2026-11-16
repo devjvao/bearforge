@@ -101,14 +101,6 @@ func NormalizeLoginRequest(r LoginRequest) (LoginRequest, error) {
 			r.Provider = "bitbucket-server"
 		}
 	}
-	if r.Provider == "bitbucket-server" {
-		if r.OAuth.Scope == "" {
-			r.OAuth.Scope = "REPO_READ"
-		}
-		if r.OAuth.Scope != "REPO_READ" && r.OAuth.Scope != "PUBLIC_REPOS" {
-			return r, errors.New("Bitbucket Server OAuth scope must be REPO_READ or PUBLIC_REPOS")
-		}
-	}
 	if r.APIURL == "" {
 		switch r.Provider {
 		case "github":
@@ -180,9 +172,7 @@ func credentialFor(c Connection, secret string) *credential {
 	case "bitbucket-api-token":
 		v.scheme = "basic"
 		v.gitUsername = "x-bitbucket-api-token-auth"
-	case "bitbucket-oauth":
-		v.gitUsername = "x-token-auth"
-	case "github-token", "github-oauth":
+	case "github-token":
 		v.gitUsername = c.Account
 	}
 	h := sha256.Sum256([]byte(c.GrantID + "\x00" + c.SecretRef + "\x00" + secret))
@@ -263,16 +253,12 @@ func envCredential(r domain.CredentialRequest, secret string) (domain.Credential
 	h := sha256.Sum256([]byte(secret))
 	return &credential{secret: secret, scheme: "bearer", api: n.APIURL, key: "env:" + hex.EncodeToString(h[:])}, nil
 }
-func (m *Manager) resolveSaved(ctx context.Context, c Connection, allowRefresh bool) (domain.Credential, error) {
+func (m *Manager) resolveSaved(ctx context.Context, c Connection, _ bool) (domain.Credential, error) {
+	if c.Method == "browser" || strings.HasSuffix(c.TokenKind, "-oauth") || c.RefreshRef != "" || c.ClientSecretRef != "" || c.ClientID != "" || c.TokenURL != "" {
+		return nil, ErrOAuthRemoved
+	}
 	if !c.ExpiresAt.IsZero() && !m.now().Before(c.ExpiresAt) {
-		if !allowRefresh || c.RefreshRef == "" {
-			return nil, ErrExpired
-		}
-		var e error
-		c, e = m.refresh(ctx, c)
-		if e != nil {
-			return nil, e
-		}
+		return nil, ErrExpired
 	}
 	s, e := m.secrets.Get(ctx, c.SecretRef)
 	if e != nil {

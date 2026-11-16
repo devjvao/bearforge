@@ -12,7 +12,6 @@ import (
 
 const (
 	MethodToken      = "token"
-	MethodBrowser    = "browser"
 	StateUnverified  = "configured-unverified"
 	StateVerified    = "verified"
 	StateMissing     = "missing-credentials"
@@ -29,6 +28,7 @@ var (
 	ErrDisconnected  = errors.New("connection is disconnected or its grant has changed; review the association and log in again")
 	ErrScope         = errors.New("credential does not match the approved provider origin or installation context")
 	ErrExpired       = errors.New("credential has expired; log in again")
+	ErrOAuthRemoved  = errors.New("OAuth authentication was removed; log in again using guided token setup")
 )
 
 type SecretStore interface {
@@ -108,36 +108,23 @@ type Connection struct {
 	ExpiresAt        time.Time `json:"expires_at,omitempty"`
 	TokenKind        string    `json:"token_kind"`
 	SecretRef        string    `json:"secret_ref"`
-	RefreshRef       string    `json:"refresh_ref,omitempty"`
-	ClientSecretRef  string    `json:"client_secret_ref,omitempty"`
-	ClientID         string    `json:"client_id,omitempty"`
-	TokenURL         string    `json:"token_url,omitempty"`
+	// Legacy OAuth metadata is retained only for registry decoding and cleanup
+	// when the user logs out or replaces the connection with a token.
+	RefreshRef      string `json:"refresh_ref,omitempty"`
+	ClientSecretRef string `json:"client_secret_ref,omitempty"`
+	ClientID        string `json:"client_id,omitempty"`
+	TokenURL        string `json:"token_url,omitempty"`
 }
 type LoginRequest struct {
 	Name, Provider, Host, APIURL, GitURL, Method, Username string
-	OAuth                                                  OAuthConfig
-	// NoBrowser suppresses token setup pages; explicitly selected browser OAuth still opens.
+	// NoBrowser suppresses opening the provider's token-management page.
 	NoBrowser bool
-}
-type OAuthConfig struct{ ClientID, ClientSecret, RedirectURI, AuthorizeURL, TokenURL, DeviceURL, Scope string }
-
-func (OAuthConfig) String() string   { return "[OAuth configuration]" }
-func (OAuthConfig) GoString() string { return "[OAuth configuration]" }
-func (OAuthConfig) MarshalJSON() ([]byte, error) {
-	return nil, errors.New("OAuth configuration cannot be serialized")
-}
-func (OAuthConfig) MarshalText() ([]byte, error) {
-	return nil, errors.New("OAuth configuration cannot be serialized")
-}
-func (OAuthConfig) MarshalYAML() (any, error) {
-	return nil, errors.New("OAuth configuration cannot be serialized")
 }
 
 type LoginHooks struct {
-	ChooseMethod func(context.Context, []string) (string, error)
-	ReadSecret   func(context.Context, string) (string, error)
-	Notify       func(string)
-	Confirm      func(context.Context, Connection) error
+	ReadSecret func(context.Context, string) (string, error)
+	Notify     func(string)
+	Confirm    func(context.Context, Connection) error
 }
 type StatusRequest struct {
 	Connection string

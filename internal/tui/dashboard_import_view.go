@@ -8,8 +8,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-
-	"bearforge/internal/auth"
 )
 
 func (m dashboardModel) importView() tea.View {
@@ -81,7 +79,7 @@ func (m dashboardModel) importContent() []string {
 			}
 			rows = append(rows, prefix+displayText(c.Name))
 		}
-		for i, text := range []string{"New connection / shared login", "Environment token or anonymous public source"} {
+		for i, text := range []string{"New connection / guided token setup", "Environment token or anonymous public source"} {
 			prefix := "  "
 			if run.index == len(run.connections)+i {
 				prefix = "> "
@@ -119,7 +117,7 @@ func (m dashboardModel) importContent() []string {
 			lines = append(lines, "Enter a Bitbucket workspace scope, or Ctrl-W to enumerate accessible Bitbucket workspaces.")
 		}
 	case importLoginForm:
-		lines = append(lines, "Shared provider login. No token belongs in these fields.")
+		lines = append(lines, "Guided token setup. No token belongs in these fields.")
 		labels := []string{"Provider (Space toggles)", "Connection name", "Installation URL (including context path)", "API URL (optional override)", "Git URL (optional override)", "Account email / Git username (Bitbucket token)"}
 		values := []string{run.login.Provider, run.login.Name, run.login.Host, run.login.APIURL, run.login.GitURL, run.login.Username}
 		for i, label := range labels {
@@ -129,7 +127,7 @@ func (m dashboardModel) importContent() []string {
 			}
 			lines = append(lines, prefix+label+": "+displayText(values[i]))
 		}
-		lines = append(lines, "Enter starts login; supported browser authorization is offered by the shared service.", "Guided hidden token entry remains available when browser registration is unavailable.")
+		lines = append(lines, "Enter opens the provider's token setup page and prompts for a token with hidden input.")
 		lines = append(lines, "Ctrl-E uses an environment token or anonymous public source instead.")
 		for _, c := range run.connections {
 			if c.Name == run.login.Name {
@@ -146,12 +144,6 @@ func (m dashboardModel) importContent() []string {
 			switch run.prompt.kind {
 			case "secret":
 				lines = append(lines, displayText(run.prompt.text)+": "+strings.Repeat("*", min(32, utf8RuneCount(run.secret))), "Enter submits hidden token.")
-			case "method":
-				if len(run.prompt.methods) == 1 && run.prompt.methods[0] == auth.MethodToken {
-					lines = append(lines, "Browser authorization is unavailable for this installation; t or Enter starts guided token setup.")
-				} else {
-					lines = append(lines, "b browser authorization | t guided token setup")
-				}
 			case "confirm":
 				c := run.prompt.connection
 				lines = append(lines, "Confirm provider: "+displayText(c.Provider), "Installation: "+displayText(c.Host), "API: "+displayText(c.APIURL), "Git: "+displayText(c.GitURL), "Press y to authorize this provider and origin.")

@@ -100,55 +100,6 @@ func TestAuthLoginRequiresExplicitSecretInputWhenNoninteractive(t *testing.T) {
 	}
 }
 
-func TestAuthBrowserRejectsInvisibleInstructionsBeforeOAuth(t *testing.T) {
-	for _, flags := range [][]string{{"--json"}, {"--output", "jsonl"}, {"--quiet"}} {
-		t.Run(strings.Join(flags, " "), func(t *testing.T) {
-			requests := 0
-			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests++; w.WriteHeader(http.StatusBadRequest) }))
-			defer server.Close()
-			manager := auth.NewManager(auth.Options{RegistryPath: filepath.Join(t.TempDir(), "auth.json"), Secrets: authTestSecrets{}, HTTPClient: server.Client(), LookupEnv: authTestOAuthEnv})
-			_, err := authCommand(t, manager, "", append(flags, "auth", "login", "--provider", "github", "--host", server.URL, "--api-url", server.URL, "--method", "browser")...)
-			if err == nil || !strings.Contains(err.Error(), "human output") {
-				t.Fatalf("expected visible-instructions validation, got %v", err)
-			}
-			if requests != 0 {
-				t.Fatal("started OAuth before rejecting hidden instructions")
-			}
-		})
-	}
-}
-
-func authTestOAuthEnv(key string) (string, bool) {
-	if key == "BEARFORGE_AUTH_OAUTH_CLIENT_ID" {
-		return "public-test-client", true
-	}
-	return "", false
-}
-
-func TestAuthHeadlessBrowserKeepsVisibleDeviceInstructions(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/login/device/code":
-			fmt.Fprintf(w, `{"device_code":"private-device-code","user_code":"VISIBLE-CODE","verification_uri":"https://%s/device","expires_in":30,"interval":1}`, r.Host)
-		case "/login/oauth/access_token":
-			fmt.Fprint(w, `{"access_token":"private-access-token"}`)
-		case "/user":
-			fmt.Fprint(w, `{"id":17,"login":"octocat"}`)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-	manager := auth.NewManager(auth.Options{RegistryPath: filepath.Join(t.TempDir(), "auth.json"), Secrets: authTestSecrets{}, HTTPClient: server.Client(), LookupEnv: authTestOAuthEnv})
-	output, err := authCommand(t, manager, "", "--no-input", "auth", "login", "--provider", "github", "--host", server.URL, "--api-url", server.URL, "--connection", "headless", "--method", "browser")
-	if err != nil || !strings.Contains(output, "VISIBLE-CODE") || !strings.Contains(output, server.URL+"/device") {
-		t.Fatalf("headless device instructions missing: %s, %v", output, err)
-	}
-	if strings.Contains(output, "private-device-code") || strings.Contains(output, "private-access-token") {
-		t.Fatal("device login exposed private credentials")
-	}
-}
-
 func TestAuthHelpCoversBothProviders(t *testing.T) {
 	var output, diagnostics bytes.Buffer
 	if code := Run(t.Context(), []string{"auth", "login", "--help"}, strings.NewReader(""), &output, &diagnostics); code != 0 || !strings.Contains(output.String(), "github") || !strings.Contains(output.String(), "bitbucket") {

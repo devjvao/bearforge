@@ -69,7 +69,6 @@ type dashboardImportProgressMsg struct {
 }
 type dashboardImportSignal struct {
 	kind, text string
-	methods    []string
 	connection auth.Connection
 	response   chan string
 }
@@ -612,21 +611,6 @@ func (m dashboardModel) importKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch run.prompt.kind {
-		case "method":
-			method := ""
-			if name == "t" {
-				method = auth.MethodToken
-			}
-			if name == "b" {
-				method = auth.MethodBrowser
-			}
-			if name == "enter" && len(run.prompt.methods) == 1 {
-				method = run.prompt.methods[0]
-			}
-			if slices.Contains(run.prompt.methods, method) {
-				run.prompt.response <- method
-				run.prompt = nil
-			}
 		case "confirm":
 			if name == "y" {
 				run.prompt.response <- "yes"
