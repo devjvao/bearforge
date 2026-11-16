@@ -351,6 +351,24 @@ func (c *Client) fetchRefPlan(ctx context.Context, path string) ([]string, error
 			return nil, domain.E("conflict", "fetch destination %q overlaps retained symbolic ref %q; reconcile remote names before syncing", name, symref)
 		}
 	}
+	// for-each-ref omits symbolic refs whose targets no longer exist. Query
+	// each writable destination without dereferencing it, so a dangling symref
+	// (including a differently cased files-backend alias) cannot be overwritten
+	// or used to recreate its missing target by fetch.
+	checked := map[string]bool{}
+	for _, name := range potential {
+		if checked[key(name)] {
+			continue
+		}
+		checked[key(name)] = true
+		target, err := c.Run(ctx, path, "symbolic-ref", "--no-recurse", "--quiet", name)
+		if err == nil {
+			return nil, domain.E("conflict", "fetch destination %q is a retained symbolic ref to %q; reconcile remote names before syncing", name, strings.TrimSpace(string(target)))
+		}
+		if !isExit(err, 1) {
+			return nil, err
+		}
+	}
 	if format == "files" {
 		if a, b := refCollision(append(retained, potential...), sensitive); a != "" {
 			return nil, domain.E("conflict", "files refs cannot preserve %q and %q; reconcile remote branch/tag names or arrange a separately planned migration (linked worktrees are never automatically migrated)", a, b)

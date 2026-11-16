@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -57,6 +58,36 @@ func exactRefs(t *testing.T, c *Client, path string) map[string]string {
 		}
 	}
 	return refs
+}
+
+func rawReflogs(t *testing.T, bare string) map[string]string {
+	t.Helper()
+	logs := map[string]string{}
+	err := filepath.WalkDir(bare, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() && entry.Name() == "objects" {
+			return filepath.SkipDir
+		}
+		relative, err := filepath.Rel(bare, path)
+		if err != nil {
+			return err
+		}
+		relative = filepath.ToSlash(relative)
+		if !entry.IsDir() && (strings.HasPrefix(relative, "logs/") || strings.Contains(relative, "/logs/")) {
+			contents, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			logs[relative] = string(contents)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return logs
 }
 
 func TestClonePreservesCaseDistinctRefs(t *testing.T) {
@@ -399,5 +430,79 @@ func TestFetchNoTagsIgnoresUnselectedTagCollisions(t *testing.T) {
 	after, err := c.refSnapshot(t.Context(), bare)
 	if err != nil || before != after {
 		t.Fatalf("no-tags fetch altered retained tag/ref/log state: %v", err)
+	}
+}
+
+func TestFetchRefusesDanglingSymbolicDestination(t *testing.T) {
+	for _, branch := range []string{"head", "HEAD"} {
+		t.Run(branch, func(t *testing.T) {
+			c, bare, root := fixture(t)
+			if branch == "head" {
+				sensitive, err := caseSensitive(bare)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if sensitive {
+					t.Skip("case-sensitive destination; differently spelled symbolic refs do not alias")
+				}
+			}
+			linked := filepath.Join(root, "linked")
+			if err := c.Add(t.Context(), bare, linked, "main", "", false); err != nil {
+				t.Fatal(err)
+			}
+			remote := filepath.Join(root, "remote")
+			if _, err := c.Run(t.Context(), remote, "branch", "-m", "main", "stable"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.Run(t.Context(), bare, "update-ref", "--no-deref", "-d", "refs/remotes/origin/main"); err != nil {
+				t.Fatal(err)
+			}
+			targetBefore, err := c.Run(t.Context(), bare, "symbolic-ref", "--no-recurse", "--quiet", "refs/remotes/origin/HEAD")
+			if err != nil || strings.TrimSpace(string(targetBefore)) != "refs/remotes/origin/main" {
+				t.Fatalf("dangling target was not retained: %s %v", targetBefore, err)
+			}
+			for ref := range exactRefs(t, c, bare) {
+				if ref == "refs/remotes/origin/HEAD" {
+					t.Fatal("fixture is not dangling: for-each-ref still enumerates the symbolic ref")
+				}
+			}
+			tree, err := c.Run(t.Context(), remote, "rev-parse", "HEAD^{tree}")
+			if err != nil {
+				t.Fatal(err)
+			}
+			oid, err := c.Run(t.Context(), remote, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit-tree", strings.TrimSpace(string(tree)), "-m", "dangling alias target")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.Run(t.Context(), remote, "update-ref", "refs/heads/"+branch, strings.TrimSpace(string(oid))); err != nil {
+				t.Fatal(err)
+			}
+			before, err := c.refSnapshot(t.Context(), bare)
+			if err != nil {
+				t.Fatal(err)
+			}
+			logsBefore := rawReflogs(t, bare)
+			if _, err := c.fetchRefPlan(t.Context(), bare); err == nil || !strings.Contains(err.Error(), "symbolic") {
+				t.Errorf("dangling destination escaped preflight: %v", err)
+			}
+			if err := c.Fetch(t.Context(), bare); err == nil || !strings.Contains(err.Error(), "symbolic") {
+				t.Errorf("fetch did not refuse dangling symbolic destination: %v", err)
+			}
+			targetAfter, err := c.Run(t.Context(), bare, "symbolic-ref", "--no-recurse", "--quiet", "refs/remotes/origin/HEAD")
+			if err != nil || string(targetBefore) != string(targetAfter) {
+				t.Errorf("dangling symbolic target changed: %s %v", targetAfter, err)
+			}
+			after, err := c.refSnapshot(t.Context(), bare)
+			if err != nil || before != after {
+				t.Errorf("retained refs, HEAD, or reflogs changed: %v", err)
+			}
+			if !reflect.DeepEqual(logsBefore, rawReflogs(t, bare)) {
+				t.Error("retained raw reflog identities changed")
+			}
+			content, err := os.ReadFile(filepath.Join(linked, "tracked.txt"))
+			if err != nil || string(content) != "original\n" {
+				t.Errorf("linked content changed: %v", err)
+			}
+		})
 	}
 }

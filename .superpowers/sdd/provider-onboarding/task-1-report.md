@@ -101,3 +101,34 @@ ok bearforge/internal/gitcli 50.907s
 ```
 
 gofmt and `git diff --check` on the two changed Go files passed. No broad whole-project suite was run during ongoing integrations. The already documented newer-Git migration and Git 2.40 capability-fallback matrix gaps remain unchanged.
+
+## Fix round 2/5: dangling symbolic destinations
+
+The remaining Important finding was verified against Git 2.47. Ordinary `for-each-ref` omits a retained `origin/HEAD` when its `origin/main` target has been pruned. The round-1 inventory alone therefore cannot protect that name.
+
+`fetchRefPlan` now independently reads each unique potential destination with `git symbolic-ref --no-recurse --quiet`. This reads the symbolic destination itself without needing its target to exist and catches native case aliases on files storage. A symbolic destination is refused before fetch. Exit 1 means an ordinary/nonexistent destination; all other read failures fail closed. Checks are deduplicated using the already-probed backend's case rules. No production metadata-file walk or client/auth modification was introduced.
+
+Covering test: `TestFetchRefusesDanglingSymbolicDestination` in `internal/gitcli/ref_storage_test.go`. It retains a linked worktree, renames the remote main branch, deletes only the old tracking target to leave `origin/HEAD` dangling, and adds a distinct remote commit under `head` and exact `HEAD`. It confirms Git enumeration omits the dangling alias, requires preflight refusal, and checks the explicit symbolic target, complete enumerated ref/HEAD/reflog snapshot, raw reflog files (including linked-worktree logs), and tracked content remain unchanged.
+
+RED command: `go test ./internal/gitcli -run TestFetchRefusesDanglingSymbolicDestination -count=1 -v`.
+
+```text
+head: dangling destination escaped preflight: <nil>
+head: fetch did not refuse dangling symbolic destination: fetch did not retain exact ref "refs/remotes/origin/head"...
+head: retained refs, HEAD, or reflogs changed: <nil>
+HEAD: dangling destination escaped preflight: <nil>
+HEAD: fetch did not refuse dangling symbolic destination: fetch did not retain exact ref "refs/remotes/origin/HEAD"...
+HEAD: retained refs, HEAD, or reflogs changed: <nil>
+FAIL bearforge/internal/gitcli 5.973s
+```
+
+GREEN: the same command passed after the independent symbolic-destination check (`ok bearforge/internal/gitcli 5.550s`). An initial package compile attempt overlapped independently added RebindConnection tests before their method existed; no auth files were changed, and the normal-package RED/GREEN above was rerun after that integration compiled.
+
+Final focused verification command:
+
+```text
+go test ./internal/gitcli -run 'TestFetchRefusesDanglingSymbolicDestination|TestFetchRefusesWritesThroughSymbolicRefs|TestFetchHonorsTagSelection|TestFetchNoTagsIgnoresUnselectedTagCollisions|TestClonePreservesCaseDistinctRefs' -count=1
+ok bearforge/internal/gitcli 36.315s
+```
+
+gofmt and scoped `git diff --check` passed. Only the two ref-storage files and this report changed. No broad suite or subagents were used in this round; matrix limitations remain as previously recorded.
