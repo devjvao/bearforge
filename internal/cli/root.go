@@ -254,6 +254,14 @@ func (o *options) render(r app.Result) error {
 	if _, ok := r.Data.(app.ImportReassociationPlan); ok {
 		return o.renderImportReassociation(r)
 	}
+	switch r.Data.(type) {
+	case app.Operation, *app.Operation, []app.Operation:
+		return o.renderOperationResult(r)
+	}
+	switch r.Command {
+	case "repo.add", "repo.inspect", "repo.import", "operations.resume", "operations.abandon":
+		return o.renderHumanResult(r, isTerminal(o.out))
+	}
 	if r.Command == "pr.list" {
 		return o.renderPullRequests(r, isTerminal(o.out))
 	}
@@ -340,7 +348,7 @@ func (o *options) confirm(ctx context.Context, plan app.Result) error {
 		return domain.E("confirmation", "confirmation required; review --dry-run then use --yes")
 	}
 	if repair, ok := plan.Data.(app.ImportReassociationPlan); ok {
-		if err := o.confirmationText("%s", importReassociationReview(repair)); err != nil {
+		if err := o.writeImportReassociationReview(repair); err != nil {
 			return err
 		}
 	} else {

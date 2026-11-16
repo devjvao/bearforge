@@ -15,7 +15,11 @@ import (
 )
 
 func (o *options) renderResult(r app.Result) error {
-	p := o.presentation(o.out, true)
+	return o.renderHumanResult(r, true)
+}
+
+func (o *options) renderHumanResult(r app.Result, terminal bool) error {
+	p := o.presentation(o.out, terminal)
 	width := outputWidth(o.out)
 	title := repositoryListText(strings.ReplaceAll(r.Command, ".", " "))
 	outcome := repositoryListText(r.Outcome)
@@ -214,7 +218,7 @@ func renderResultRows(p *colorprofile.Writer, headers []string, rows [][]string,
 				value = repositoryListText(row[column])
 			}
 			if p.Profile > colorprofile.ASCII {
-				if label == "STATUS" || label == "STATE" {
+				if outcomeColumn(label) {
 					value = outcomeStyle(value).Render(value)
 				}
 				label = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6")).Render(label)

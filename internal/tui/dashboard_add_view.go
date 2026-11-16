@@ -136,7 +136,8 @@ func (m dashboardModel) addPickerIntroduction() []string {
 }
 
 func (m dashboardModel) wrapAdd(text string) []string {
-	return strings.Split(ansi.Wrap(text, m.detailWidth(), ""), "\n")
+	width := m.detailWidth()
+	return strings.Split(ansi.Hardwrap(ansi.Wrap(text, width, ""), width, true), "\n")
 }
 
 func (m dashboardModel) addWrappedContent() []string {

@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"strings"
 
+	"charm.land/bubbles/v2/table"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"bearforge/internal/auth"
@@ -35,7 +37,8 @@ func (m dashboardModel) importView() tea.View {
 	return dashboardView(lines[:min(len(lines), m.height)], m.width)
 }
 func (m dashboardModel) importWrappedContent() []string {
-	return strings.Split(ansi.Wrap(strings.Join(m.importContent(), "\n"), m.width, ""), "\n")
+	wrapped := ansi.Hardwrap(ansi.Wrap(strings.Join(m.importContent(), "\n"), m.width, ""), m.width, true)
+	return strings.Split(wrapped, "\n")
 }
 
 func (m dashboardModel) importFollowField() {
@@ -49,7 +52,7 @@ func (m dashboardModel) importFollowField() {
 func (m dashboardModel) importContent() []string {
 	run := m.importRun
 	lines := []string{}
-	if run.err != nil {
+	if run.err != nil && run.phase != importResults {
 		label := "Error: "
 		if run.phase == importPicking || run.phase == importWorkspaces {
 			label = "API discovery: "
@@ -70,26 +73,31 @@ func (m dashboardModel) importContent() []string {
 	}
 	switch run.phase {
 	case importConnections:
-		lines = append(lines, "Choose a saved connection (local metadata only).")
+		rows := make([]string, 0, len(run.connections)+2)
 		for i, c := range run.connections {
 			prefix := "  "
 			if i == run.index {
 				prefix = "> "
 			}
-			lines = append(lines, prefix+displayText(c.Name+" | "+c.Provider+" | "+c.Host), "    "+displayText(c.Method+" | "+c.State+" | "+c.Account), "    API: "+displayText(c.APIURL))
+			rows = append(rows, prefix+displayText(c.Name))
 		}
 		for i, text := range []string{"New connection / shared login", "Environment token or anonymous public source"} {
 			prefix := "  "
 			if run.index == len(run.connections)+i {
 				prefix = "> "
 			}
-			lines = append(lines, prefix+text)
+			rows = append(rows, prefix+text)
+		}
+		lines = append(lines, listLines("Connections (local metadata)", rows, run.index, max(3, m.height-9), "No saved connections.")...)
+		if run.index < len(run.connections) {
+			c := run.connections[run.index]
+			lines = append(lines, "", "Provider: "+displayText(c.Provider), "Host: "+displayText(c.Host), "Status: "+displayText(c.State), "Account: "+displayText(c.Account), "Login method: "+displayText(c.Method), "API: "+displayText(c.APIURL))
 		}
 		lines = append(lines, "Enter selects; r reloads connections.")
 	case importSource:
 		lines = append(lines, "Source settings / Enter Load starts provider HTTP.")
 		if run.source.Connection != "" {
-			lines = append(lines, "Connection: "+displayText(run.source.Connection)+" | "+displayText(run.connection.Method+" | "+run.connection.State+" | "+run.connection.Account), "Grant: "+displayText(run.source.GrantID))
+			lines = append(lines, "Connection: "+displayText(run.source.Connection), "Account: "+displayText(run.connection.Account), "Login method: "+displayText(run.connection.Method), "API status: "+displayText(run.connection.State), "Grant: "+displayText(run.source.GrantID))
 		}
 		labels := []string{"Scope (GitHub owner / Bitbucket workspace or project)", "Clone transport (Space toggles)", "Token environment variable name (optional)", "Provider (github / bitbucket / bitbucket-server)", "Host (hostname)", "API base URL", "Git base URL"}
 		values := []string{run.source.Scope, run.transport, run.source.TokenEnv, run.source.Provider, run.source.Host, run.source.APIURL, run.source.GitURL}
@@ -152,25 +160,26 @@ func (m dashboardModel) importContent() []string {
 	case importLoading:
 		lines = append(lines, "Loading provider data... Escape cancels the request.")
 	case importWorkspaces:
-		lines = append(lines, "Choose a Bitbucket workspace. Enter selects the scope; Load remains explicit.")
+		rows := make([]string, 0, len(run.workspaces))
 		for i, w := range run.workspaces {
 			prefix := "  "
 			if i == run.index {
 				prefix = "> "
 			}
-			lines = append(lines, prefix+displayText(w.Slug+" | "+w.Name))
+			rows = append(rows, prefix+displayText(w.Slug))
 		}
+		lines = append(lines, listLines("Bitbucket workspaces", rows, run.index, max(3, m.height-8), "No workspaces loaded.")...)
+		if run.index >= 0 && run.index < len(run.workspaces) {
+			lines = append(lines, "", "Name: "+displayText(run.workspaces[run.index].Name), "Scope: "+displayText(run.workspaces[run.index].Slug))
+		}
+		lines = append(lines, "Enter selects the scope; Load remains explicit.")
 		if len(run.workspaces) == 0 {
 			lines = append(lines, "No Bitbucket workspaces loaded. Escape returns to direct scope; r retries.")
 		}
 	case importPicking:
 		rows := m.importChoices()
-		lines = append(lines, fmt.Sprintf("Repositories: %d | selected: %d | / %s", len(rows), m.importSelectionCount(), displayText(run.filter)))
-		height := max(2, m.height-11)
-		start := max(0, min(run.index-height/2, len(rows)-height))
-		end := min(len(rows), start+height)
-		for i := start; i < end; i++ {
-			c := rows[i]
+		choices := make([]string, 0, len(rows))
+		for i, c := range rows {
 			prefix := "  [ ] "
 			if run.selected[importKey(c)] {
 				prefix = "  [x] "
@@ -181,27 +190,25 @@ func (m dashboardModel) importContent() []string {
 			if i == run.index {
 				prefix = ">" + prefix[1:]
 			}
-			state := ""
-			if c.RegisteredID != "" {
-				state = " (registered: " + c.RegisteredID + ")"
-			}
-			if c.RetiredID != "" {
-				state = " (retired; repo restore " + c.RetiredID + ")"
-			}
-			visibility := "public"
-			if c.Repository.Private {
-				visibility = "private"
-			}
-			if c.Repository.Archived {
-				visibility += " archived"
-			}
-			lines = append(lines, prefix+displayText(c.Repository.FullName+" -> "+run.ids[importKey(c)]+state+" | "+visibility))
+			choices = append(choices, prefix+displayText(c.Repository.FullName))
+		}
+		title := fmt.Sprintf("Repositories: %d / selected: %d", len(rows), m.importSelectionCount())
+		lines = append(lines, listLines(title, choices, run.index, max(3, m.height-9), "No repositories match.")...)
+		if run.filter != "" {
+			lines = append(lines, "Filter: "+displayText(run.filter))
 		}
 		if len(rows) == 0 {
 			lines = append(lines, "No repositories match. r retries discovery; c changes source.")
 		}
 		if run.index < len(rows) {
 			c := rows[run.index]
+			visibility := "public"
+			if c.Repository.Private {
+				visibility = "private"
+			}
+			if c.Repository.Archived {
+				visibility += ", archived"
+			}
 			branch := c.Repository.DefaultBranch
 			if branch == "" {
 				branch = "(unknown)"
@@ -210,7 +217,13 @@ func (m dashboardModel) importContent() []string {
 			if run.transport == "ssh" {
 				clone = c.Repository.SSHURL
 			}
-			lines = append(lines, "", displayText(c.Repository.Description), "URL: "+displayText(clone), "Default branch: "+displayText(branch))
+			lines = append(lines, "", "Local ID: "+displayText(run.ids[importKey(c)]), "Visibility: "+visibility, displayText(c.Repository.Description), "URL: "+displayText(clone), "Default branch: "+displayText(branch))
+			if c.RegisteredID != "" {
+				lines = append(lines, "Registered as: "+displayText(c.RegisteredID))
+			}
+			if c.RetiredID != "" {
+				lines = append(lines, "Retired as: "+displayText(c.RetiredID)+"; use repo restore.")
+			}
 			if c.Problem != nil {
 				lines = append(lines, displayText(c.Problem.Message))
 			}
@@ -257,10 +270,18 @@ func (m dashboardModel) importContent() []string {
 		if run.result.Problem != nil && run.err == nil {
 			lines = append(lines, displayText(run.result.Problem.Message))
 		}
+		names := make([]string, 0, len(run.request.Repositories))
+		for _, repository := range run.request.Repositories {
+			names = append(names, repository.ID)
+		}
+		lines = append(lines, m.repositoryStatusLines(names, run.states, m.width)...)
+		if run.err != nil {
+			lines = append(lines, "", m.styles.title.Render("Import failure"), displayText(run.err.Error()))
+		}
 		for _, r := range run.request.Repositories {
-			lines = append(lines, "", displayText(r.ID)+" | "+displayText(run.states[r.ID]))
 			for _, item := range run.result.Items {
-				if item.Repository == r.ID {
+				if item.Repository == r.ID && (item.RefFormat != "" || item.Problem != nil) {
+					lines = append(lines, "", m.styles.title.Render(displayText(r.ID)))
 					if item.RefFormat != "" {
 						lines = append(lines, "Ref storage: "+displayText(item.RefFormat))
 					}
@@ -285,6 +306,31 @@ func (m dashboardModel) importContent() []string {
 		}
 	}
 	return lines
+}
+
+// Result summaries use the same Bubbles table as the CLI. When a name cannot
+// fit beside its status, keep both complete as records in the outer viewport.
+func (m dashboardModel) repositoryStatusLines(names []string, states map[string]string, width int) []string {
+	if len(names) == 0 {
+		return nil
+	}
+	nameWidth, stateWidth := len("Repository"), len("Status")
+	rows := make([]table.Row, 0, len(names))
+	for _, name := range names {
+		name, state := displayText(name), displayText(states[name])
+		nameWidth = max(nameWidth, ansi.StringWidth(name))
+		stateWidth = max(stateWidth, ansi.StringWidth(state))
+		rows = append(rows, table.Row{name, state})
+	}
+	if nameWidth+stateWidth+4 > width {
+		lines := []string{}
+		for _, row := range rows {
+			lines = append(lines, "", m.styles.title.Render(row[0]), "Status: "+row[1])
+		}
+		return lines
+	}
+	component := table.New(table.WithColumns([]table.Column{{Title: "Repository", Width: nameWidth}, {Title: "Status", Width: stateWidth}}), table.WithRows(rows), table.WithWidth(nameWidth+stateWidth+4), table.WithHeight(len(rows)+1), table.WithFocused(false), table.WithStyles(table.Styles{Header: m.styles.title.PaddingRight(2), Cell: lipgloss.NewStyle().PaddingRight(2), Selected: lipgloss.NewStyle()}))
+	return strings.Split(component.View(), "\n")
 }
 func utf8RuneCount(s string) int { return len([]rune(s)) }
 func (m dashboardModel) importSelectionCount() int {

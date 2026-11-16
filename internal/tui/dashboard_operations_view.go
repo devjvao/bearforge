@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -29,7 +28,11 @@ func (m dashboardModel) operationsView() tea.View {
 	if run.phase == operationsReview && run.action == "abandon" {
 		lines = append(lines, "Successful imports + files retained", "This operation cannot be resumed")
 	}
-	body := viewportLines(m.operationsWrappedContent(), run.offset, m.detailWidth(), m.operationsViewportHeight())
+	offset := run.offset
+	if run.phase == operationsList {
+		offset = 0 // The Bubbles list keeps the selected operation in view.
+	}
+	body := viewportLines(m.operationsWrappedContent(), offset, m.detailWidth(), m.operationsViewportHeight())
 	if m.framed() {
 		lines = append(lines, strings.Split(m.pane(body, m.width, true), "\n")...)
 	} else {
@@ -62,12 +65,21 @@ func (m dashboardModel) operationsContent() []string {
 		if len(run.entries) == 0 {
 			return append(lines, "No unfinished operations. Escape returns to the dashboard.")
 		}
+		rows := make([]string, 0, len(run.entries))
 		for i, op := range run.entries {
 			prefix := "  "
 			if i == run.index {
 				prefix = "> "
 			}
-			lines = append(lines, prefix+displayText(op.ID)+" | "+displayText(op.Kind)+" | "+displayText(op.State))
+			rows = append(rows, prefix+displayText(op.ID))
+		}
+		lines = append(lines, listLines("Unfinished operations", rows, run.index, max(3, m.operationsViewportHeight()-3), "No unfinished operations.")...)
+		if run.index < len(run.entries) {
+			op := run.entries[run.index]
+			lines = append(lines, "Kind: "+displayText(op.Kind), "State: "+displayText(op.State))
+			if op.Workspace != "" {
+				lines = append(lines, "Workspace: "+displayText(op.Workspace))
+			}
 		}
 		return lines
 	}
@@ -78,7 +90,7 @@ func (m dashboardModel) operationsContent() []string {
 		return lines
 	}
 	op := run.operation
-	lines = append(lines, "Operation: "+displayText(op.ID), "Kind: "+displayText(op.Kind)+" | Recorded state: "+displayText(op.State))
+	lines = append(lines, "Operation: "+displayText(op.ID), "Kind: "+displayText(op.Kind), "Recorded state: "+displayText(op.State))
 	if run.phase == operationsReview {
 		if run.action == "resume" {
 			lines = append(lines, "Retry unfinished steps; successful work is verified and reused.", "The original operation and credential bindings are retained.")
@@ -87,9 +99,8 @@ func (m dashboardModel) operationsContent() []string {
 		}
 		lines = append(lines, "Press y to confirm; Escape cancels.")
 	}
-	if op.Error != "" {
-		lines = append(lines, "Recorded failure: "+displayText(op.Error))
-	}
+	names := make([]string, 0, len(op.Steps))
+	states := map[string]string{}
 	for _, step := range op.Steps {
 		state := step.State
 		if run.phase == operationsExecuting || run.phase == operationsResults {
@@ -97,7 +108,18 @@ func (m dashboardModel) operationsContent() []string {
 				state = current
 			}
 		}
-		lines = append(lines, "", fmt.Sprintf("%s | %s", displayText(step.Repository), displayText(state)))
+		names = append(names, step.Repository)
+		states[step.Repository] = state
+	}
+	lines = append(lines, m.repositoryStatusLines(names, states, m.detailWidth())...)
+	if op.Error != "" {
+		lines = append(lines, "", m.styles.title.Render("Recorded failure"), displayText(op.Error))
+	}
+	for _, step := range op.Steps {
+		if step.Error == "" && step.ImportedRepository == nil {
+			continue
+		}
+		lines = append(lines, "", m.styles.title.Render(displayText(step.Repository)))
 		if step.Error != "" {
 			label := "Error: "
 			if run.phase == operationsExecuting || run.phase == operationsResults {

@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -22,6 +21,7 @@ import (
 type authenticationStatusData struct {
 	Connections  []auth.StatusResult              `json:"connections"`
 	Repositories []repositoryAuthenticationStatus `json:"repositories"`
+	Local        bool                             `json:"-"`
 }
 
 type repositoryAuthenticationStatus struct {
@@ -32,6 +32,7 @@ type repositoryAuthenticationStatus struct {
 	GitRead    string    `json:"git_read"`
 	Detail     string    `json:"detail,omitempty"`
 	ObservedAt time.Time `json:"observed_at,omitempty"`
+	Source     string    `json:"-"`
 }
 
 func (o *options) authenticationStatus(ctx context.Context, connection, repository string, local bool) error {
@@ -56,7 +57,7 @@ func (o *options) authenticationStatus(ctx context.Context, connection, reposito
 			connection = repo.Provider["connection"]
 		}
 	}
-	data := authenticationStatusData{Connections: []auth.StatusResult{}, Repositories: []repositoryAuthenticationStatus{}}
+	data := authenticationStatusData{Connections: []auth.StatusResult{}, Repositories: []repositoryAuthenticationStatus{}, Local: local}
 	if repository == "" || connection != "" {
 		data.Connections, err = manager.Status(ctx, auth.StatusRequest{Connection: connection, Local: local})
 	}
@@ -83,6 +84,9 @@ func (o *options) authenticationStatus(ctx context.Context, connection, reposito
 			continue
 		}
 		status := repositoryAuthenticationStatus{Repository: id, Remote: "origin", Connection: repo.Provider["connection"], API: "configured-unverified", GitRead: "configured-unverified"}
+		if name := repo.Provider["token_env"]; name != "" {
+			status.Source = "env:" + name
+		}
 		remote := repo.Remotes["origin"]
 		if filepath.IsAbs(remote) || strings.HasPrefix(remote, "file://") || (!strings.Contains(remote, ":") && !strings.Contains(remote, "://")) {
 			status.API, status.GitRead = "not-applicable", "local-remote"
@@ -179,46 +183,4 @@ func repositoryAPIAccess(ctx context.Context, q domain.PullRequestQuery, credent
 		state = "rate-limited"
 	}
 	return state, domain.E("unauthenticated", "repository API access: %s", state)
-}
-
-func (o *options) renderAuthentication(result app.Result) error {
-	clean := repositoryListText
-	if result.Problem != nil {
-		if _, err := fmt.Fprintln(o.out, "Authentication:", clean(result.Problem.Message)); err != nil {
-			return err
-		}
-	}
-	switch data := result.Data.(type) {
-	case auth.Connection:
-		identity := data.Account
-		if !data.IdentityVerified {
-			identity = "account identity unverified"
-		}
-		_, err := fmt.Fprintf(o.out, "Connection: %s\nProvider: %s\nHost: %s\nAPI: %s (%s)\nGit read: not checked; select a repository to verify access\n", clean(data.Name), clean(data.Provider), clean(data.Host), clean(data.State), clean(identity))
-		return err
-	case authenticationStatusData:
-		if len(data.Connections) == 0 && len(data.Repositories) == 0 {
-			_, err := fmt.Fprintln(o.out, "No saved connections. Use bearforge auth login --provider github or bitbucket.")
-			return err
-		}
-		for _, status := range data.Connections {
-			if _, err := fmt.Fprintf(o.out, "%s  %s  API: %s  account verified: %t\n", clean(status.Connection.Name), clean(status.Connection.Host), clean(status.State), status.IdentityVerified); err != nil {
-				return err
-			}
-		}
-		for _, status := range data.Repositories {
-			if _, err := fmt.Fprintf(o.out, "%s/%s  connection: %s  API: %s  Git read: %s\n", clean(status.Repository), clean(status.Remote), clean(status.Connection), clean(status.API), clean(status.GitRead)); err != nil {
-				return err
-			}
-		}
-	case auth.LogoutResult:
-		_, err := fmt.Fprintf(o.out, "Disconnected %s locally. Provider token was not revoked.\nManage access: %s\n", clean(data.Connection), clean(data.ManagementURL))
-		return err
-	default:
-		if result.Outcome == "planned" {
-			_, err := fmt.Fprintln(o.out, "Authentication action planned; no credentials changed.")
-			return err
-		}
-	}
-	return nil
 }
