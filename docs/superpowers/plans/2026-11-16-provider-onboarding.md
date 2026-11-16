@@ -19,7 +19,7 @@
 - API and Git access are separate observations; anonymous read success is not proof of authenticated identity.
 - The TUI remains offline until an explicit network action; import is usable without a workspace.
 - Root mutations use the existing lock/journal/revision checks; user-level auth repair must work while an import is partial.
-- Preserve original checkout README.md and docs/desktop-app-discussion.md edits. Work in `.tmp/worktrees/provider-onboarding`, then transfer only reviewed implementation files back to the active checkout.
+- Preserve original checkout README.md and docs/desktop-app-discussion.md edits during implementation and handoff. The subsequent commit request explicitly reverts those two earlier edits. Work in `.tmp/worktrees/provider-onboarding`, then transfer only reviewed implementation files back to the active checkout.
 
 ## Review Focus
 
@@ -116,6 +116,6 @@
 
 The complete suite passed after the integration fixes. Focused app/CLI tests also passed after the final additive repair-preview field. The active checkout passes `go vet ./...`, builds `bin/bearforge.exe`, and passes isolated command/help, read-only auth-status and empty-token checks. Changed Go files pass formatting and Git whitespace checks. Linux and macOS amd64 source cross-builds with cgo disabled pass, as does Windows release snapshot packaging. The scoped final rereview accepted all four integration fixes: synthetic default-ref protection, native macOS release configuration, reviewable grant repair, and anonymous GitHub owner discovery.
 
-All 94 transferred implementation/documentation files matched the reviewed worktree after newline normalization. Original README and desktop-discussion edits retained their pre-handoff hashes. Changes remain uncommitted in the active checkout; the isolated feature branch retains implementation commits. No tags, pushes, production publication, or real provider/keyring changes were performed.
+All 94 transferred implementation/documentation files matched the reviewed worktree after newline normalization. Original README and desktop-discussion edits retained their pre-handoff hashes. The subsequent commit request restores the README and removes the untracked desktop discussion before committing the implementation locally. The isolated feature branch retains the original implementation commits. No tags, pushes, production publication, or real provider/keyring changes were performed.
 
 Race execution is unavailable locally because cgo is disabled and no C compiler is installed. The available golangci-lint 2.12.2 tooling cannot analyze Go 1.27 export data, including after rebuilding it with the project toolchain; its incomplete analysis is not a lint pass. `go vet` passed independently. Native macOS cgo/release builds, both Darwin architectures and Keychain runtime need macOS CI; source cross-compilation does not establish them. Linux Secret Service runtime, Unix terminal behavior, older/newer Git migration matrices, real OAuth registrations/private hosts, and GoLand interoperability remain environment-specific validation. Disposable fixtures cover the implemented contracts without asserting those external results.
