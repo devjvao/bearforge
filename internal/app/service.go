@@ -84,18 +84,20 @@ type Operation struct {
 }
 
 type Step struct {
-	RefFormat          string                 `json:"ref_format,omitempty"`
-	RequestedRefFormat string                 `json:"requested_ref_format,omitempty"`
-	Repository         string                 `json:"repository"`
-	Branch             string                 `json:"branch,omitempty"`
-	Base               string                 `json:"base,omitempty"`
-	Tracking           string                 `json:"tracking,omitempty"`
-	Start              string                 `json:"start,omitempty"`
-	Upstream           string                 `json:"upstream,omitempty"`
-	Create             bool                   `json:"create"`
-	State              string                 `json:"state"`
-	Error              string                 `json:"error,omitempty"`
-	Execution          *domain.ProcessSummary `json:"execution,omitempty"`
+	ImportedRepository         *domain.Repository     `json:"imported_repository,omitempty"`
+	PreviousImportedRepository *domain.Repository     `json:"previous_imported_repository,omitempty"`
+	RefFormat                  string                 `json:"ref_format,omitempty"`
+	RequestedRefFormat         string                 `json:"requested_ref_format,omitempty"`
+	Repository                 string                 `json:"repository"`
+	Branch                     string                 `json:"branch,omitempty"`
+	Base                       string                 `json:"base,omitempty"`
+	Tracking                   string                 `json:"tracking,omitempty"`
+	Start                      string                 `json:"start,omitempty"`
+	Upstream                   string                 `json:"upstream,omitempty"`
+	Create                     bool                   `json:"create"`
+	State                      string                 `json:"state"`
+	Error                      string                 `json:"error,omitempty"`
+	Execution                  *domain.ProcessSummary `json:"execution,omitempty"`
 }
 
 type Problem struct {
@@ -141,12 +143,16 @@ type ProcessRunner interface {
 	Run(context.Context, domain.ProcessSpec, func(domain.OutputChunk)) (domain.ProcessResult, error)
 }
 type Service struct {
-	Store    IntentStore
-	Git      Git
-	Journal  Journal
-	Observe  func(Event)
-	Executor ProcessRunner
-	PRs      PullRequestProvider
+	Credentials      domain.CredentialResolver
+	GitForConnection func(domain.CredentialRequest) (Git, error)
+	BindConnection   func(context.Context, string, domain.CredentialRequest) error
+	RebindConnection func(context.Context, string, domain.CredentialRequest, domain.CredentialRequest) error
+	Store            IntentStore
+	Git              Git
+	Journal          Journal
+	Observe          func(Event)
+	Executor         ProcessRunner
+	PRs              PullRequestProvider
 }
 
 func New(store IntentStore, git Git, journal Journal) *Service {

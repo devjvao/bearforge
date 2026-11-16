@@ -160,7 +160,23 @@ func valid(op *app.Operation, root string) error {
 			return err
 		}
 	}
+	if op.Kind == "repo.import" && len(op.Steps) == 0 {
+		return domain.E("invalid", "empty import journal")
+	}
+	importIDs := map[string]bool{}
 	for _, step := range op.Steps {
+		if op.Kind == "repo.import" || step.ImportedRepository != nil || step.PreviousImportedRepository != nil {
+			if op.Kind != "repo.import" || step.ImportedRepository == nil || step.ImportedRepository.ID != step.Repository {
+				return domain.E("invalid", "invalid import snapshot")
+			}
+			if err := app.ValidateImportStep(step); err != nil {
+				return err
+			}
+			if importIDs[step.Repository] {
+				return domain.E("invalid", "duplicate import repository")
+			}
+			importIDs[step.Repository] = true
+		}
 		if step.RefFormat != "" && step.RefFormat != "files" && step.RefFormat != "reftable" {
 			return domain.E("invalid", "invalid selected ref format")
 		}
