@@ -27,9 +27,11 @@ func addCommands(root *cobra.Command, o *options) {
 		parent.AddCommand(c)
 		return c
 	}
-	command(repo, "add NAME URL", "Register and clone a bare repository", cobra.ExactArgs(2), true, true, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
-		return s.AddRepository(ctx, a[0], a[1], o.dry)
+	var refFormat string
+	repoAdd := command(repo, "add NAME URL", "Register and clone a bare repository", cobra.ExactArgs(2), true, true, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
+		return s.AddRepositoryWithFormat(ctx, a[0], a[1], refFormat, o.dry)
 	})
+	repoAdd.Flags().StringVar(&refFormat, "ref-format", "auto", "Reference storage: auto, files, reftable")
 	command(repo, "list", "List registered repositories", cobra.NoArgs, false, false, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
 		r := app.NewResult("repo.list")
 		c, _, err := s.Store.LoadCatalog()
@@ -56,6 +58,9 @@ func addCommands(root *cobra.Command, o *options) {
 		}
 		trees, err := s.Git.Worktrees(ctx, p)
 		r.Data = trees
+		if err == nil {
+			err = addReferenceFormat(ctx, s, &r, a[0], p)
+		}
 		return r, err
 	})
 	syncFn := func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {

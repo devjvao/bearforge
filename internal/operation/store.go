@@ -161,6 +161,12 @@ func valid(op *app.Operation, root string) error {
 		}
 	}
 	for _, step := range op.Steps {
+		if step.RefFormat != "" && step.RefFormat != "files" && step.RefFormat != "reftable" {
+			return domain.E("invalid", "invalid selected ref format")
+		}
+		if err := app.ValidateRefFormat(step.RequestedRefFormat); err != nil {
+			return err
+		}
 		if err := domain.ValidateID(step.Repository); err != nil {
 			return err
 		}

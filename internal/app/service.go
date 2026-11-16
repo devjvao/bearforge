@@ -50,6 +50,14 @@ type Git interface {
 	Fingerprint(context.Context, string) (string, error)
 }
 
+// ClonePlanner is an optional Git capability. Planning probes the destination
+// filesystem and is allowed only during journal-owned execution, never preview.
+type ClonePlanner interface {
+	PlanClone(context.Context, string, string, string) (string, error)
+	CloneWithFormat(context.Context, string, string, string) error
+	InitializeWithFormat(context.Context, string, string) error
+}
+
 type Journal interface {
 	Lock(context.Context) (func() error, error)
 	Save(*Operation) error
@@ -76,16 +84,18 @@ type Operation struct {
 }
 
 type Step struct {
-	Repository string                 `json:"repository"`
-	Branch     string                 `json:"branch,omitempty"`
-	Base       string                 `json:"base,omitempty"`
-	Tracking   string                 `json:"tracking,omitempty"`
-	Start      string                 `json:"start,omitempty"`
-	Upstream   string                 `json:"upstream,omitempty"`
-	Create     bool                   `json:"create"`
-	State      string                 `json:"state"`
-	Error      string                 `json:"error,omitempty"`
-	Execution  *domain.ProcessSummary `json:"execution,omitempty"`
+	RefFormat          string                 `json:"ref_format,omitempty"`
+	RequestedRefFormat string                 `json:"requested_ref_format,omitempty"`
+	Repository         string                 `json:"repository"`
+	Branch             string                 `json:"branch,omitempty"`
+	Base               string                 `json:"base,omitempty"`
+	Tracking           string                 `json:"tracking,omitempty"`
+	Start              string                 `json:"start,omitempty"`
+	Upstream           string                 `json:"upstream,omitempty"`
+	Create             bool                   `json:"create"`
+	State              string                 `json:"state"`
+	Error              string                 `json:"error,omitempty"`
+	Execution          *domain.ProcessSummary `json:"execution,omitempty"`
 }
 
 type Problem struct {
@@ -93,6 +103,7 @@ type Problem struct {
 	Message string `json:"message"`
 }
 type Item struct {
+	RefFormat      string                         `json:"ref_format,omitempty"`
 	Check          string                         `json:"check,omitempty"`
 	Repository     string                         `json:"repository,omitempty"`
 	Workspace      string                         `json:"workspace,omitempty"`

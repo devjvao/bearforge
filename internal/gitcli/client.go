@@ -140,13 +140,11 @@ func isExit(err error, code int) bool {
 }
 
 func (c *Client) Clone(ctx context.Context, remote, path string) error {
-	if err := domain.ValidateURL(remote); err != nil {
+	format, err := c.PlanClone(ctx, remote, path, "auto")
+	if err != nil {
 		return err
 	}
-	if _, err := c.Run(ctx, "", "clone", "--bare", "--no-local", "--", remote, path); err != nil {
-		return err
-	}
-	return c.Initialize(ctx, path)
+	return c.CloneWithFormat(ctx, remote, path, format)
 }
 
 // Initialize is resumable only for a freshly cloned directory owned by a journal.
@@ -240,8 +238,20 @@ func (c *Client) Fetch(ctx context.Context, path string) error {
 	if err := c.ValidateFetch(ctx, path); err != nil {
 		return err
 	}
-	_, err := c.Run(ctx, path, "-c", "fetch.parallel=1", "fetch", "--all", "--prune")
-	return err
+	expected, err := c.fetchRefPlan(ctx, path)
+	if err != nil {
+		return err
+	}
+	if _, err := c.Run(ctx, path, "-c", "fetch.parallel=1", "fetch", "--all", "--prune"); err != nil {
+		return err
+	}
+	// Advertisements can change while transfer is running. Recheck exact names
+	// afterwards as well; do not require stale preflight object IDs to match.
+	after, err := c.fetchRefPlan(ctx, path)
+	if err != nil {
+		return err
+	}
+	return c.verifyFetchedRefs(ctx, path, append(expected, after...))
 }
 
 func (c *Client) Resolve(ctx context.Context, path, ref string) (string, error) {

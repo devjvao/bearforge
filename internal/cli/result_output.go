@@ -38,7 +38,7 @@ func (o *options) renderResult(r app.Result) error {
 			path = path || item.Path != ""
 			status = status || item.Status != nil
 			execution = execution || item.Execution != nil
-			details = details || item.Base != "" || item.Start != "" || item.Tracking != "" || item.CreateBranch
+			details = details || item.Base != "" || item.Start != "" || item.Tracking != "" || item.CreateBranch || item.RefFormat != ""
 		}
 		if branch {
 			headers = append(headers, "BRANCH")
@@ -101,6 +101,13 @@ func (o *options) renderResult(r app.Result) error {
 			}
 			if details {
 				values := []string{}
+				if item.RefFormat != "" {
+					format := "ref-format=" + item.RefFormat
+					if item.RefFormat == "reftable" {
+						format += " (preserves case-distinct refs)"
+					}
+					values = append(values, format)
+				}
 				if item.Base != "" {
 					values = append(values, "base="+item.Base)
 				}
