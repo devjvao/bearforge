@@ -88,6 +88,12 @@ func readGitCredentialInput(input io.Reader) (map[string]string, error) {
 		if !ok || strings.ContainsAny(key+value, "\x00\r") {
 			return nil, domain.E("invalid", "invalid credential request")
 		}
+		// Git sends repeated capability[], wwwauth[], and state[] attributes
+		// during HTTP authentication. They are optional negotiation metadata;
+		// this helper resolves only the scalar protocol/host/path binding.
+		if strings.HasSuffix(key, "[]") {
+			continue
+		}
 		if _, duplicate := values[key]; duplicate {
 			return nil, domain.E("invalid", "ambiguous credential request")
 		}
