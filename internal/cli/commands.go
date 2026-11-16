@@ -179,6 +179,7 @@ func addCommands(root *cobra.Command, o *options) {
 			}
 			request := app.ImportReassociationRequest{OperationID: a[0], Connection: connection.Name, GrantID: connection.GrantID, DryRun: true}
 			plan, err := s.ReassociateImport(ctx, request)
+			plan = annotateReassociationAccount(plan, connection)
 			if err != nil || o.dry {
 				return plan, err
 			}

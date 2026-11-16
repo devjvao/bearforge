@@ -251,6 +251,9 @@ func (o *options) render(r app.Result) error {
 	if strings.HasPrefix(r.Command, "auth.") {
 		return o.renderAuthentication(r)
 	}
+	if _, ok := r.Data.(app.ImportReassociationPlan); ok {
+		return o.renderImportReassociation(r)
+	}
 	if r.Command == "pr.list" {
 		return o.renderPullRequests(r, isTerminal(o.out))
 	}
@@ -336,21 +339,27 @@ func (o *options) confirm(ctx context.Context, plan app.Result) error {
 	if o.noInput || o.output != "human" || !isTerminal(o.in) {
 		return domain.E("confirmation", "confirmation required; review --dry-run then use --yes")
 	}
-	for _, item := range plan.Items {
-		name := item.Repository
-		if name == "" {
-			name = item.Workspace
+	if repair, ok := plan.Data.(app.ImportReassociationPlan); ok {
+		if err := o.confirmationText("%s", importReassociationReview(repair)); err != nil {
+			return err
 		}
-		if name == "" {
-			name = item.Check
-		}
-		if move, ok := plan.Data.(app.RepositoryPlan); ok {
-			if err := o.confirmationText("Move %s intact from %s to %s; local history is preserved and trash is never purged automatically\n", name, move.Source, move.Destination); err != nil {
-				return err
+	} else {
+		for _, item := range plan.Items {
+			name := item.Repository
+			if name == "" {
+				name = item.Workspace
 			}
-		} else {
-			if err := o.confirmationText("Apply %s to %s (%s)\n", plan.Command, name, item.Path); err != nil {
-				return err
+			if name == "" {
+				name = item.Check
+			}
+			if move, ok := plan.Data.(app.RepositoryPlan); ok {
+				if err := o.confirmationText("Move %s intact from %s to %s; local history is preserved and trash is never purged automatically\n", name, move.Source, move.Destination); err != nil {
+					return err
+				}
+			} else {
+				if err := o.confirmationText("Apply %s to %s (%s)\n", plan.Command, name, item.Path); err != nil {
+					return err
+				}
 			}
 		}
 	}

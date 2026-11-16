@@ -24,6 +24,42 @@ type ImportReassociationRequest struct {
 	ExpectedPlan                     string
 }
 
+// ImportConnectionBinding identifies a grant without exposing its credentials.
+// Account is an optional observation supplied by the presentation adapter.
+type ImportConnectionBinding struct {
+	Connection       string `json:"connection"`
+	GrantID          string `json:"grant_id"`
+	Account          string `json:"account,omitempty"`
+	IdentityVerified bool   `json:"identity_verified,omitempty"`
+}
+
+// ImportReassociationChange describes the catalog association and exact Git
+// credential scope reviewed before an unfinished import uses a replacement.
+type ImportReassociationChange struct {
+	Repository       string                    `json:"repository"`
+	Path             string                    `json:"path"`
+	Origin           string                    `json:"origin"`
+	Previous         ImportConnectionBinding   `json:"previous"`
+	CatalogPrevious  *ImportConnectionBinding  `json:"catalog_previous,omitempty"`
+	Replacement      ImportConnectionBinding   `json:"replacement"`
+	ReviewedBindings []ImportConnectionBinding `json:"reviewed_helper_bindings,omitempty"`
+	HelperScope      string                    `json:"helper_scope,omitempty"`
+	GitIntegration   string                    `json:"git_integration"`
+}
+
+// ImportReassociationPlan is the nonsecret payload shared by dry-run output and
+// confirmation. The digest also binds the complete journal and catalog revision.
+type ImportReassociationPlan struct {
+	Root            string                      `json:"root"`
+	CatalogRevision string                      `json:"catalog_revision"`
+	OperationID     string                      `json:"operation_id"`
+	Changes         []ImportReassociationChange `json:"changes"`
+}
+
+func importConnectionBinding(repo domain.Repository) ImportConnectionBinding {
+	return ImportConnectionBinding{Connection: repo.Provider["connection"], GrantID: repo.Provider["grant_id"]}
+}
+
 func importReassociationDigest(root, revision string, before, after *Operation, ids []string) string {
 	b, _ := json.Marshal(struct {
 		Root, Revision string
@@ -106,6 +142,7 @@ func (s *Service) ReassociateImport(ctx context.Context, req ImportReassociation
 	}
 	updated := *op
 	updated.Steps = slices.Clone(op.Steps)
+	plan := ImportReassociationPlan{Root: s.Store.RootPath(), CatalogRevision: revision, OperationID: op.ID}
 	ids := []string{}
 	for i := range updated.Steps {
 		step := &updated.Steps[i]
@@ -150,6 +187,24 @@ func (s *Service) ReassociateImport(ctx context.Context, req ImportReassociation
 			return r, err
 		}
 		r.Items = append(r.Items, Item{Repository: step.Repository, Path: path, Outcome: "planned"})
+		change := ImportReassociationChange{
+			Repository: step.Repository, Path: path, Origin: replacement.Remotes["origin"],
+			Previous: importConnectionBinding(previous), Replacement: importConnectionBinding(replacement),
+			GitIntegration: "unchanged_ssh",
+		}
+		if registered, ok := c.Repositories[step.Repository]; ok {
+			binding := importConnectionBinding(registered)
+			change.CatalogPrevious = &binding
+		}
+		if replacement.Provider["transport"] == "https" {
+			change.HelperScope, change.GitIntegration = change.Origin, "replace_scoped_helper"
+			for _, binding := range reviewedImportBindings(*step) {
+				if binding.Provider["connection"] != req.Connection || binding.Provider["grant_id"] != req.GrantID {
+					change.ReviewedBindings = append(change.ReviewedBindings, importConnectionBinding(binding))
+				}
+			}
+		}
+		plan.Changes = append(plan.Changes, change)
 	}
 	if len(selected) > 0 {
 		return r, domain.E("invalid", "replacement selection contains repositories outside this import")
@@ -161,6 +216,7 @@ func (s *Service) ReassociateImport(ctx context.Context, req ImportReassociation
 	// The old snapshot and current catalog revision are part of approval, so a
 	// racing resume or repair always invalidates the confirmation.
 	r.PlanDigest = importReassociationDigest(s.Store.RootPath(), revision, op, &updated, ids)
+	r.Data = plan
 	if req.DryRun {
 		r.Outcome = "planned"
 		return r, nil
