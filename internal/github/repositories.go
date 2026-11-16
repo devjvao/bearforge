@@ -24,7 +24,8 @@ type discoveredRepository struct {
 }
 
 // ListRepositories returns all accessible repositories in the selected grant,
-// optionally filtered by owner. A failed later page discards the entire result.
+// optionally filtered by owner. Anonymous access requires a public owner scope.
+// A failed later page discards the entire result.
 func (c *Client) ListRepositories(ctx context.Context, source domain.RepositorySource) ([]domain.RemoteRepository, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -46,6 +47,10 @@ func (c *Client) ListRepositories(ctx context.Context, source domain.RepositoryS
 	if err != nil {
 		return nil, err
 	}
+	anonymous := credential.resolved == nil && credential.bearer == ""
+	if anonymous && s.Scope == "" {
+		return nil, domain.E("unauthenticated", "anonymous GitHub discovery requires an owner or organization scope; select a connection to list accessible repositories")
+	}
 	host := c.host(apiHost(origin))
 	select {
 	case host.gate <- struct{}{}:
@@ -57,6 +62,14 @@ func (c *Client) ListRepositories(ctx context.Context, source domain.RepositoryS
 	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/user/repos"
 	endpoint.RawPath = ""
 	endpoint.RawQuery = url.Values{"affiliation": {"owner,collaborator,organization_member"}, "per_page": {"100"}, "page": {"1"}}.Encode()
+	if anonymous {
+		path, kind, err := c.publicRepositoryOwner(ctx, origin, s.Scope, host)
+		if err != nil {
+			return nil, err
+		}
+		endpoint.Path = path
+		endpoint.RawQuery = url.Values{"type": {kind}, "per_page": {"100"}, "page": {"1"}}.Encode()
+	}
 	first := endpoint
 	// get only needs these two immutable fields; request state stays on the
 	// original client's host gate so listing and PR lookup share one cooldown.
@@ -84,6 +97,9 @@ func (c *Client) ListRepositories(ctx context.Context, source domain.RepositoryS
 		for _, entry := range entries {
 			if entry.ID <= 0 || !validRepository(entry.FullName) {
 				return nil, domain.E("provider_failed", "GitHub returned invalid repository identity")
+			}
+			if anonymous && entry.Private {
+				return nil, domain.E("provider_failed", "GitHub returned private metadata for an anonymous public source")
 			}
 			owner, name, _ := strings.Cut(entry.FullName, "/")
 			if s.Scope != "" && !strings.EqualFold(owner, s.Scope) {
@@ -128,4 +144,34 @@ func (c *Client) ListRepositories(ctx context.Context, source domain.RepositoryS
 		endpoint = *next
 	}
 	return nil, domain.E("provider_failed", "GitHub repository discovery exceeded 100 pages")
+}
+
+// publicRepositoryOwner distinguishes user and organization endpoints without
+// following a provider-supplied URL or permitting redirects to another scope.
+func (c *Client) publicRepositoryOwner(ctx context.Context, origin *url.URL, owner string, host *hostState) (string, string, error) {
+	endpoint := *origin
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/users/" + owner
+	endpoint.RawPath, endpoint.RawQuery = "", ""
+	httpClient, guardError := safety.HTTPClient(c.httpClient, &endpoint)
+	guarded := &Client{httpClient: httpClient, now: c.now}
+	body, _, _, err := guarded.get(ctx, origin, &endpoint, endpoint.Path, requestCredential{}, host)
+	if err != nil {
+		return "", "", guardError(err)
+	}
+	var account struct {
+		Login string `json:"login"`
+		Type  string `json:"type"`
+	}
+	if json.Unmarshal(body, &account) != nil || !strings.EqualFold(account.Login, owner) {
+		return "", "", domain.E("provider_failed", "GitHub returned invalid public owner identity")
+	}
+	prefix, kind := "/users/", "owner"
+	switch account.Type {
+	case "User":
+	case "Organization":
+		prefix, kind = "/orgs/", "public"
+	default:
+		return "", "", domain.E("provider_failed", "GitHub returned unsupported public owner type")
+	}
+	return strings.TrimRight(origin.Path, "/") + prefix + owner + "/repos", kind, nil
 }

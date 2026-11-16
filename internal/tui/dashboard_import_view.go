@@ -104,6 +104,9 @@ func (m dashboardModel) importContent() []string {
 		if run.source.TokenEnv != "" {
 			lines = append(lines, "API credential: environment variable "+displayText(run.source.TokenEnv), "Git uses existing helpers / SSH, independently of this API credential.")
 		}
+		if run.source.Provider == "github" && run.source.Connection == "" {
+			lines = append(lines, "Anonymous GitHub browsing requires an owner or organization scope and lists public repositories.")
+		}
 		if run.source.Provider == "bitbucket" {
 			lines = append(lines, "Enter a Bitbucket workspace scope, or Ctrl-W to enumerate accessible Bitbucket workspaces.")
 		}
