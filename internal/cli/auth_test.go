@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"bearforge/internal/app"
 	"bearforge/internal/auth"
@@ -98,6 +100,55 @@ func TestAuthLoginRequiresExplicitSecretInputWhenNoninteractive(t *testing.T) {
 	}
 }
 
+func TestAuthBrowserRejectsInvisibleInstructionsBeforeOAuth(t *testing.T) {
+	for _, flags := range [][]string{{"--json"}, {"--output", "jsonl"}, {"--quiet"}} {
+		t.Run(strings.Join(flags, " "), func(t *testing.T) {
+			requests := 0
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests++; w.WriteHeader(http.StatusBadRequest) }))
+			defer server.Close()
+			manager := auth.NewManager(auth.Options{RegistryPath: filepath.Join(t.TempDir(), "auth.json"), Secrets: authTestSecrets{}, HTTPClient: server.Client(), LookupEnv: authTestOAuthEnv})
+			_, err := authCommand(t, manager, "", append(flags, "auth", "login", "--provider", "github", "--host", server.URL, "--api-url", server.URL, "--method", "browser")...)
+			if err == nil || !strings.Contains(err.Error(), "human output") {
+				t.Fatalf("expected visible-instructions validation, got %v", err)
+			}
+			if requests != 0 {
+				t.Fatal("started OAuth before rejecting hidden instructions")
+			}
+		})
+	}
+}
+
+func authTestOAuthEnv(key string) (string, bool) {
+	if key == "BEARFORGE_AUTH_OAUTH_CLIENT_ID" {
+		return "public-test-client", true
+	}
+	return "", false
+}
+
+func TestAuthHeadlessBrowserKeepsVisibleDeviceInstructions(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login/device/code":
+			fmt.Fprintf(w, `{"device_code":"private-device-code","user_code":"VISIBLE-CODE","verification_uri":"https://%s/device","expires_in":30,"interval":1}`, r.Host)
+		case "/login/oauth/access_token":
+			fmt.Fprint(w, `{"access_token":"private-access-token"}`)
+		case "/user":
+			fmt.Fprint(w, `{"id":17,"login":"octocat"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	manager := auth.NewManager(auth.Options{RegistryPath: filepath.Join(t.TempDir(), "auth.json"), Secrets: authTestSecrets{}, HTTPClient: server.Client(), LookupEnv: authTestOAuthEnv})
+	output, err := authCommand(t, manager, "", "--no-input", "auth", "login", "--provider", "github", "--host", server.URL, "--api-url", server.URL, "--connection", "headless", "--method", "browser")
+	if err != nil || !strings.Contains(output, "VISIBLE-CODE") || !strings.Contains(output, server.URL+"/device") {
+		t.Fatalf("headless device instructions missing: %s, %v", output, err)
+	}
+	if strings.Contains(output, "private-device-code") || strings.Contains(output, "private-access-token") {
+		t.Fatal("device login exposed private credentials")
+	}
+}
+
 func TestAuthHelpCoversBothProviders(t *testing.T) {
 	var output, diagnostics bytes.Buffer
 	if code := Run(t.Context(), []string{"auth", "login", "--help"}, strings.NewReader(""), &output, &diagnostics); code != 0 || !strings.Contains(output.String(), "github") || !strings.Contains(output.String(), "bitbucket") {
@@ -164,6 +215,115 @@ func TestAuthPromptPreservesSubsequentInput(t *testing.T) {
 	second, err := readAuthLine(input, 4096)
 	if err != nil || second != "private-token" {
 		t.Fatal("host prompt consumed subsequent token input")
+	}
+}
+
+func TestAuthPromptCancelsBlockedInput(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	defer writer.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	started := make(chan struct{})
+	o := &options{in: reader, errOut: authPromptSignal{started}}
+	done := make(chan error, 1)
+	go func() { _, err := o.authPrompt(ctx, "Provider", "github"); done <- err }()
+	<-started
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("prompt cancellation: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("prompt remained blocked after cancellation")
+	}
+}
+
+type authPromptSignal struct{ started chan struct{} }
+
+func (s authPromptSignal) Write(value []byte) (int, error) { close(s.started); return len(value), nil }
+
+func TestAuthHiddenInputRestoresTerminalBeforeCancellationReturns(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	defer writer.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	started := make(chan struct{})
+	restored := false
+	done := make(chan error, 1)
+	go func() {
+		_, err := readAuthHidden(ctx, reader, func() (func() error, error) {
+			close(started)
+			return func() error { restored = true; return nil }, nil
+		})
+		done <- err
+	}()
+	<-started
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) || !restored {
+			t.Fatalf("hidden input did not restore before cancellation: restored=%v, err=%v", restored, err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("hidden input remained blocked after cancellation")
+	}
+}
+
+func TestAuthFileInputCancelsBlockedReadAndJoins(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	readExited := false
+	go func() {
+		_, err := readAuthInput(ctx, reader, func(input io.Reader) (string, error) {
+			close(started)
+			defer func() { readExited = true }()
+			return readAuthLine(input, 4096)
+		})
+		done <- err
+	}()
+	<-started
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) || !readExited {
+			t.Fatalf("native read not joined: exited=%v, err=%v", readExited, err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("native file read remained blocked")
+	}
+}
+
+func TestAuthHiddenInputEditingCancellationAndNextPrompt(t *testing.T) {
+	for _, tc := range []struct {
+		input, want string
+		cancelled   bool
+	}{
+		{"abc\bD\rnext\n", "abD", false},
+		{"token\x03", "", true},
+	} {
+		input := strings.NewReader(tc.input)
+		restored := false
+		value, err := readAuthHidden(t.Context(), input, func() (func() error, error) { return func() error { restored = true; return nil }, nil })
+		if value != tc.want || errors.Is(err, context.Canceled) != tc.cancelled || !restored {
+			t.Fatalf("hidden input result: %q, %v, restored=%v", value, err, restored)
+		}
+		if !tc.cancelled {
+			next, err := readAuthLine(input, 4096)
+			if next != "next" || err != nil {
+				t.Fatalf("hidden prompt consumed next input: %q, %v", next, err)
+			}
+		}
 	}
 }
 

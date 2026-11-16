@@ -48,6 +48,9 @@ func addAuthCommands(root *cobra.Command, o *options) {
 			if method != "auto" && method != "browser" && method != "token" {
 				return domain.E("invalid", "method must be auto, browser, or token")
 			}
+			if method == "browser" && (o.output != "human" || o.quiet) {
+				return domain.E("invalid", "browser login requires human output without --quiet so authorization instructions are visible; use --token-stdin or --token-env for machine output")
+			}
 			if provider == "" {
 				if !o.interactive() {
 					return domain.E("invalid", "choose --provider github or bitbucket")
@@ -108,7 +111,7 @@ func addAuthCommands(root *cobra.Command, o *options) {
 						return value, nil
 					}
 					if tokenStdin {
-						return readAuthLine(o.in, 64<<10)
+						return readAuthInput(ctx, o.in, func(input io.Reader) (string, error) { return readAuthLine(input, 64<<10) })
 					}
 					return o.authSecret(ctx, label)
 				},
@@ -213,7 +216,7 @@ func (o *options) authPrompt(ctx context.Context, label, fallback string) (strin
 	if _, err := fmt.Fprint(o.errOut, label+": "); err != nil {
 		return "", err
 	}
-	value, err := readAuthLine(o.in, 4096)
+	value, err := readAuthInput(ctx, o.in, func(input io.Reader) (string, error) { return readAuthLine(input, 4096) })
 	if err != nil {
 		return "", err
 	}
@@ -254,10 +257,19 @@ func (o *options) authSecret(ctx context.Context, label string) (string, error) 
 	if _, err := fmt.Fprint(o.errOut, label+": "); err != nil {
 		return "", err
 	}
-	secret, err := term.ReadPassword(int(input.Fd()))
+	secret, err := readAuthHidden(ctx, input, func() (func() error, error) {
+		state, err := term.MakeRaw(int(input.Fd()))
+		if err != nil {
+			return nil, err
+		}
+		return func() error { return term.Restore(int(input.Fd()), state) }, nil
+	})
 	_, _ = fmt.Fprintln(o.errOut)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return "", err
+		}
 		return "", domain.E("invalid", "could not read hidden token input")
 	}
-	return string(secret), nil
+	return secret, nil
 }

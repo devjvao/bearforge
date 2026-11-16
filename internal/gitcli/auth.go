@@ -29,10 +29,11 @@ func connectionHelper(binding ConnectionBinding) (string, string, error) {
 	}
 	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
 	executable := filepath.ToSlash(binding.Executable)
-	command := "!" + quote(executable) + " auth git-credential --connection " + quote(binding.Connection) + " --grant-id " + quote(binding.GrantID) + " --url " + quote(binding.URL)
+	command := "!f() { if result=$(" + quote(executable) + " auth git-credential --connection " + quote(binding.Connection) + " --grant-id " + quote(binding.GrantID) + " --url " + quote(binding.URL)
 	if binding.RegistryPath != "" {
 		command += " --registry " + quote(filepath.ToSlash(binding.RegistryPath))
 	}
+	command += " \"$@\"); then printf '%s\\n\\n' \"$result\"; else printf 'quit=true\\n\\n'; printf '%s\\n' 'Bearforge credential helper failed; reinstall Bearforge at its configured path or review the repository connection.' >&2; fi; }; f"
 	return "credential." + binding.URL, command, nil
 }
 
