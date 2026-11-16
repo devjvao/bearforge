@@ -120,6 +120,9 @@ type dashboardModel struct {
 	importID        uint64
 	importRun       *dashboardImport
 	showImport      bool
+	operationID     uint64
+	operationsRun   *dashboardOperations
+	showOperations  bool
 }
 
 func newDashboardModel(ctx context.Context, source DashboardSource, workspace string) dashboardModel {
@@ -185,6 +188,10 @@ func (m *dashboardModel) discardImportResults() {
 	if m.importRun != nil && m.importRun.phase == importResults {
 		m.importRun, m.showImport = nil, false
 	}
+	if m.operationsRun != nil && m.operationsRun.phase == operationsResults {
+		m.operationsRun.cancel()
+		m.operationsRun, m.showOperations = nil, false
+	}
 }
 
 func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -204,6 +211,8 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch v := msg.(type) {
+	case dashboardOperationLoadedMsg, dashboardOperationDoneMsg, dashboardOperationProgressMsg:
+		return m.updateOperations(msg)
 	case dashboardImportMsg, dashboardImportSignalMsg, dashboardImportProgressMsg:
 		return m.updateImport(msg)
 	case dashboardPullRequestsMsg:
@@ -293,6 +302,9 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key == "ctrl+c" {
 			return m.stop(context.Canceled)
 		}
+		if m.showOperations && m.operationsRun != nil {
+			return m.operationsKey(v)
+		}
 		if m.showImport && m.importRun != nil {
 			return m.importKey(v)
 		}
@@ -313,6 +325,8 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch key {
+		case "o":
+			return m.openOperations()
 		case "q":
 			return m.stop(nil)
 		case "s":
@@ -336,7 +350,9 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "p", "P":
 			return m.startPullRequests(key == "P")
 		case "v":
-			if m.importRun != nil && m.importRun.phase == importResults {
+			if m.operationsRun != nil && m.operationsRun.phase == operationsResults {
+				m.showOperations, m.operationsRun.offset = !m.showOperations, 0
+			} else if m.importRun != nil && m.importRun.phase == importResults {
 				m.showImport, m.importRun.offset = !m.showImport, 0
 			} else if m.workspaceRun != nil && m.workspaceRun.phase == workspaceResults {
 				m.showWorkspace, m.workspaceRun.offset = !m.showWorkspace, 0

@@ -75,8 +75,10 @@ func addDashboardCommand(root *cobra.Command, o *options) {
 			"Space selects, Enter previews resolved defaults, and y confirms the reviewed add plan.\n\n" +
 			"n creates an empty workspace; d removes the selected repository; D removes the workspace.\n" +
 			"Each action previews its destinations and requires y to confirm; unsafe worktrees are refused.\n\n" +
+			"o opens unfinished operations, including when an import blocks other changes. Inspect failed steps, then review retry or stop tracking and confirm with y.\n" +
+			"Stopping recovery tracking retains imported repositories and files; that operation cannot be resumed afterward.\n\n" +
 			"Tab changes panes; arrows or j/k navigate; / filters; Escape clears;\n" +
-			"r refreshes locally; p/P look up/refresh PRs; s syncs; a adds; i imports; n creates; d/D removes; v toggles results; Page Up/Down scroll details; q quits; Ctrl-C cancels.",
+			"r refreshes locally; p/P look up/refresh PRs; s syncs; a adds; i imports; o opens operations; n creates; d/D removes; v toggles results; Page Up/Down scroll details; q quits; Ctrl-C cancels.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !o.interactive() || o.ui != "auto" || o.dry {

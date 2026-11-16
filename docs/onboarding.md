@@ -99,7 +99,9 @@ bearforge operations resume OPERATION_ID --connection work-bitbucket --dry-run
 bearforge operations resume OPERATION_ID --connection work-bitbucket
 ```
 
-The repair preview is confirmed before changing the journal and resuming; ordinary same-grant token refresh needs no reassociation. Successful clones are verified and reused during resume. Bearforge never deletes retained clone state to retry. Authentication-only repair remains available while an import is partial.
+An unfinished operation blocks unrelated writes until it is resumed or explicitly abandoned. In the dashboard, press `o` to open **Operations**, select the unfinished batch, and inspect its failed steps. Press `r` to review retrying, or `a` to review stopping recovery tracking; only `y` executes either action. Retry reuses successful clones and retained directories. Stopping tracking retains successful registrations, files, and Git effects, clears the write block, and prevents resuming that operation afterward. A retry that fails again remains available in Operations. Navigation, local refresh, and inspection remain available while writes are blocked.
+
+The repair preview is confirmed before changing the journal and resuming; ordinary same-grant token refresh needs no reassociation. Successful clones are verified and reused during resume. Bearforge never deletes retained clone state to retry. Authentication-only repair remains available while an import is partial. The rooted CLI recovery commands remain available if credential replacement or other manual repair is needed.
 
 HTTPS imports route credentials through a helper scoped to the selected remote, including after the dashboard closes. Ordinary Git and GoLand can use that routing when they use the same installed Bearforge executable and operating-system credential store. Keep the executable at a stable absolute path. Existing unrelated helpers and SSH setup are preserved; a conflicting scoped helper requires review. An explicit disconnected binding stops fallback to another cached account. SSH imports continue to use the existing agent/keys independently of API login.
 
