@@ -106,8 +106,16 @@
 
 **Files:** `docs/onboarding.md`, implementation progress/plan ledger, command help; preserve original README edits when transferring changes.
 
-- [ ] Document ref storage/recovery, auth configuration and both provider login methods, secure-store prerequisites, scoped Git/GoLand behavior, discovery and partial batch recovery; explain OAuth registrations as release/runtime configuration.
-- [ ] Run `gofmt`/available `goimports`, `go test ./...`, `go vet ./...`, native Windows ref/auth tests, targeted race tests for shared credential/HTTP state, and Linux/macOS build checks.
-- [ ] Build CLI and smoke-test `auth --help`, local status, token fallback instructions, repo ref-format help and no-input safety without real credentials.
-- [ ] Obtain whole-change review for security boundaries, recovery and TUI lifecycle. Fix actionable findings and rerun affected checks.
-- [ ] Transfer reviewed implementation changes to the original checkout without replacing user README/desktop discussion changes; verify root diff and final relevant checks. Report actual limitations, especially external provider registrations and private-host validation.
+- [x] Document ref storage/recovery, auth configuration and both provider login methods, secure-store prerequisites, scoped Git/GoLand behavior, discovery and partial batch recovery; explain OAuth registrations as release/runtime configuration.
+- [x] Format changed Go files; pass `go test ./...`, `go vet ./...`, Windows ref/auth regressions, and Linux/macOS source cross-builds. Record attempted race/lint checks and native-platform limits below.
+- [x] Build CLI and smoke-test auth/login help, local status, token fallback help, repo ref-format help and empty-token safety without real credentials.
+- [x] Obtain whole-change review for security boundaries, recovery and TUI lifecycle. Fix actionable findings and rerun affected checks.
+- [x] Transfer reviewed implementation changes to the original checkout without replacing user README/desktop discussion changes; verify root diff and final relevant checks. Report actual limitations, especially external provider registrations and private-host validation.
+
+## Final local validation — 2026-11-16
+
+The complete suite passed after the integration fixes. Focused app/CLI tests also passed after the final additive repair-preview field. The active checkout passes `go vet ./...`, builds `bin/bearforge.exe`, and passes isolated command/help, read-only auth-status and empty-token checks. Changed Go files pass formatting and Git whitespace checks. Linux and macOS amd64 source cross-builds with cgo disabled pass, as does Windows release snapshot packaging. The scoped final rereview accepted all four integration fixes: synthetic default-ref protection, native macOS release configuration, reviewable grant repair, and anonymous GitHub owner discovery.
+
+All 94 transferred implementation/documentation files matched the reviewed worktree after newline normalization. Original README and desktop-discussion edits retained their pre-handoff hashes. Changes remain uncommitted in the active checkout; the isolated feature branch retains implementation commits. No tags, pushes, production publication, or real provider/keyring changes were performed.
+
+Race execution is unavailable locally because cgo is disabled and no C compiler is installed. The available golangci-lint 2.12.2 tooling cannot analyze Go 1.27 export data, including after rebuilding it with the project toolchain; its incomplete analysis is not a lint pass. `go vet` passed independently. Native macOS cgo/release builds, both Darwin architectures and Keychain runtime need macOS CI; source cross-compilation does not establish them. Linux Secret Service runtime, Unix terminal behavior, older/newer Git migration matrices, real OAuth registrations/private hosts, and GoLand interoperability remain environment-specific validation. Disposable fixtures cover the implemented contracts without asserting those external results.
