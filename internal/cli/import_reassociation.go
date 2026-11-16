@@ -46,7 +46,7 @@ func importReassociationDocument(p *colorprofile.Writer, plan app.ImportReassoci
 			account = change.Replacement.Account + " (verified)"
 		}
 		sections = append(sections, terminalRecords(p, [][]string{{"Path", change.Path}, {"Origin", change.Origin + " (retained)"}, {"Account", account}}, width))
-		bindings := [][]string{{"Journal", change.Previous.Connection, change.Previous.GrantID}}
+		bindings := [][]string{{"Previous", change.Previous.Connection, change.Previous.GrantID}}
 		if change.CatalogPrevious != nil {
 			bindings = append(bindings, []string{"Catalog", change.CatalogPrevious.Connection, change.CatalogPrevious.GrantID})
 		}
@@ -83,6 +83,12 @@ func (o *options) renderImportReassociation(result app.Result) error {
 		plan.OperationID = result.OperationID
 	}
 	sections := []string{recoveryOutputHeading(p, "Authentication repair ["+result.Outcome+"]"), importReassociationDocument(p, plan, outputWidth(o.out))}
+	if result.Command == "repo.rebind" {
+		sections = append(sections, "Existing clones, refs, and worktrees are retained.")
+		if result.OperationID != "" && (result.Outcome == "partial" || result.Outcome == "failed") {
+			sections = append(sections, "Resume with: "+o.recoveryCommand("resume", result.OperationID))
+		}
+	}
 	if result.PlanDigest != "" {
 		sections = append(sections, terminalRecords(p, [][]string{{"Plan", result.PlanDigest}}, outputWidth(o.out)))
 	}

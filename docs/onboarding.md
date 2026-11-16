@@ -52,13 +52,50 @@ bearforge auth status --local
 
 Interactive login uses guided token setup for both GitHub and Bitbucket. It asks for the server URL, opens the provider's token-creation page, and accepts the token through hidden input. If the page cannot be opened, follow the displayed setup URL manually. GitHub Enterprise uses that installation's host; Bitbucket setup distinguishes Cloud from Server/Data Center and preserves installation context paths. `--api-url` supplies a custom HTTPS API base when necessary.
 
-Use a GitHub token with access to the intended repositories and the read permissions needed for repository metadata, contents/cloning, and pull requests. For Bitbucket Cloud API tokens, supply the Atlassian account email with `--username`; for Server/Data Center user tokens, supply the Git username. Bearforge uses each provider's required token authentication scheme for REST and Git. Organization/SSO policy can require additional authorization. A token's access to some repositories does not establish access to every repository.
+The setup page and required permissions depend on the provider. Use the instructions below before pasting a token. Bearforge uses each provider's required token authentication scheme for REST and Git. A token's access to some repositories does not establish access to every repository.
 
 ```sh
 bearforge auth login --provider github --connection work-github
 bearforge auth login --provider bitbucket --username person@example.com --connection work-cloud
 bearforge auth login --provider bitbucket --host https://bitbucket.example.com --username my-login --connection work-server
 ```
+
+### GitHub token permissions
+
+On GitHub.com, guided setup opens the [prefilled Bearforge fine-grained token form](https://github.com/settings/personal-access-tokens/new?name=Bearforge&contents=read&pull_requests=read). Choose an expiration, set **Resource owner** to the account or organization owning the repositories, and under **Repository access** choose **Only select repositories** and select the intended repositories. Each fine-grained token covers one resource owner; use separate named connections for different owners. Organization approval may be required before private repositories are accessible. [GitHub token setup and URL parameters](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
+
+Under **Repository permissions**, use:
+
+| Permission | Access | Used by Bearforge for |
+| --- | --- | --- |
+| **Contents** | **Read-only** | HTTPS clone, fetch, and sync |
+| **Metadata** | **Read-only** (automatically included) | Repository discovery and API access checks |
+| **Pull requests** | **Read-only** | Listing pull requests |
+
+Leave **Account permissions** empty. The login identity check needs no additional account permission. The repository and PR endpoints require [Metadata read](https://docs.github.com/en/rest/repos/repos#fine-grained-access-tokens-for-list-repositories-for-the-authenticated-user) and [Pull requests read](https://docs.github.com/en/rest/pulls/pulls#fine-grained-access-tokens-for-list-pull-requests), respectively; [the user endpoint](https://docs.github.com/en/rest/users/users#get-the-authenticated-user) returns the identity Bearforge needs without account permissions.
+
+For GitHub Enterprise, guided setup uses the configured installation host for the same prefilled path. If that installation does not support fine-grained tokens, open its `/settings/tokens` page. For a classic token, private repository access requires the top-level **`repo`** scope, which also grants write access. Bearforge's current calls do not need additional `user`, `read:org`, `workflow`, or admin scopes. Classic tokens may require SSO authorization, and organization policy may block them. [Classic scope definitions](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps)
+
+### Bitbucket Cloud API token permissions
+
+Create an [Atlassian API token with scopes](https://id.atlassian.com/manage-profile/security/api-tokens), select **Bitbucket**, and select these four read permissions explicitly:
+
+| Permission | API scope | Used by Bearforge for |
+| --- | --- | --- |
+| **User: Read** | `read:user:bitbucket` | Verifying the signed-in account |
+| **Workspaces: Read** | `read:workspace:bitbucket` | Listing accessible Bitbucket workspaces |
+| **Repositories: Read** | `read:repository:bitbucket` | Repository discovery, API access checks, and HTTPS clone/fetch |
+| **Pull requests: Read** | `read:pullrequest:bitbucket` | Listing pull requests |
+
+These scopes are independent: pull-request read does not include repository read. Bearforge does not require write, admin, project, pipeline, or webhook permissions. [Atlassian's permission names and scope definitions](https://support.atlassian.com/bitbucket-cloud/docs/api-token-permissions/), [account verification](https://developer.atlassian.com/cloud/bitbucket/rest/api-group-users/#api-user-get), and [workspace listing](https://developer.atlassian.com/cloud/bitbucket/rest/api-group-workspaces/#api-user-workspaces-get) document these requirements.
+
+Supply the **Atlassian account email** with `--username` for a saved Cloud API-token connection. Bearforge uses email plus token for REST Basic authentication and the provider's API-token username for Git HTTPS. The account must already have access to the intended workspace and repositories; token scopes do not grant membership. [Using API tokens](https://support.atlassian.com/bitbucket-cloud/docs/using-api-tokens/)
+
+### Bitbucket Server / Data Center token permissions
+
+On the company server, go to **Manage account > HTTP access tokens** and create a **user** token. Select **Repository read**; if the form includes a project permission selector, use **Project read**. These permissions cover repository discovery, HTTPS clone/fetch, and PR listing; write/admin permissions are unnecessary for Bearforge's current operations. Supply your **Git username** with `--username`. Organization policy may require approval or limit token expiration. [HTTP access token permissions](https://confluence.atlassian.com/bitbucketserver093/http-access-tokens-1472430864.html) and [PR-listing access (`REPO_READ`)](https://developer.atlassian.com/server/bitbucket/rest/v902/api-group-pull-requests/) describe the required access. Cloud API-token scopes do not apply to Server/Data Center.
+
+### Token storage and automation
 
 For automation, choose `--token-stdin` or `--token-env VARIABLE_NAME` explicitly. Token values must not appear in command arguments, URLs, or catalog files. These modes suppress opening a token-management page and work with human, JSON, or JSONL output. Existing API environment credentials remain supported: `GH_TOKEN` then `GITHUB_TOKEN` on public GitHub, `BITBUCKET_TOKEN` as a Bearer credential on public Bitbucket Cloud, and explicit `token_env` metadata for custom APIs. An explicit `token_env` takes precedence over a saved connection; an unset explicit variable is an error. A Bitbucket Cloud API-token connection does not reinterpret an existing `BITBUCKET_TOKEN` value.
 
@@ -72,7 +109,27 @@ Saved tokens use Windows Credential Manager, Linux Secret Service, or macOS Keyc
 
 No OAuth application, consumer, client ID, client secret, or callback configuration is required. Opening the token-creation page only helps you obtain a token; Bearforge verifies the token after hidden entry. Cancellation leaves an existing usable connection intact. The CLI and TUI share this guided setup, with no authentication-method chooser. Older scripts can still pass `--method token`; this compatibility option is hidden from help. Requests for the removed browser authorization method are rejected.
 
-Existing personal/API-token connections continue to work. Saved connections created through the former OAuth flow remain inspectable and can be logged out, but cannot authenticate or refresh: log in again with a provider token. Bearforge does not renew or rotate tokens automatically. Replace an expired or revoked token through `auth login`, then review any affected import association before resuming it. Replacing a saved connection creates a new grant identity and never silently reuses an existing repository binding.
+Existing personal/API-token connections continue to work. Saved connections created through the former OAuth flow remain inspectable and can be logged out, but cannot authenticate or refresh: log in again with a provider token. Bearforge does not renew tokens automatically. Replace an expired or revoked token through `auth login`, then review and rebind registered repositories as described below. For an unfinished import, review its replacement connection before resuming that import. Replacing a saved connection creates a new grant identity and never silently reuses an existing repository binding, even when the connection name stays the same.
+
+### Rotate a token for registered repositories
+
+Save the replacement token in a named connection, then select the already registered repositories whose authentication should change. For example, to move `api` and `web` from the old `github` connection to `github-github.com`:
+
+```sh
+bearforge auth login --provider github --connection github-github.com
+bearforge repo rebind api web --connection github-github.com --dry-run
+bearforge repo rebind api web --connection github-github.com
+bearforge auth status --repo api
+bearforge auth status --repo web
+```
+
+If the replacement connection is already saved, start with the dry-run. Repository names are required explicitly. Review the old and replacement connection/grant identities, repository paths, retained origins, and HTTPS credential-helper scopes before confirming. For noninteractive use, review `--dry-run` first and then pass `--yes` to apply the rebind. Use the same managed root for the preview and execution.
+
+Rebinding updates the catalog association and the Git credential helper scoped to each HTTPS origin. It reuses the existing bare repositories and preserves refs, worktrees, and unrelated Git configuration without cloning or fetching. SSH authentication continues to use its existing keys/agent. A repository using explicit `token_env` configuration cannot be rebound to a saved connection through this command. A different provider or origin scope, changed repository metadata, or an unrelated scoped helper produces a conflict for review.
+
+The rebind is recorded as a `repo.rebind` operation. If it is interrupted or a step fails, inspect the displayed operation and run `bearforge operations resume OPERATION_ID` to continue the recorded changes. This recovery does not reclone repositories. The separate `operations resume OPERATION_ID --connection NAME` workflow below is for replacing credentials in an unfinished **import**.
+
+Once every repository using the old connection has been moved and its new access verified, remove the old local connection with `bearforge auth logout --connection github` if it is no longer needed. Keeping both connections can make automatic connection selection ambiguous for repositories without an explicit association. Logging out alone does not repair repositories still bound to the old grant.
 
 ## Discover and import several repositories
 
@@ -175,7 +232,7 @@ Public and private Bitbucket Cloud repositories use the same commands and dashbo
 
 When using HTTPS, repository registration and catalog entries require URLs without userinfo. Register with `bearforge repo add api https://bitbucket.org/team/api.git` and use your Git credential helper for clone/fetch authentication, or use an SSH remote. Username-only HTTPS support above applies when PR lookup observes an actual Git remote that differs from its registered URL. Keep catalog URLs free of usernames and passwords.
 
-Public resources can be read anonymously. Set `BITBUCKET_TOKEN` for authenticated requests to the default `https://api.bitbucket.org/2.0` API. Use an API token with `read:pullrequest:bitbucket`, or an access token with pull-request read permission and access to the target repository. Lookup sends the token as Bearer authentication, as documented by [Atlassian](https://support.atlassian.com/bitbucket-cloud/docs/using-api-tokens/). Git credential helpers, SSH agents and GitHub tokens do not authenticate Bitbucket lookups.
+Public resources can be read anonymously. For guided API-token setup, use a saved connection with the [four permissions above](#bitbucket-cloud-api-token-permissions). The legacy `BITBUCKET_TOKEN` environment option authenticates requests to the default `https://api.bitbucket.org/2.0` API as Bearer authentication; use a Bearer-compatible access token with pull-request read permission and access to the target repository. It does not provide the email needed for API-token Basic authentication. Git credential helpers, SSH agents and GitHub tokens do not authenticate Bitbucket REST lookups. [Atlassian authentication examples](https://support.atlassian.com/bitbucket-cloud/docs/using-api-tokens/)
 
 For a fork, configure the target repository. The source is inferred from the actual remote, or can be explicit:
 

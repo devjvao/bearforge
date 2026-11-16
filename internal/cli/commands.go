@@ -20,6 +20,7 @@ func addCommands(root *cobra.Command, o *options) {
 	ops := &cobra.Command{Use: "operations", Short: "Inspect and recover interrupted operations"}
 	root.AddCommand(repo, workspace, ops)
 	addRepositoryLifecycleCommands(repo, o)
+	addRepositoryRebindCommand(repo, o)
 	command := func(parent *cobra.Command, use, short string, args cobra.PositionalArgs, git, progress bool, fn func(context.Context, *app.Service, []string) (app.Result, error)) *cobra.Command {
 		c := &cobra.Command{Use: use, Short: short, Args: args, RunE: func(cmd *cobra.Command, args []string) error {
 			return o.perform(cmd.Context(), git, progress, func(ctx context.Context, s *app.Service) (app.Result, error) { return fn(ctx, s, args) })

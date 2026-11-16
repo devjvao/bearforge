@@ -113,7 +113,11 @@ func addAuthCommands(root *cobra.Command, o *options) {
 				Notify: func(message string) {
 					if o.output == "human" && !o.quiet {
 						p := o.presentation(o.errOut, isTerminal(o.errOut))
-						_, _ = fmt.Fprintln(p, terminalDocument(repositoryListText(message), outputWidth(o.errOut)))
+						lines := strings.Split(message, "\n")
+						for index, line := range lines {
+							lines[index] = repositoryListText(line)
+						}
+						_, _ = fmt.Fprintln(p, terminalDocument(strings.Join(lines, "\n"), outputWidth(o.errOut)))
 					}
 				},
 				Confirm: func(ctx context.Context, connection auth.Connection) error {

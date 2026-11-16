@@ -36,7 +36,7 @@ func TestImportReassociationHumanReviewExplainsAccountAndGitChanges(t *testing.T
 		t.Fatal(err)
 	}
 	compact := compactResultText(output.String())
-	for _, want := range []string{"Connection changes", "Journal work old-grant", "Replacement work new-grant", "Account octocat (verified)", "Origin https://github.com/team/api.git", "Replace Bearforge credential routing", "Scope https://github.com/team/api.git", "useHttpPath=true"} {
+	for _, want := range []string{"Connection changes", "Previous work old-grant", "Replacement work new-grant", "Account octocat (verified)", "Origin https://github.com/team/api.git", "Replace Bearforge credential routing", "Scope https://github.com/team/api.git", "useHttpPath=true"} {
 		if !strings.Contains(compact, compactResultText(want)) {
 			t.Fatalf("review missing %q: %s", want, output.String())
 		}

@@ -36,16 +36,24 @@ func outcomeStyle(value string) lipgloss.Style {
 }
 
 func (o *options) diagnostic(label, message string) error {
-	label, message = repositoryListText(label), repositoryListText(message)
-	if !isTerminal(o.errOut) {
-		_, err := fmt.Fprintln(o.errOut, label, message)
-		return err
+	label = repositoryListText(label)
+	lines := strings.Split(message, "\n")
+	for index, line := range lines {
+		lines[index] = repositoryListText(line)
 	}
-	p := o.presentation(o.errOut, true)
+	terminal := isTerminal(o.errOut)
+	p := o.presentation(o.errOut, terminal)
 	if p.Profile > colorprofile.ASCII {
 		label = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("1")).Render(label)
 	}
-	_, err := fmt.Fprintln(p, terminalDocument(label+" "+repositoryListText(message), outputWidth(o.errOut)))
+	document := label + " " + lines[0]
+	if len(lines) > 1 {
+		document = label + "\n  - " + strings.Join(lines, "\n  - ")
+	}
+	if terminal {
+		document = terminalDocument(document, outputWidth(o.errOut))
+	}
+	_, err := fmt.Fprintln(p, document)
 	return err
 }
 

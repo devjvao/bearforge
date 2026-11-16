@@ -25,6 +25,8 @@ func (s *Service) Resume(ctx context.Context, id string) (Result, error) {
 		return r, domain.E("conflict", "abandoned operation cannot be resumed")
 	}
 	switch op.Kind {
+	case "repo.rebind":
+		return s.applyRepositoryRebind(ctx, op)
 	case "repo.import":
 		return s.applyImport(ctx, op)
 	case "repo.add":

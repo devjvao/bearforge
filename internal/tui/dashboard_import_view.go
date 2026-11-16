@@ -138,7 +138,9 @@ func (m dashboardModel) importContent() []string {
 	case importLoggingIn:
 		lines = append(lines, "Shared login is running; Escape cancels it.")
 		if run.notice != "" {
-			lines = append(lines, displayText(run.notice))
+			for _, line := range strings.Split(run.notice, "\n") {
+				lines = append(lines, displayText(line))
+			}
 		}
 		if run.prompt != nil {
 			switch run.prompt.kind {

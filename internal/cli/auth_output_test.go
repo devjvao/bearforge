@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -184,5 +185,38 @@ func TestAuthFailureDiagnosticsSanitizeRedirectedOutput(t *testing.T) {
 	}
 	if !strings.Contains(view, "work") || !strings.Contains(view, "credential unavailable") {
 		t.Fatal("sanitization removed the useful diagnostic")
+	}
+}
+
+func TestAuthFailureDiagnosticsKeepJoinedErrorsSeparated(t *testing.T) {
+	var output, diagnostics bytes.Buffer
+	o := &options{out: &output, errOut: &diagnostics, color: "always"}
+	result := app.NewResult("auth.status")
+	result.Outcome = "failed"
+	result.Problem = app.ProblemFor(errors.Join(
+		errors.New("connection github: rejected"),
+		errors.New("repository auriset API access: rejected"),
+		errors.New("multiple saved connections match; select a connection"),
+	))
+	if err := o.render(result); err != nil {
+		t.Fatal(err)
+	}
+	view := diagnostics.String()
+	for _, failure := range []string{"connection github: rejected", "repository auriset API access: rejected", "multiple saved connections match; select a connection"} {
+		matchingLines := 0
+		for _, line := range strings.Split(view, "\n") {
+			if strings.Contains(line, failure) {
+				matchingLines++
+				if strings.Count(line, "rejected")+strings.Count(line, "multiple saved connections") != 1 {
+					t.Fatalf("joined errors share one unreadable line: %q", line)
+				}
+			}
+		}
+		if matchingLines != 1 {
+			t.Fatalf("expected one visible diagnostic line for %q: %q", failure, view)
+		}
+	}
+	if strings.Contains(view, "\x1b") {
+		t.Fatal("redirected diagnostics contain terminal styling")
 	}
 }

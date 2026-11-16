@@ -21,10 +21,10 @@ func (m *Manager) Login(ctx context.Context, r LoginRequest, h LoginHooks) (Conn
 		}
 	}
 	if h.Notify != nil {
-		h.Notify("Token setup: " + managementURL(c) + "; allow repository read, discovery, and pull-request read for the selected repositories. Organization/SSO approval may also be required.")
+		h.Notify(tokenSetupGuide(c))
 	}
 	if m.browser != nil && !r.NoBrowser {
-		_ = m.browser.Open(ctx, managementURL(c))
+		_ = m.browser.Open(ctx, tokenSetupURL(c))
 	}
 	if h.ReadSecret == nil {
 		return Connection{}, errors.New("hidden token input is required")
@@ -55,6 +55,49 @@ func (m *Manager) Login(ctx context.Context, r LoginRequest, h LoginHooks) (Conn
 		return Connection{}, e
 	}
 	return m.save(ctx, c, access)
+}
+
+func tokenSetupURL(c Connection) string {
+	if c.Provider == "github" {
+		return c.Host + "/settings/personal-access-tokens/new?name=Bearforge&contents=read&pull_requests=read"
+	}
+	return managementURL(c)
+}
+
+func tokenSetupGuide(c Connection) string {
+	lines := []string{"Token setup: " + tokenSetupURL(c)}
+	switch c.Provider {
+	case "github":
+		lines = append(lines,
+			"GitHub fine-grained personal access token:",
+			"- Choose an expiration and the Resource owner (your account or organization).",
+			"- Repository access: Only select repositories; select the intended repositories.",
+			"- Repository permissions: Contents: Read-only (clone/fetch).",
+			"- Metadata: Read-only (automatic; repository discovery and API checks).",
+			"- Pull requests: Read-only (PR lookup).",
+			"- Account permissions: none.",
+			"Organization approval may be required before private repositories are accessible.")
+		if c.Host != "https://github.com" {
+			lines = append(lines,
+				"If this installation does not support fine-grained tokens: "+managementURL(c),
+				"Classic tokens require repo for private repositories; this also grants write access. SSO authorization may be required.")
+		}
+	case "bitbucket-cloud":
+		lines = append(lines,
+			"Create an API token with scopes and select Bitbucket. Select all four explicitly:",
+			"- User: Read (read:user:bitbucket) - account verification.",
+			"- Workspaces: Read (read:workspace:bitbucket) - workspace discovery.",
+			"- Repositories: Read (read:repository:bitbucket) - repository discovery and clone/fetch.",
+			"- Pull requests: Read (read:pullrequest:bitbucket) - PR lookup.",
+			"Use your Atlassian account email as the username. The account must already have access to the intended repositories.")
+	default:
+		lines = append(lines,
+			"Create a user HTTP access token on this Bitbucket Server / Data Center installation:",
+			"- Repository permissions: Repository read (discovery, clone/fetch, and PR lookup).",
+			"- Project permissions: Project read, if the form includes this selector.",
+			"Use your Git username. The account must already have repository access; company policy may require token approval.")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func managementURL(c Connection) string {

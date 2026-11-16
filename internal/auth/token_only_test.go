@@ -44,7 +44,11 @@ func TestLoginDefaultsToGuidedTokenDespiteOAuthEnvironment(t *testing.T) {
 				t.Fatalf("guided token login failed: %v", err)
 			}
 			wantKind := map[string]string{"github": "github-token", "bitbucket-cloud": "bitbucket-api-token", "bitbucket-server": "bitbucket-user-token"}[provider]
-			if connection.Method != MethodToken || connection.TokenKind != wantKind || !strings.Contains(notice, "Token setup") || opened != managementURL(connection) {
+			wantURL := managementURL(connection)
+			if provider == "github" {
+				wantURL = server.URL + "/settings/personal-access-tokens/new?name=Bearforge&contents=read&pull_requests=read"
+			}
+			if connection.Method != MethodToken || connection.TokenKind != wantKind || !strings.Contains(notice, "Token setup: "+wantURL) || opened != wantURL {
 				t.Fatal("login did not directly guide token setup")
 			}
 			if len(secrets.values) != 1 || connection.RefreshRef != "" || connection.ClientSecretRef != "" || connection.ClientID != "" || connection.TokenURL != "" {
