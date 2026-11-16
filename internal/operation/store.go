@@ -165,7 +165,7 @@ func valid(op *app.Operation, root string) error {
 	}
 	importIDs := map[string]bool{}
 	for _, step := range op.Steps {
-		if op.Kind == "repo.import" || step.ImportedRepository != nil || step.PreviousImportedRepository != nil {
+		if op.Kind == "repo.import" || step.ImportedRepository != nil || step.PreviousImportedRepository != nil || len(step.ImportBindingHistory) > 0 {
 			if op.Kind != "repo.import" || step.ImportedRepository == nil || step.ImportedRepository.ID != step.Repository {
 				return domain.E("invalid", "invalid import snapshot")
 			}

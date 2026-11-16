@@ -86,6 +86,7 @@ type Operation struct {
 type Step struct {
 	ImportedRepository         *domain.Repository     `json:"imported_repository,omitempty"`
 	PreviousImportedRepository *domain.Repository     `json:"previous_imported_repository,omitempty"`
+	ImportBindingHistory       []domain.Repository    `json:"import_binding_history,omitempty"`
 	RefFormat                  string                 `json:"ref_format,omitempty"`
 	RequestedRefFormat         string                 `json:"requested_ref_format,omitempty"`
 	Repository                 string                 `json:"repository"`

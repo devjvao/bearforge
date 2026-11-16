@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"maps"
 	"reflect"
 	"slices"
@@ -44,11 +45,15 @@ func ValidateImportStep(step Step) error {
 	if step.State != "planned" && step.State != "started" && step.State != "failed" && step.State != "succeeded" {
 		return domain.E("invalid", "invalid import step state")
 	}
-	if previous := step.PreviousImportedRepository; previous != nil {
-		if err := ValidateImportedRepository(*previous); err != nil {
+	previousSnapshots := slices.Clone(step.ImportBindingHistory)
+	if step.PreviousImportedRepository != nil {
+		previousSnapshots = append(previousSnapshots, *step.PreviousImportedRepository)
+	}
+	for _, previous := range previousSnapshots {
+		if err := ValidateImportedRepository(previous); err != nil {
 			return err
 		}
-		old, current := *previous, *step.ImportedRepository
+		old, current := previous, *step.ImportedRepository
 		old.Provider = maps.Clone(old.Provider)
 		current.Provider = maps.Clone(current.Provider)
 		delete(old.Provider, "connection")
@@ -113,6 +118,10 @@ func (s *Service) ReassociateImport(ctx context.Context, req ImportReassociation
 		}
 		previous := *step.ImportedRepository
 		previousReview := step.PreviousImportedRepository
+		// Helper writes and catalog persistence have independent crash points.
+		// Preserve every reviewed helper identity instead of replacing it with
+		// whichever predecessor remains in the catalog.
+		step.ImportBindingHistory = reviewedImportBindings(*step)
 		// Even an unregistered step may already have persisted helper routing
 		// before a failed catalog save. Retain its old reviewed binding too.
 		step.PreviousImportedRepository = &previous
@@ -171,14 +180,54 @@ func (s *Service) ReassociateImport(ctx context.Context, req ImportReassociation
 
 func (s *Service) bindImportStep(ctx context.Context, step Step, path string) error {
 	repo := *step.ImportedRepository
-	if previous := step.PreviousImportedRepository; previous != nil && repo.Provider["transport"] == "https" && repo.Provider["token_env"] == "" && repo.Provider["connection"] != "" {
-		old, current := importCredentialRequest(*previous), importCredentialRequest(repo)
-		if old.Connection != current.Connection || old.GrantID != current.GrantID {
+	if repo.Provider["transport"] == "https" && repo.Provider["token_env"] == "" && repo.Provider["connection"] != "" {
+		current := importCredentialRequest(repo)
+		var lastConflict error
+		bindings := reviewedImportBindings(step)
+		for i := len(bindings) - 1; i >= 0; i-- {
+			old := importCredentialRequest(bindings[i])
+			if old.Connection == current.Connection && old.GrantID == current.GrantID {
+				continue
+			}
 			if s.RebindConnection == nil {
 				return domain.E("unavailable", "reviewed Git connection replacement is unavailable")
 			}
-			return s.RebindConnection(ctx, path, old, current)
+			err := s.RebindConnection(ctx, path, old, current)
+			if err == nil {
+				return nil
+			}
+			var problem *domain.Error
+			if !errors.As(err, &problem) || problem.Code != "conflict" {
+				return err
+			}
+			lastConflict = err
+		}
+		if lastConflict != nil {
+			return lastConflict
 		}
 	}
 	return s.bindImport(ctx, repo, path)
+}
+
+// reviewedImportBindings contains only nonsecret bindings approved for this
+// exact repository scope. Older journals contribute their single predecessor.
+// No historical credential is resolved: the adapter compares configuration.
+func reviewedImportBindings(step Step) []domain.Repository {
+	bindings := slices.Clone(step.ImportBindingHistory)
+	for _, candidate := range []*domain.Repository{step.PreviousImportedRepository, step.ImportedRepository} {
+		if candidate == nil {
+			continue
+		}
+		found := false
+		for _, binding := range bindings {
+			if binding.Provider["connection"] == candidate.Provider["connection"] && binding.Provider["grant_id"] == candidate.Provider["grant_id"] {
+				found = true
+				break
+			}
+		}
+		if !found {
+			bindings = append(bindings, *candidate)
+		}
+	}
+	return bindings
 }

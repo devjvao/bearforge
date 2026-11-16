@@ -526,7 +526,7 @@ func importRemoteIdentity(raw string) (string, string) {
 		}
 		host, path = authority, p
 	}
-	path = strings.Trim(strings.TrimSuffix(path, ".git"), "/")
+	path = strings.TrimSuffix(strings.Trim(path, "/"), ".git")
 	return strings.ToLower(host), strings.ToLower(path)
 }
 

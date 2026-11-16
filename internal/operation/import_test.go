@@ -59,3 +59,28 @@ func TestImportReassociationCannotChangeImmutableScope(t *testing.T) {
 		t.Fatal("reassociation changed immutable provider identity")
 	}
 }
+
+func TestImportHelperHistoryRoundtripAndScopeValidation(t *testing.T) {
+	files, store := operationFixture(t)
+	current := importSnapshot()
+	old := current
+	old.Provider = maps.Clone(current.Provider)
+	old.Provider["grant_id"] = "earlier"
+	op := &app.Operation{Version: 1, ID: "history", Root: files.Root, Kind: "repo.import", State: "partial", Steps: []app.Step{{Repository: "api", State: "started", ImportedRepository: &current, ImportBindingHistory: []domain.Repository{old}}}}
+	if err := store.Save(op); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load(op.ID)
+	if err != nil || len(loaded.Steps[0].ImportBindingHistory) != 1 || loaded.Steps[0].ImportBindingHistory[0].Provider["grant_id"] != "earlier" {
+		t.Fatalf("helper provenance lost: %+v %v", loaded, err)
+	}
+	old.Provider["repository"] = "outside/scope"
+	if err := store.Save(op); err == nil {
+		t.Fatal("accepted helper provenance outside immutable repository scope")
+	}
+	op.Kind = "repo.add"
+	op.Steps[0].ImportedRepository = nil
+	if err := store.Save(op); err == nil {
+		t.Fatal("accepted import helper provenance in a different operation kind")
+	}
+}
