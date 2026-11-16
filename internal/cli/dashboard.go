@@ -6,6 +6,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"bearforge/internal/app"
+	"bearforge/internal/auth"
+	"bearforge/internal/discovery"
 	"bearforge/internal/domain"
 	"bearforge/internal/gitcli"
 	"bearforge/internal/operation"
@@ -17,16 +19,20 @@ import (
 // reads and the original application service never share a mutable callback.
 type dashboardService struct {
 	*app.Service
-	jobs int
+	jobs       int
+	auth       *auth.Manager
+	authErr    error
+	discoverer *discovery.Provider
 }
 
 func newDashboardService(service *app.Service, o *options) dashboardService {
 	configured := *service
+	manager, authErr := o.configureServiceAuthentication(&configured)
 	configured.PRs = o.pullRequestProvider
 	if configured.PRs == nil {
-		configured.PRs = pullrequests.NewProvider()
+		configured.PRs = pullrequests.NewProviderWithResolver(configured.Credentials)
 	}
-	return dashboardService{Service: &configured, jobs: o.jobs}
+	return dashboardService{Service: &configured, jobs: o.jobs, auth: manager, authErr: authErr, discoverer: discovery.NewProvider(configured.Credentials)}
 }
 
 func (s dashboardService) Sync(ctx context.Context, names []string, observe func(app.Event)) (app.Result, error) {
@@ -64,11 +70,13 @@ func addDashboardCommand(root *cobra.Command, o *options) {
 			"s fetches/prunes all repositories in the current workspace, including filtered rows.\n" +
 			"Sync uses --jobs and shows progress and per-repository results without changing checkouts.\n\n" +
 			"a opens the registered-repository picker for the current workspace.\n" +
+			"i imports provider repositories, including when the root has no workspaces. Choose a saved connection or shared login, then explicitly Load.\n" +
+			"Space selects remote repositories, e edits local IDs, Enter reviews, and y confirms cloning without workspace attachment.\n" +
 			"Space selects, Enter previews resolved defaults, and y confirms the reviewed add plan.\n\n" +
 			"n creates an empty workspace; d removes the selected repository; D removes the workspace.\n" +
 			"Each action previews its destinations and requires y to confirm; unsafe worktrees are refused.\n\n" +
 			"Tab changes panes; arrows or j/k navigate; / filters; Escape clears;\n" +
-			"r refreshes locally; p/P look up/refresh PRs; s syncs; a adds; n creates; d/D removes; v toggles results; Page Up/Down scroll details; q quits; Ctrl-C cancels.",
+			"r refreshes locally; p/P look up/refresh PRs; s syncs; a adds; i imports; n creates; d/D removes; v toggles results; Page Up/Down scroll details; q quits; Ctrl-C cancels.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !o.interactive() || o.ui != "auto" || o.dry {

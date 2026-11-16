@@ -117,6 +117,9 @@ type dashboardModel struct {
 	prRun           *dashboardPullRequestRun
 	prItems         map[string]app.Item
 	prErr           error
+	importID        uint64
+	importRun       *dashboardImport
+	showImport      bool
 }
 
 func newDashboardModel(ctx context.Context, source DashboardSource, workspace string) dashboardModel {
@@ -194,6 +197,8 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch v := msg.(type) {
+	case dashboardImportMsg, dashboardImportSignalMsg, dashboardImportProgressMsg:
+		return m.updateImport(msg)
 	case dashboardPullRequestsMsg:
 		return m.updatePullRequests(v)
 	case dashboardWorkspacePreviewMsg, dashboardWorkspaceProgressMsg, dashboardWorkspaceDoneMsg:
@@ -201,6 +206,10 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case dashboardChoicesMsg, dashboardAddPreviewMsg, dashboardAddProgressMsg, dashboardAddedMsg:
 		return m.updateAdd(msg)
 	case tea.PasteMsg:
+		if m.showImport && m.importRun != nil {
+			m = m.importText(v.Content)
+			return m, nil
+		}
 		if m.showWorkspace && m.workspaceRun != nil && m.workspaceRun.phase == workspaceForm {
 			m = m.workspaceText(v.Content)
 		}
@@ -266,6 +275,9 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key == "ctrl+c" {
 			return m.stop(context.Canceled)
 		}
+		if m.showImport && m.importRun != nil {
+			return m.importKey(v)
+		}
 		if m.showWorkspace && m.workspaceRun != nil {
 			return m.workspaceKey(v)
 		}
@@ -291,6 +303,9 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "a":
 			m.invalidatePullRequests()
 			return m.openAdd()
+		case "i":
+			m.invalidatePullRequests()
+			return m.openImport()
 		case "n":
 			m.invalidatePullRequests()
 			return m.openWorkspace(workspaceCreate)
@@ -303,7 +318,9 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "p", "P":
 			return m.startPullRequests(key == "P")
 		case "v":
-			if m.workspaceRun != nil && m.workspaceRun.phase == workspaceResults {
+			if m.importRun != nil && m.importRun.phase == importResults {
+				m.showImport, m.importRun.offset = !m.showImport, 0
+			} else if m.workspaceRun != nil && m.workspaceRun.phase == workspaceResults {
 				m.showWorkspace, m.workspaceRun.offset = !m.showWorkspace, 0
 			} else if m.addRun != nil && m.addRun.phase == addResults {
 				m.showAdd = !m.showAdd

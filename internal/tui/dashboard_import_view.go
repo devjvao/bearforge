@@ -1,0 +1,313 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
+
+	"bearforge/internal/auth"
+)
+
+func (m dashboardModel) importView() tea.View {
+	run := m.importRun
+	lines := []string{m.styles.brand.Render("Bearforge / Import repositories")}
+	content := m.importWrappedContent()
+	height := max(1, m.height-4)
+	lines = append(lines, viewportLines(content, run.offset, m.width, height)...)
+	help := "Esc back | PgUp/PgDn scroll | q quit | Ctrl-C cancel"
+	switch run.phase {
+	case importSource:
+		help = "Tab field | Ctrl-U clear | Enter Load | ^W Bitbucket workspaces | ^L login | Esc back"
+	case importLoginForm:
+		help = "Tab field | Space provider | Ctrl-U clear | Enter login | Esc cancel"
+	case importPicking:
+		help = "Space select | / filter | e ID | Enter review | r reload | l login | c source | Esc close"
+	case importReview:
+		help = "y import | Esc selection | PgUp/PgDn scroll | Ctrl-C cancel"
+	case importExecuting:
+		help = "PgUp/PgDn scroll | q quit | Ctrl-C cancel and drain"
+	case importResults:
+		help = "v dashboard | PgUp/PgDn scroll | q quit | Ctrl-C cancel"
+	}
+	lines = append(lines, actionHelp(help, m.width, m.styles))
+	return dashboardView(lines[:min(len(lines), m.height)], m.width)
+}
+func (m dashboardModel) importWrappedContent() []string {
+	return strings.Split(ansi.Wrap(strings.Join(m.importContent(), "\n"), m.width, ""), "\n")
+}
+
+func (m dashboardModel) importFollowField() {
+	for row, line := range m.importWrappedContent() {
+		if strings.HasPrefix(ansi.Strip(line), "> ") {
+			m.importRun.offset = max(0, row-max(1, m.height-4)/2)
+			return
+		}
+	}
+}
+func (m dashboardModel) importContent() []string {
+	run := m.importRun
+	lines := []string{}
+	if run.err != nil {
+		label := "Error: "
+		if run.phase == importPicking || run.phase == importWorkspaces {
+			label = "API discovery: "
+		}
+		if run.phase == importResults {
+			label = "Git/import: "
+		}
+		lines = append(lines, m.styles.bad.Render(label+displayText(run.err.Error())))
+		if (run.phase == importPicking || run.phase == importWorkspaces) && run.source.Connection != "" {
+			lines = append(lines, "Check API access: bearforge auth status --connection "+workspaceShellQuote(run.source.Connection), "Press l from repository selection to repair this connection with shared login.")
+		}
+	}
+	if run.editingID {
+		return append(lines, "Edit local ID (Ctrl-U clears): "+displayText(run.editID), "Enter saves; Escape cancels.")
+	}
+	if run.editing {
+		return append(lines, "Filter: "+displayText(run.filter), "Enter applies; Escape clears.")
+	}
+	switch run.phase {
+	case importConnections:
+		lines = append(lines, "Choose a saved connection (local metadata only).")
+		for i, c := range run.connections {
+			prefix := "  "
+			if i == run.index {
+				prefix = "> "
+			}
+			lines = append(lines, prefix+displayText(c.Name+" | "+c.Provider+" | "+c.Host), "    "+displayText(c.Method+" | "+c.State+" | "+c.Account), "    API: "+displayText(c.APIURL))
+		}
+		for i, text := range []string{"New connection / shared login", "Environment token or anonymous public source"} {
+			prefix := "  "
+			if run.index == len(run.connections)+i {
+				prefix = "> "
+			}
+			lines = append(lines, prefix+text)
+		}
+		lines = append(lines, "Enter selects; r reloads connections.")
+	case importSource:
+		lines = append(lines, "Source settings / Enter Load starts provider HTTP.")
+		if run.source.Connection != "" {
+			lines = append(lines, "Connection: "+displayText(run.source.Connection)+" | "+displayText(run.connection.Method+" | "+run.connection.State+" | "+run.connection.Account), "Grant: "+displayText(run.source.GrantID))
+		}
+		labels := []string{"Scope (GitHub owner / Bitbucket workspace or project)", "Clone transport (Space toggles)", "Token environment variable name (optional)", "Provider (github / bitbucket / bitbucket-server)", "Host (hostname)", "API base URL", "Git base URL"}
+		values := []string{run.source.Scope, run.transport, run.source.TokenEnv, run.source.Provider, run.source.Host, run.source.APIURL, run.source.GitURL}
+		for i, label := range labels {
+			prefix := "  "
+			if i == run.field {
+				prefix = "> "
+			}
+			lines = append(lines, prefix+label+": "+displayText(values[i]))
+		}
+		lines = append(lines, "API verification does not prove Git read access.", "SSH uses your existing keys/agent; HTTPS can use the selected grant.")
+		if run.source.TokenEnv != "" {
+			lines = append(lines, "API credential: environment variable "+displayText(run.source.TokenEnv), "Git uses existing helpers / SSH, independently of this API credential.")
+		}
+		if run.source.Provider == "bitbucket" {
+			lines = append(lines, "Enter a Bitbucket workspace scope, or Ctrl-W to enumerate accessible Bitbucket workspaces.")
+		}
+	case importLoginForm:
+		lines = append(lines, "Shared provider login. No token belongs in these fields.")
+		labels := []string{"Provider (Space toggles)", "Connection name", "Installation URL (including context path)", "API URL (optional override)", "Git URL (optional override)", "Account email / Git username (Bitbucket token)"}
+		values := []string{run.login.Provider, run.login.Name, run.login.Host, run.login.APIURL, run.login.GitURL, run.login.Username}
+		for i, label := range labels {
+			prefix := "  "
+			if i == run.field {
+				prefix = "> "
+			}
+			lines = append(lines, prefix+label+": "+displayText(values[i]))
+		}
+		lines = append(lines, "Enter starts login; supported browser authorization is offered by the shared service.", "Guided hidden token entry remains available when browser registration is unavailable.")
+		lines = append(lines, "Ctrl-E uses an environment token or anonymous public source instead.")
+		for _, c := range run.connections {
+			if c.Name == run.login.Name {
+				lines = append(lines, "Logging in replaces this connection's grant. Existing repository associations must be reviewed again after replacement.")
+				break
+			}
+		}
+	case importLoggingIn:
+		lines = append(lines, "Shared login is running; Escape cancels it.")
+		if run.notice != "" {
+			lines = append(lines, displayText(run.notice))
+		}
+		if run.prompt != nil {
+			switch run.prompt.kind {
+			case "secret":
+				lines = append(lines, displayText(run.prompt.text)+": "+strings.Repeat("*", min(32, utf8RuneCount(run.secret))), "Enter submits hidden token.")
+			case "method":
+				if len(run.prompt.methods) == 1 && run.prompt.methods[0] == auth.MethodToken {
+					lines = append(lines, "Browser authorization is unavailable for this installation; t or Enter starts guided token setup.")
+				} else {
+					lines = append(lines, "b browser authorization | t guided token setup")
+				}
+			case "confirm":
+				c := run.prompt.connection
+				lines = append(lines, "Confirm provider: "+displayText(c.Provider), "Installation: "+displayText(c.Host), "API: "+displayText(c.APIURL), "Git: "+displayText(c.GitURL), "Press y to authorize this provider and origin.")
+			}
+		}
+	case importLoading:
+		lines = append(lines, "Loading provider data... Escape cancels the request.")
+	case importWorkspaces:
+		lines = append(lines, "Choose a Bitbucket workspace. Enter selects the scope; Load remains explicit.")
+		for i, w := range run.workspaces {
+			prefix := "  "
+			if i == run.index {
+				prefix = "> "
+			}
+			lines = append(lines, prefix+displayText(w.Slug+" | "+w.Name))
+		}
+		if len(run.workspaces) == 0 {
+			lines = append(lines, "No Bitbucket workspaces loaded. Escape returns to direct scope; r retries.")
+		}
+	case importPicking:
+		rows := m.importChoices()
+		lines = append(lines, fmt.Sprintf("Repositories: %d | selected: %d | / %s", len(rows), m.importSelectionCount(), displayText(run.filter)))
+		height := max(2, m.height-11)
+		start := max(0, min(run.index-height/2, len(rows)-height))
+		end := min(len(rows), start+height)
+		for i := start; i < end; i++ {
+			c := rows[i]
+			prefix := "  [ ] "
+			if run.selected[importKey(c)] {
+				prefix = "  [x] "
+			}
+			if c.Disabled {
+				prefix = "  [-] "
+			}
+			if i == run.index {
+				prefix = ">" + prefix[1:]
+			}
+			state := ""
+			if c.RegisteredID != "" {
+				state = " (registered: " + c.RegisteredID + ")"
+			}
+			if c.RetiredID != "" {
+				state = " (retired; repo restore " + c.RetiredID + ")"
+			}
+			visibility := "public"
+			if c.Repository.Private {
+				visibility = "private"
+			}
+			if c.Repository.Archived {
+				visibility += " archived"
+			}
+			lines = append(lines, prefix+displayText(c.Repository.FullName+" -> "+run.ids[importKey(c)]+state+" | "+visibility))
+		}
+		if len(rows) == 0 {
+			lines = append(lines, "No repositories match. r retries discovery; c changes source.")
+		}
+		if run.index < len(rows) {
+			c := rows[run.index]
+			branch := c.Repository.DefaultBranch
+			if branch == "" {
+				branch = "(unknown)"
+			}
+			clone := c.Repository.HTTPSURL
+			if run.transport == "ssh" {
+				clone = c.Repository.SSHURL
+			}
+			lines = append(lines, "", displayText(c.Repository.Description), "URL: "+displayText(clone), "Default branch: "+displayText(branch))
+			if c.Problem != nil {
+				lines = append(lines, displayText(c.Problem.Message))
+			}
+		}
+	case importPlanning:
+		lines = append(lines, "Previewing local IDs, clone destinations, and credential associations...", "This preview creates no clones or journals.")
+	case importReview:
+		lines = append(lines, "Review import destinations. Only y starts cloning.", "Repositories are registered without workspace attachment.")
+		for _, r := range run.request.Repositories {
+			clone := r.Repository.HTTPSURL
+			if r.Transport == "ssh" {
+				clone = r.Repository.SSHURL
+			}
+			lines = append(lines, "", m.styles.title.Render(displayText(r.ID)), "URL: "+displayText(clone))
+			for _, item := range run.preview.Items {
+				if item.Repository == r.ID {
+					lines = append(lines, "Destination: "+displayText(item.Path))
+					break
+				}
+			}
+			if r.Source.Connection != "" {
+				lines = append(lines, "Connection: "+displayText(r.Source.Connection)+" / grant "+displayText(r.Source.GrantID))
+			}
+			if r.Source.TokenEnv != "" {
+				lines = append(lines, "API credential: environment variable "+displayText(r.Source.TokenEnv))
+			}
+			if r.Source.Connection != "" && r.Source.TokenEnv == "" && r.Transport == "https" {
+				lines = append(lines, "Git integration: remote-scoped Bearforge credential helper for this URL.")
+			} else {
+				lines = append(lines, "Git integration: existing configured Git helpers / SSH agent.")
+			}
+		}
+	case importExecuting, importResults:
+		lines = append(lines, m.styles.title.Render(m.importSummary()))
+		if run.phase == importExecuting {
+			done := 0
+			for _, s := range run.states {
+				if s == "created" || s == "failed" || s == "unchanged" || s == "succeeded" {
+					done++
+				}
+			}
+			lines = append(lines, m.batchProgress(done, len(run.states), 0))
+		}
+		if run.result.Problem != nil && run.err == nil {
+			lines = append(lines, displayText(run.result.Problem.Message))
+		}
+		for _, r := range run.request.Repositories {
+			lines = append(lines, "", displayText(r.ID)+" | "+displayText(run.states[r.ID]))
+			for _, item := range run.result.Items {
+				if item.Repository == r.ID {
+					if item.RefFormat != "" {
+						lines = append(lines, "Ref storage: "+displayText(item.RefFormat))
+					}
+					if item.Problem != nil {
+						lines = append(lines, "Git/import: "+displayText(item.Problem.Message))
+					}
+				}
+			}
+		}
+		if run.result.OperationID != "" {
+			lines = append(lines, "", "Inspect: "+dashboardRecoveryCommand(run.root, "show", run.result.OperationID))
+			if run.err != nil || run.result.Outcome == "partial" {
+				lines = append(lines, "Resume: "+dashboardRecoveryCommand(run.root, "resume", run.result.OperationID))
+			}
+		}
+		if run.err != nil {
+			command := "bearforge auth status"
+			if run.source.Connection != "" {
+				command += " --connection " + workspaceShellQuote(run.source.Connection)
+			}
+			lines = append(lines, "Check API and Git separately: "+command, "Repair credentials with bearforge auth login, then resume the operation.")
+		}
+	}
+	return lines
+}
+func utf8RuneCount(s string) int { return len([]rune(s)) }
+func (m dashboardModel) importSelectionCount() int {
+	n := 0
+	for _, v := range m.importRun.selected {
+		if v {
+			n++
+		}
+	}
+	return n
+}
+func (m dashboardModel) importSummary() string {
+	run := m.importRun
+	if run.phase == importExecuting {
+		return "Importing repositories (API discovery and Git access are separate capabilities)"
+	}
+	ok, failed, notRun := 0, 0, 0
+	for _, s := range run.states {
+		switch s {
+		case "created", "succeeded", "unchanged":
+			ok++
+		case "failed":
+			failed++
+		default:
+			notRun++
+		}
+	}
+	return fmt.Sprintf("Import: %d registered | %d failed | %d not run", ok, failed, notRun)
+}
