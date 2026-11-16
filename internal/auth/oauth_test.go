@@ -174,3 +174,37 @@ func TestOAuthEndpointsCannotEscapeInstallation(t *testing.T) {
 		t.Fatal("exchange endpoint escaped context")
 	}
 }
+
+func TestRefreshUsesProviderClientAuthenticationScheme(t *testing.T) {
+	for _, provider := range []string{"github", "bitbucket-cloud", "bitbucket-server"} {
+		t.Run(provider, func(t *testing.T) {
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = r.ParseForm()
+				if r.URL.RawQuery != "" {
+					t.Error("credential parameters appeared in URL")
+				}
+				if provider == "bitbucket-cloud" {
+					id, secret, ok := r.BasicAuth()
+					if !ok || id != "client" || secret != "client-secret" {
+						t.Error("Cloud requires Basic client authentication")
+					}
+					if r.Form.Get("client_secret") != "" {
+						t.Error("duplicated client authentication")
+					}
+				} else if r.Form.Get("client_secret") != "client-secret" || r.Header.Get("Authorization") != "" {
+					t.Error("provider requires client secret in POST form")
+				}
+				fmt.Fprint(w, `{"access_token":"rotated","expires_in":3600}`)
+			}))
+			defer srv.Close()
+			m := NewManager(Options{RegistryPath: filepath.Join(t.TempDir(), "connections.json"), Secrets: &memorySecrets{values: map[string]string{}}, HTTPClient: srv.Client()})
+			c, err := m.save(context.Background(), Connection{Name: "work", Provider: provider, Host: srv.URL, APIURL: srv.URL, GrantID: "stable", TokenURL: srv.URL + "/token", ClientID: "client", ExpiresAt: time.Now().Add(-time.Minute)}, "expired", "refresh", "client-secret")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = m.refresh(context.Background(), c); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

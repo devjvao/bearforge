@@ -110,6 +110,16 @@ func (m *Manager) form(ctx context.Context, endpoint string, values url.Values, 
 	}
 	return nil
 }
+
+// Cloud consumers authenticate with Basic; GitHub and Server/DC document
+// client credentials as token-endpoint form parameters. Never put them in URLs.
+func (m *Manager) exchange(ctx context.Context, provider, endpoint string, values url.Values, clientID, secret string, target any) error {
+	if provider != "bitbucket-cloud" && secret != "" {
+		values.Set("client_secret", secret)
+		secret = ""
+	}
+	return m.form(ctx, endpoint, values, clientID, secret, target)
+}
 func (m *Manager) authorize(ctx context.Context, r LoginRequest, o OAuthConfig, h LoginHooks) (tokenResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
@@ -245,7 +255,7 @@ func (m *Manager) authorizationCode(ctx context.Context, r LoginRequest, o OAuth
 	}
 	values := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {callback.String()}, "code_verifier": {verifier}, "client_id": {o.ClientID}}
 	var token tokenResponse
-	e = m.form(ctx, o.TokenURL, values, o.ClientID, o.ClientSecret, &token)
+	e = m.exchange(ctx, r.Provider, o.TokenURL, values, o.ClientID, o.ClientSecret, &token)
 	if e != nil {
 		return token, e
 	}
@@ -288,7 +298,7 @@ func (m *Manager) refresh(ctx context.Context, expected Connection) (Connection,
 		}
 	}
 	var token tokenResponse
-	e = m.form(ctx, c.TokenURL, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refresh}, "client_id": {c.ClientID}}, c.ClientID, clientSecret, &token)
+	e = m.exchange(ctx, c.Provider, c.TokenURL, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refresh}, "client_id": {c.ClientID}}, c.ClientID, clientSecret, &token)
 	if e != nil {
 		return Connection{}, e
 	}
