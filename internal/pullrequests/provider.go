@@ -19,9 +19,14 @@ type Provider struct {
 
 // NewProvider constructs all supported read-only providers without doing I/O.
 func NewProvider() *Provider {
-	bb := bitbucket.NewClient()
+	return NewProviderWithResolver(nil)
+}
+
+// NewProviderWithResolver shares the selected credential resolver across providers.
+func NewProviderWithResolver(resolver domain.CredentialResolver) *Provider {
+	bb := bitbucket.NewClientWithResolver(resolver)
 	return &Provider{providers: map[string]app.PullRequestProvider{
-		"github": github.NewClient(), "bitbucket": bb, "bitbucket-server": bb,
+		"github": github.NewClientWithResolver(resolver), "bitbucket": bb, "bitbucket-server": bb,
 	}}
 }
 

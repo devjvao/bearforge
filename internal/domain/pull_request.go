@@ -13,6 +13,8 @@ type PullRequestQuery struct {
 	Base             string `json:"base"`
 	State            string `json:"state"`
 	TokenEnv         string `json:"token_env"`
+	Connection       string `json:"connection,omitempty"`
+	GrantID          string `json:"grant_id,omitempty"`
 }
 
 // PullRequest is provider-independent metadata for a verified matching PR.

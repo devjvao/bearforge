@@ -17,6 +17,7 @@ import (
 	"golang.org/x/term"
 
 	"bearforge/internal/app"
+	"bearforge/internal/auth"
 	"bearforge/internal/config"
 	"bearforge/internal/domain"
 	"bearforge/internal/gitcli"
@@ -37,6 +38,7 @@ type options struct {
 	activeRoot                              string
 	progressTitle                           string
 	pullRequestProvider                     app.PullRequestProvider
+	authManager                             *auth.Manager
 }
 
 func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) int {
@@ -121,6 +123,7 @@ func newRoot(o *options) *cobra.Command {
 		return nil
 	}
 	addVersionCommand(root, o)
+	addAuthCommands(root, o)
 	addCommands(root, o)
 	configureHelp(root, o)
 	return root
@@ -177,7 +180,11 @@ func (o *options) perform(ctx context.Context, needsGit, progress bool, work fun
 	service := app.New(store, git, operation.New(store))
 	service.PRs = o.pullRequestProvider
 	if service.PRs == nil {
-		service.PRs = pullrequests.NewProvider()
+		manager, authErr := o.configureServiceAuthentication(service)
+		if authErr != nil {
+			return authErr
+		}
+		service.PRs = pullrequests.NewProviderWithResolver(manager)
 	}
 	o.activeRoot = store.RootPath()
 	service.Executor = process.Runner{Input: o.in, Output: o.out, Error: o.errOut}
@@ -240,6 +247,9 @@ func (o *options) render(r app.Result) error {
 	}
 	if o.output == "json" {
 		return json.NewEncoder(o.out).Encode(r)
+	}
+	if strings.HasPrefix(r.Command, "auth.") {
+		return o.renderAuthentication(r)
 	}
 	if r.Command == "pr.list" {
 		return o.renderPullRequests(r, isTerminal(o.out))

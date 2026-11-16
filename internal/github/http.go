@@ -42,7 +42,7 @@ type apiPullRequest struct {
 	Base      apiRef     `json:"base"`
 }
 
-func (c *Client) readPages(ctx context.Context, origin, endpoint *url.URL, q domain.PullRequestQuery, token string, host *hostState) ([]domain.PullRequest, error) {
+func (c *Client) readPages(ctx context.Context, origin, endpoint *url.URL, q domain.PullRequestQuery, token requestCredential, host *hostState) ([]domain.PullRequest, error) {
 	prs := []domain.PullRequest{}
 	seen := make(map[string]bool)
 	seenNumbers := make(map[int]bool)
@@ -195,7 +195,7 @@ func linkValues(line string) ([]string, error) {
 	return append(values, line[start:]), nil
 }
 
-func (c *Client) get(ctx context.Context, origin, endpoint *url.URL, targetPath, token string, host *hostState) ([]byte, http.Header, *url.URL, error) {
+func (c *Client) get(ctx context.Context, origin, endpoint *url.URL, targetPath string, token requestCredential, host *hostState) ([]byte, http.Header, *url.URL, error) {
 	client := *c.httpClient
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if req.Response != nil {
@@ -226,8 +226,8 @@ func (c *Client) get(ctx context.Context, origin, endpoint *url.URL, targetPath,
 		req.Header.Set("Accept", "application/vnd.github+json")
 		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 		req.Header.Set("User-Agent", "bearforge")
-		if token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
+		if err := token.authorize(req); err != nil {
+			return nil, nil, nil, err
 		}
 		response, err := client.Do(req)
 		if err != nil {

@@ -166,7 +166,31 @@ func addCommands(root *cobra.Command, o *options) {
 		r.Data = data
 		return r, err
 	})
-	command(ops, "resume ID", "Resume an interrupted mutation", cobra.ExactArgs(1), true, true, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
+	var resumeConnection string
+	resume := command(ops, "resume ID", "Resume an interrupted mutation", cobra.ExactArgs(1), true, true, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
+		if resumeConnection != "" {
+			manager, err := o.authentication()
+			if err != nil {
+				return app.NewResult("operations.resume"), err
+			}
+			connection, err := manager.Connection(ctx, resumeConnection)
+			if err != nil {
+				return app.NewResult("operations.resume"), err
+			}
+			request := app.ImportReassociationRequest{OperationID: a[0], Connection: connection.Name, GrantID: connection.GrantID, DryRun: true}
+			plan, err := s.ReassociateImport(ctx, request)
+			if err != nil || o.dry {
+				return plan, err
+			}
+			if err := o.confirm(ctx, plan); err != nil {
+				return plan, err
+			}
+			request.DryRun, request.ExpectedPlan = false, plan.PlanDigest
+			if result, err := s.ReassociateImport(ctx, request); err != nil {
+				return result, err
+			}
+			return s.Resume(ctx, a[0])
+		}
 		if o.dry {
 			r := app.NewResult("operations.resume")
 			op, err := s.Journal.Load(a[0])
@@ -176,6 +200,7 @@ func addCommands(root *cobra.Command, o *options) {
 		}
 		return s.Resume(ctx, a[0])
 	})
+	resume.Flags().StringVar(&resumeConnection, "connection", "", "Review a replacement saved connection for a partial repository import before resuming")
 	command(ops, "abandon ID", "Stop recovery tracking without deleting any files", cobra.ExactArgs(1), false, false, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
 		r := app.NewResult("operations.abandon")
 		if o.dry {

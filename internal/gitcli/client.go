@@ -15,10 +15,11 @@ import (
 )
 
 type Client struct {
-	executable   string
-	Timeout      time.Duration
-	globalConfig string
-	noSystem     bool
+	executable    string
+	Timeout       time.Duration
+	globalConfig  string
+	noSystem      bool
+	commandConfig []string
 }
 type CommandError struct {
 	ExitCode  int
@@ -77,6 +78,7 @@ func (c *Client) Run(ctx context.Context, dir string, args ...string) ([]byte, e
 	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
 	defer cancel()
 	prefix := []string{"--no-pager", "--no-optional-locks"}
+	prefix = append(prefix, c.commandConfig...)
 	if dir != "" {
 		prefix = append(prefix, "-C", dir)
 	}
