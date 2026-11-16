@@ -169,6 +169,43 @@ func (c *Client) refInventory(ctx context.Context, path string) ([]string, map[s
 	return names, symbolic, nil
 }
 
+// defaultAliasOccupied reports whether the optional remote HEAD alias would
+// replace a direct ref or overlap its namespace on the actual ref backend.
+// An existing exact symbolic alias can safely be refreshed during resume.
+func (c *Client) defaultAliasOccupied(ctx context.Context, path, remote string) (bool, error) {
+	names, symbolic, err := c.refInventory(ctx, path)
+	if err != nil {
+		return false, err
+	}
+	format, err := c.ReferenceFormat(ctx, path)
+	if err != nil {
+		return false, err
+	}
+	sensitive := true
+	if format == "files" {
+		sensitive, err = caseSensitive(path)
+		if err != nil {
+			return false, err
+		}
+	}
+	return defaultAliasConflicts(names, symbolic, "refs/remotes/"+remote+"/HEAD", sensitive), nil
+}
+
+func defaultAliasConflicts(names []string, symbolic map[string]string, alias string, sensitive bool) bool {
+	for _, name := range names {
+		if name == alias {
+			if symbolic[name] == "" {
+				return true
+			}
+			continue
+		}
+		if a, _ := refCollision([]string{alias, name}, sensitive); a != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Client) probeReftable(ctx context.Context, parent string) error {
 	supported, err := c.probeReferenceFormat(ctx, parent, "reftable")
 	if err != nil {

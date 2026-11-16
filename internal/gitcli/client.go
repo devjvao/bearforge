@@ -162,9 +162,17 @@ func (c *Client) Initialize(ctx context.Context, path string) error {
 	if err := c.Fetch(ctx, path); err != nil {
 		return err
 	}
-	// Empty remotes can be registered without a default branch.
-	if _, err := c.Run(ctx, path, "remote", "set-head", "origin", "-a"); err != nil && !isExit(err, 1) {
+	// The optional default alias must never replace a real tracking branch.
+	// Remote branch names such as head, HEAD, and HEAD/child are valid refs.
+	occupied, err := c.defaultAliasOccupied(ctx, path, "origin")
+	if err != nil {
 		return err
+	}
+	if !occupied {
+		// Empty remotes can be registered without a default branch.
+		if _, err := c.Run(ctx, path, "remote", "set-head", "origin", "-a"); err != nil && !isExit(err, 1) {
+			return err
+		}
 	}
 	b, err := c.Run(ctx, path, "for-each-ref", "--format=%(refname:strip=2)", "refs/heads/")
 	if err != nil {
@@ -174,8 +182,12 @@ func (c *Client) Initialize(ctx context.Context, path string) error {
 		if _, err := c.Resolve(ctx, path, "refs/remotes/origin/"+branch); err != nil {
 			continue
 		}
-		if _, err := c.Run(ctx, path, "branch", "--set-upstream-to=origin/"+branch, branch); err != nil {
-			return err
+		// Configure the literal ref name. The branch porcelain interprets HEAD
+		// as the current branch even when refs/heads/HEAD exists independently.
+		for _, pair := range [][2]string{{"branch." + branch + ".remote", "origin"}, {"branch." + branch + ".merge", "refs/heads/" + branch}} {
+			if _, err := c.Run(ctx, path, "config", "--local", "--replace-all", pair[0], pair[1]); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -297,9 +309,30 @@ func (c *Client) RefExists(ctx context.Context, path, ref string) (bool, error) 
 }
 
 func (c *Client) DefaultBase(ctx context.Context, path, remote string) (string, error) {
-	b, err := c.Run(ctx, path, "symbolic-ref", "refs/remotes/"+remote+"/HEAD")
-	if err != nil {
-		return "", domain.E("conflict", "remote default branch is unresolved; provide --base")
+	if err := domain.ValidateRemoteName(remote); err != nil {
+		return "", err
 	}
-	return strings.TrimSpace(string(b)), nil
+	alias := "refs/remotes/" + remote + "/HEAD"
+	b, err := c.Run(ctx, path, "symbolic-ref", "--quiet", alias)
+	if err == nil {
+		return strings.TrimSpace(string(b)), nil
+	}
+	names, symbolic, inventoryErr := c.refInventory(ctx, path)
+	if inventoryErr != nil {
+		return "", inventoryErr
+	}
+	// Lookup stays read-only: conservatively recognize a suppressed alias from
+	// exact stored names without probing the filesystem during plan/inspection.
+	if remote == "origin" && defaultAliasConflicts(names, symbolic, alias, false) {
+		// A bare clone retains the remote default in its own HEAD. Use that
+		// exact tracking ref when its name prevents creating origin/HEAD.
+		b, err := c.Run(ctx, path, "symbolic-ref", "--quiet", "HEAD")
+		if err == nil && strings.HasPrefix(strings.TrimSpace(string(b)), "refs/heads/") {
+			ref := "refs/remotes/origin/" + strings.TrimPrefix(strings.TrimSpace(string(b)), "refs/heads/")
+			if err := c.verifyFetchedRefs(ctx, path, []string{ref}); err == nil {
+				return ref, nil
+			}
+		}
+	}
+	return "", domain.E("conflict", "remote default branch is unresolved; provide --base")
 }

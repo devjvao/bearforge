@@ -118,6 +118,68 @@ func TestClonePreservesCaseDistinctRefs(t *testing.T) {
 	}
 }
 
+func TestFreshClonePreservesBranchesOccupyingOriginHead(t *testing.T) {
+	for _, branch := range []string{"head", "HEAD", "HEAD/child"} {
+		t.Run(branch, func(t *testing.T) {
+			c, remote, dest, want := packedRemote(t, "refs/heads/"+branch)
+			main, err := c.Resolve(t.Context(), remote, "refs/heads/main")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.CloneWithFormat(t.Context(), remote, dest, "files"); err != nil {
+				t.Fatal(err)
+			}
+			got := exactRefs(t, c, dest)
+			if got["refs/heads/"+branch] != want["refs/heads/"+branch] || got["refs/remotes/origin/"+branch] != want["refs/heads/"+branch] {
+				t.Errorf("initialization replaced a real branch with synthetic origin/HEAD: %v", got)
+			}
+			if got["refs/remotes/origin/main"] != main {
+				t.Error("initialization changed the default tracking branch")
+			}
+			merge, err := c.Config(t.Context(), dest, "branch."+branch+".merge")
+			if err != nil || merge != "refs/heads/"+branch {
+				t.Errorf("literal branch upstream = %q, %v", merge, err)
+			}
+			base, err := c.DefaultBase(t.Context(), dest, "origin")
+			if err != nil || base != "refs/remotes/origin/main" {
+				t.Errorf("default base = %q, %v; want exact default tracking branch", base, err)
+			}
+			if err := c.Fetch(t.Context(), dest); err != nil {
+				t.Errorf("fresh clone left a synthetic alias blocking later fetch: %v", err)
+			}
+		})
+	}
+}
+
+func TestFreshCloneKeepsUnoccupiedOriginHeadAlias(t *testing.T) {
+	c, bare, _ := fixture(t)
+	target, err := c.Run(t.Context(), bare, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
+	if err != nil || strings.TrimSpace(string(target)) != "refs/remotes/origin/main" {
+		t.Fatalf("ordinary clone default alias = %q, %v", target, err)
+	}
+}
+
+func TestFreshReftableClonePreservesLiteralHeadBranch(t *testing.T) {
+	c, remote, dest, want := packedRemote(t, "refs/heads/HEAD")
+	supported, err := c.probeReferenceFormat(t.Context(), filepath.Dir(dest), "reftable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !supported {
+		t.Skip("installed Git does not support reftable")
+	}
+	if err := c.CloneWithFormat(t.Context(), remote, dest, "reftable"); err != nil {
+		t.Fatal(err)
+	}
+	got := exactRefs(t, c, dest)
+	if got["refs/heads/HEAD"] != want["refs/heads/HEAD"] || got["refs/remotes/origin/HEAD"] != want["refs/heads/HEAD"] {
+		t.Fatalf("reftable initialization replaced literal HEAD ref: %v", got)
+	}
+	if err := c.Fetch(t.Context(), dest); err != nil {
+		t.Errorf("literal HEAD ref blocked subsequent reftable fetch: %v", err)
+	}
+}
+
 func TestPlanRefusesExactPrefixBeforeClone(t *testing.T) {
 	c, remote, dest, _ := packedRemote(t, "refs/heads/prefix", "refs/heads/prefix/child")
 	if _, err := c.PlanClone(t.Context(), remote, dest, "auto"); err == nil || !strings.Contains(err.Error(), "prefix") {
