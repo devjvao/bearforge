@@ -101,6 +101,14 @@ func NormalizeLoginRequest(r LoginRequest) (LoginRequest, error) {
 			r.Provider = "bitbucket-server"
 		}
 	}
+	if r.Provider == "bitbucket-server" {
+		if r.OAuth.Scope == "" {
+			r.OAuth.Scope = "REPO_READ"
+		}
+		if r.OAuth.Scope != "REPO_READ" && r.OAuth.Scope != "PUBLIC_REPOS" {
+			return r, errors.New("Bitbucket Server OAuth scope must be REPO_READ or PUBLIC_REPOS")
+		}
+	}
 	if r.APIURL == "" {
 		switch r.Provider {
 		case "github":

@@ -40,7 +40,7 @@ func (m *Manager) Login(ctx context.Context, r LoginRequest, h LoginHooks) (Conn
 		if h.Notify != nil {
 			h.Notify("Token setup: " + managementURL(c) + "; allow repository read, discovery, and pull-request read for the selected repositories. Organization/SSO approval may also be required.")
 		}
-		if m.browser != nil {
+		if m.browser != nil && !r.NoBrowser {
 			_ = m.browser.Open(ctx, managementURL(c))
 		}
 		if h.ReadSecret == nil {

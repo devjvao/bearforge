@@ -234,6 +234,9 @@ func (m *Manager) authorizationCode(ctx context.Context, r LoginRequest, o OAuth
 	q := authorize.Query()
 	q.Set("client_id", o.ClientID)
 	q.Set("response_type", "code")
+	if r.Provider == "bitbucket-server" {
+		q.Set("scope", o.Scope)
+	}
 	q.Set("redirect_uri", callback.String())
 	q.Set("state", state)
 	q.Set("code_challenge", base64.RawURLEncoding.EncodeToString(sum[:]))

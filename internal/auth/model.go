@@ -116,8 +116,10 @@ type Connection struct {
 type LoginRequest struct {
 	Name, Provider, Host, APIURL, GitURL, Method, Username string
 	OAuth                                                  OAuthConfig
+	// NoBrowser suppresses token setup pages; explicitly selected browser OAuth still opens.
+	NoBrowser bool
 }
-type OAuthConfig struct{ ClientID, ClientSecret, RedirectURI, AuthorizeURL, TokenURL, DeviceURL string }
+type OAuthConfig struct{ ClientID, ClientSecret, RedirectURI, AuthorizeURL, TokenURL, DeviceURL, Scope string }
 
 func (OAuthConfig) String() string   { return "[OAuth configuration]" }
 func (OAuthConfig) GoString() string { return "[OAuth configuration]" }

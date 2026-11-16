@@ -208,3 +208,58 @@ func TestRefreshUsesProviderClientAuthenticationScheme(t *testing.T) {
 		})
 	}
 }
+
+func TestServerAuthorizationRequestsReadScope(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			fmt.Fprint(w, `{"access_token":"server-token","expires_in":3600}`)
+			return
+		}
+		fmt.Fprint(w, `{"values":[],"isLastPage":true}`)
+	}))
+	defer srv.Close()
+	opened := false
+	wantScope := "REPO_READ"
+	m := NewManager(Options{
+		RegistryPath: filepath.Join(t.TempDir(), "connections.json"),
+		Secrets:      &memorySecrets{values: map[string]string{}}, HTTPClient: srv.Client(),
+		Browser: browserFunc(func(ctx context.Context, raw string) error {
+			opened = true
+			u, err := url.Parse(raw)
+			if err != nil {
+				return err
+			}
+			if got := u.Query().Get("scope"); got != wantScope {
+				t.Errorf("scope = %q, want %s", got, wantScope)
+			}
+			callback, err := url.Parse(u.Query().Get("redirect_uri"))
+			if err != nil {
+				return err
+			}
+			q := callback.Query()
+			q.Set("code", "server-code")
+			q.Set("state", u.Query().Get("state"))
+			callback.RawQuery = q.Encode()
+			response, err := http.Get(callback.String())
+			if err == nil {
+				response.Body.Close()
+			}
+			return err
+		}),
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	request := LoginRequest{Name: "server", Provider: "bitbucket-server", Host: srv.URL, APIURL: srv.URL, Method: MethodBrowser, NoBrowser: true, OAuth: OAuthConfig{ClientID: "id", ClientSecret: "secret", RedirectURI: "http://127.0.0.1:0/callback", AuthorizeURL: srv.URL + "/authorize", TokenURL: srv.URL + "/token"}}
+	_, err := m.Login(ctx, request, LoginHooks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opened {
+		t.Fatal("explicit browser authorization did not open browser")
+	}
+	request.OAuth.Scope = "PUBLIC_REPOS"
+	wantScope = "PUBLIC_REPOS"
+	if _, err = m.Login(ctx, request, LoginHooks{}); err != nil {
+		t.Fatal(err)
+	}
+}

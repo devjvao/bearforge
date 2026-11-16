@@ -312,3 +312,36 @@ func TestRejectedLoginDoesNotSaveConnection(t *testing.T) {
 		})
 	}
 }
+
+func TestTokenLoginBrowserPolicy(t *testing.T) {
+	for _, noBrowser := range []bool{false, true} {
+		t.Run(fmt.Sprint(noBrowser), func(t *testing.T) {
+			m, _, srv := fixture(t, "github")
+			opened := 0
+			m.browser = browserFunc(func(context.Context, string) error { opened++; return nil })
+			_, err := m.Login(context.Background(), LoginRequest{Name: "work", Provider: "github", Host: srv.URL, APIURL: srv.URL, Method: MethodToken, NoBrowser: noBrowser}, LoginHooks{ReadSecret: func(context.Context, string) (string, error) { return "token", nil }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := 1
+			if noBrowser {
+				want = 0
+			}
+			if opened != want {
+				t.Fatalf("browser opened %d times, want %d", opened, want)
+			}
+		})
+	}
+}
+
+func TestServerOAuthScopeRejectsWritePermissions(t *testing.T) {
+	for _, scope := range []string{"REPO_WRITE", "REPO_ADMIN", "PROJECT_ADMIN", "ACCOUNT_WRITE", "ADMIN_WRITE", "SYSTEM_ADMIN", "REPO_READ REPO_WRITE"} {
+		if _, err := NormalizeLoginRequest(LoginRequest{Provider: "bitbucket-server", Host: "https://bb.example/context", OAuth: OAuthConfig{Scope: scope}}); err == nil {
+			t.Errorf("accepted scope %q", scope)
+		}
+	}
+	request, err := NormalizeLoginRequest(LoginRequest{Provider: "bitbucket-server", Host: "https://bb.example/context", OAuth: OAuthConfig{Scope: "PUBLIC_REPOS"}})
+	if err != nil || request.OAuth.Scope != "PUBLIC_REPOS" {
+		t.Fatalf("narrower scope rejected: %v", err)
+	}
+}
