@@ -14,7 +14,7 @@ jobs:
       contents: read
   release:
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 30
     permissions:
       contents: write
@@ -48,6 +48,13 @@ jobs:
         run: |
           go mod download
           go mod verify
+      - name: Record native Keychain build toolchain
+        run: |
+          unset DEVELOPER_DIR SDKROOT
+          xcode-select --print-path
+          /usr/bin/clang --version
+          xcrun --sdk macosx --show-sdk-version
+          xcrun --sdk macosx --show-sdk-path
       - name: Build reproducible archives, SBOMs and checksums
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -64,7 +71,7 @@ jobs:
             --certificate-identity "$SIGNING_IDENTITY" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             dist/checksums.txt
-          (cd dist && sha256sum --check checksums.txt)
+          (cd dist && shasum -a 256 -c checksums.txt)
       - name: Attest build provenance for the checksummed artifacts
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
