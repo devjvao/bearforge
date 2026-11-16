@@ -8,6 +8,8 @@ type RepositorySource struct {
 
 // RemoteRepository contains nonsecret provider identity and validated clone URLs.
 // ID is stable within Provider, Host, and APIURL; FullName is owner/project/name.
+// An empty DefaultBranch explicitly means unknown; providers need not expose it
+// in repository-list responses. Callers must not infer a branch name from it.
 type RemoteRepository struct {
 	Provider, Host, APIURL, ID, Namespace, Name, FullName string
 	Description, DefaultBranch, HTTPSURL, SSHURL          string

@@ -66,6 +66,32 @@ func TestRepositoryDiscoveryServerContextAndPort(t *testing.T) {
 	}
 }
 
+func TestRepositoryDiscoveryServerFiltersProjectsWhenQueryIgnored(t *testing.T) {
+	calls := 0
+	c, q, _ := testServer(t, "bitbucket-server", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Path != "/company/rest/api/latest/repos" || r.URL.Query().Get("projectkey") != "team" {
+			t.Errorf("request %s", r.URL)
+		}
+		// Older Server releases ignore projectkey and return all readable projects.
+		if calls == 1 {
+			fmt.Fprint(w, `{"values":[{"id":1,"slug":"other","project":{"key":"OTHER"}}],"isLastPage":false,"nextPageStart":17}`)
+			return
+		}
+		if calls != 2 || r.URL.Query().Get("start") != "17" {
+			t.Fatalf("unexpected pagination %s", r.URL)
+		}
+		fmt.Fprint(w, `{"values":[{"id":2,"slug":"api","project":{"key":"TEAM"},"links":{"clone":[{"name":"http","href":"https://git.example.com/company/scm/team/api.git"}]}},{"id":3,"slug":"tools","project":{"key":"THIRD"}}],"isLastPage":true}`)
+	})
+	repos, err := c.ListRepositories(context.Background(), domain.RepositorySource{Provider: q.Provider, Host: q.Host, APIURL: q.APIURL + "/company/rest/api/latest", Scope: "team"})
+	if err != nil || len(repos) != 1 || repos[0].ID != "2" || repos[0].FullName != "TEAM/api" || calls != 2 {
+		t.Fatalf("repositories %#v err=%v calls=%d", repos, err, calls)
+	}
+	if repos[0].DefaultBranch != "" {
+		t.Fatalf("missing default branch must remain unknown: %q", repos[0].DefaultBranch)
+	}
+}
+
 func TestRepositoryDiscoveryRejectsIncompleteAndUnsafePages(t *testing.T) {
 	for _, test := range []struct{ name, body string }{
 		{"foreign origin", `{"values":[],"next":"https://attacker.example/repositories/team?page=2"}`},

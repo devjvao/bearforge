@@ -74,6 +74,11 @@ func (c *Client) ListRepositories(ctx context.Context, source domain.RepositoryS
 		}
 		namespace, name, _ := strings.Cut(full, "/")
 		if s.Scope != "" && !strings.EqualFold(namespace, s.Scope) {
+			// Older Server versions ignore projectkey on /repos. Continue
+			// consuming every page and apply the selected project locally.
+			if s.Provider == "bitbucket-server" {
+				return nil
+			}
 			return domain.E("provider_failed", "Bitbucket returned a repository outside the selected scope")
 		}
 		var https, ssh string
