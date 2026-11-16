@@ -180,6 +180,13 @@ func (m dashboardModel) request(workspace string) (tea.Model, tea.Cmd) {
 	return m, m.readCommand()
 }
 
+// A completed newer operation owns the results toggle and recovery details.
+func (m *dashboardModel) discardImportResults() {
+	if m.importRun != nil && m.importRun.phase == importResults {
+		m.importRun, m.showImport = nil, false
+	}
+}
+
 func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.stopping {
 		switch v := msg.(type) {
@@ -201,9 +208,19 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateImport(msg)
 	case dashboardPullRequestsMsg:
 		return m.updatePullRequests(v)
-	case dashboardWorkspacePreviewMsg, dashboardWorkspaceProgressMsg, dashboardWorkspaceDoneMsg:
+	case dashboardWorkspaceDoneMsg:
+		if m.workspaceRun != nil && v.id == m.workspaceID && m.workspaceRun.phase == workspaceExecuting {
+			m.discardImportResults()
+		}
+		return m.updateWorkspace(v)
+	case dashboardWorkspacePreviewMsg, dashboardWorkspaceProgressMsg:
 		return m.updateWorkspace(msg)
-	case dashboardChoicesMsg, dashboardAddPreviewMsg, dashboardAddProgressMsg, dashboardAddedMsg:
+	case dashboardAddedMsg:
+		if m.addRun != nil && v.id == m.addID && m.addRun.phase == addExecuting {
+			m.discardImportResults()
+		}
+		return m.updateAdd(v)
+	case dashboardChoicesMsg, dashboardAddPreviewMsg, dashboardAddProgressMsg:
 		return m.updateAdd(msg)
 	case tea.PasteMsg:
 		if m.showImport && m.importRun != nil {
@@ -236,6 +253,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.syncRun == nil || !m.syncRun.running || v.id != m.syncID {
 			return m, nil
 		}
+		m.discardImportResults()
 		m.syncRun.running = false
 		m.syncRun.cancel()
 		m.syncRun.result, m.syncRun.err = v.result, v.err

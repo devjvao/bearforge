@@ -282,6 +282,7 @@ func (m dashboardModel) updateImport(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if v.id != m.importID || run.phase != importLoggingIn {
 			return m, nil
 		}
+		run.offset = 0
 		if v.signal.kind == "notice" {
 			run.notice = v.signal.text
 		} else {

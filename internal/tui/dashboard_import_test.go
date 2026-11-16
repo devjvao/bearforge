@@ -20,6 +20,107 @@ func importControl(m dashboardModel, code rune) (dashboardModel, tea.Cmd) {
 	return updated.(dashboardModel), cmd
 }
 
+func TestDashboardImportNarrowLoginResetsScrolledFormAndSignals(t *testing.T) {
+	m := importDashboard(t, dashboardImportSource{connections: func(context.Context) ([]auth.Connection, error) { return nil, nil }})
+	m.width, m.height = 36, 12
+	m, cmd := dashboardKey(m, 'i', "i")
+	updated, _ := m.Update(cmd())
+	m = updated.(dashboardModel)
+	m, _ = dashboardKey(m, ' ', " ") // Bitbucket provider.
+	for range 5 {
+		m, _ = dashboardKey(m, tea.KeyTab, "")
+	}
+	m, _ = dashboardKey(m, 'a', "account@example.invalid")
+	if m.importRun.offset == 0 {
+		t.Fatal("last login field did not scroll the narrow form")
+	}
+	m, _ = dashboardKey(m, tea.KeyEnter, "")
+	if m.importRun.offset != 0 || !strings.Contains(m.View().Content, "Shared login is running") {
+		t.Fatal("login retained the final form field's scroll offset")
+	}
+	for _, tc := range []struct {
+		signal  dashboardImportSignal
+		visible string
+	}{
+		{dashboardImportSignal{kind: "method", methods: []string{auth.MethodToken}}, "unavailable"},
+		{dashboardImportSignal{kind: "secret", text: "Token"}, "Token:"},
+		{dashboardImportSignal{kind: "notice", text: "Enter device code 1234"}, "1234"},
+	} {
+		m.importRun.offset = 20 // Scroll the preceding prompt before replacement.
+		updated, _ = m.Update(dashboardImportSignalMsg{id: m.importID, signal: tc.signal})
+		m = updated.(dashboardModel)
+		if m.importRun.offset != 0 || !strings.Contains(m.View().Content, tc.visible) {
+			t.Fatalf("new %s signal remained outside the viewport", tc.signal.kind)
+		}
+	}
+}
+
+func TestDashboardImportResultsYieldToNewerActions(t *testing.T) {
+	retainImport := func(m dashboardModel) dashboardModel {
+		m.importRun = &dashboardImport{phase: importResults, result: app.Result{OperationID: "older-import"}}
+		return m
+	}
+	t.Run("stale completion", func(t *testing.T) {
+		m := retainImport(importDashboard(t, dashboardImportSource{}))
+		for _, message := range []tea.Msg{dashboardAddedMsg{id: m.addID}, dashboardWorkspaceDoneMsg{id: m.workspaceID}, dashboardSyncedMsg{id: m.syncID}} {
+			updated, _ := m.Update(message)
+			m = updated.(dashboardModel)
+			if m.importRun == nil {
+				t.Fatal("stale unrelated completion discarded current import recovery details")
+			}
+		}
+	})
+	t.Run("add", func(t *testing.T) {
+		m := retainImport(addDashboard(t, func(_ context.Context, req app.AddRequest, _ func(app.Event)) (app.Result, error) {
+			return addPreview(req), nil
+		}))
+		m = reviewAdd(t, selectAddRepositories(t, m))
+		m, _ = dashboardKey(m, 'y', "y")
+		updated, refresh := m.Update(dashboardAddedMsg{id: m.addID, result: app.Result{OperationID: "newer-add"}})
+		updated, _ = updated.(dashboardModel).Update(refresh())
+		m = updated.(dashboardModel)
+		m, _ = dashboardKey(m, tea.KeyEsc, "")
+		m, _ = dashboardKey(m, 'v', "v")
+		if !m.showAdd || m.showImport {
+			t.Fatal("v reopened old import instead of newer add results")
+		}
+	})
+	t.Run("workspace", func(t *testing.T) {
+		m := retainImport(workspaceDashboard(t, workspaceActionSource{remove: func(_ context.Context, req app.RemoveRequest, _ func(app.Event)) (app.Result, error) {
+			result := workspacePreview(req.Workspace, "api")
+			result.Items = result.Items[:1]
+			return result, nil
+		}}))
+		m, cmd := dashboardKey(m, 'd', "d")
+		updated, _ := m.Update(cmd())
+		m = updated.(dashboardModel)
+		m, _ = dashboardKey(m, 'y', "y")
+		updated, refresh := m.Update(dashboardWorkspaceDoneMsg{id: m.workspaceID, result: app.Result{OperationID: "newer-workspace"}})
+		updated, _ = updated.(dashboardModel).Update(refresh())
+		m = updated.(dashboardModel)
+		m, _ = dashboardKey(m, tea.KeyEsc, "")
+		m, _ = dashboardKey(m, 'v', "v")
+		if !m.showWorkspace || m.showImport {
+			t.Fatal("v reopened old import instead of newer workspace results")
+		}
+	})
+	t.Run("sync", func(t *testing.T) {
+		m := retainImport(syncDashboard(t, func(context.Context, []string, func(app.Event)) (app.Result, error) { return app.Result{}, nil }))
+		m, _ = dashboardKey(m, 's', "s")
+		updated, refresh := m.Update(dashboardSyncedMsg{id: m.syncID, result: app.Result{OperationID: "newer-sync"}})
+		updated, _ = updated.(dashboardModel).Update(refresh())
+		m = updated.(dashboardModel)
+		m, _ = dashboardKey(m, 'v', "v") // Hide the current sync results.
+		if m.showSync || m.showImport {
+			t.Fatal("v reopened old import instead of hiding current sync results")
+		}
+		m, _ = dashboardKey(m, 'v', "v") // Restore them.
+		if !m.showSync || m.showImport {
+			t.Fatal("v reopened old import instead of newer sync results")
+		}
+	})
+}
+
 func TestDashboardImportSharedLoginHooksAndHiddenToken(t *testing.T) {
 	for _, provider := range []string{"github", "bitbucket"} {
 		t.Run(provider, func(t *testing.T) {

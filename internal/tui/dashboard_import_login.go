@@ -28,6 +28,7 @@ func importAsk(ctx context.Context, signals chan<- dashboardImportSignal, signal
 func (m dashboardModel) startImportLogin() (tea.Model, tea.Cmd) {
 	run := m.importRun
 	run.phase = importLoggingIn
+	run.offset = 0
 	run.err = nil
 	run.notice = ""
 	run.secret = ""
