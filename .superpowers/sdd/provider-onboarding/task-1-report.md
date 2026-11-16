@@ -57,3 +57,47 @@ No real remote account, credentials, global configuration changes, root-checkout
 ## Owned files
 
 `internal/gitcli/{client.go,ref_storage.go,ref_storage_test.go}`; `internal/app/{repo.go,service.go,repo_ref_format_test.go}`; `internal/operation/{store.go,ref_format_test.go}`; `internal/cli/{commands.go,result_output.go,repo_inspection.go,repo_ref_format_test.go}`; this report. Root-owned design/plan and other agents' auth/provider/discovery changes are excluded.
+
+## Fix round 1/5: symbolic destinations and configured tag selection
+
+Both Important review findings were verified and addressed. Read the fix-loop and receiving-code-review guidance before the round. Only `internal/gitcli/ref_storage.go`, `ref_storage_test.go`, and this report changed; shared `client.go`, auth files, and auth tests were preserved.
+
+### Symbolic refs
+
+Ref inventory now retains symbolic names and their targets instead of excluding them. Preflight protects symbolic destinations against both exact-name overlap (all backends) and case aliases (case-insensitive files storage). Symbolic names also participate in component/prefix collision checks. Required fetched branch identities must be direct refs, so a symbolic alias cannot satisfy exact-ref verification.
+
+Covering regression: `TestFetchRefusesWritesThroughSymbolicRefs` in `internal/gitcli/ref_storage_test.go`. It creates a linked worktree, retains `origin/HEAD`, adds a distinct remote commit under `head` and exact `HEAD`, requires refusal directly from `fetchRefPlan` before transfer, then compares the complete ref/HEAD/reflog snapshot and linked tracked content around `Fetch`.
+
+RED command: `go test ./internal/gitcli -run TestFetchRefusesWritesThroughSymbolicRefs -count=1 -v`.
+
+Observed output before the fix:
+
+```text
+head: preflight did not protect symbolic destination: <nil>
+HEAD: preflight did not protect symbolic destination: <nil>
+FAIL bearforge/internal/gitcli 4.430s
+```
+
+The old Fetch reached its post-check and reported missing exact tracking names. This particular fixture did not show a changed final snapshot, but the RED assertion proved preflight had allowed the symbolic destination through; the amended test enforces refusal before any fetch command.
+
+GREEN refusal now names both destination and retained symbolic ref, e.g. `fetch destination "refs/remotes/origin/head" overlaps retained symbolic ref "refs/remotes/origin/HEAD"; reconcile remote names before syncing`.
+
+### Tag selection
+
+Separated potential writes from required fetched identities. With normal auto-follow, advertised tags remain in collision checks but are not all required to exist afterward. `remote.NAME.tagOpt=--no-tags` excludes tags from both sets; `--tags` includes all advertised tags in required verification. The actual fetch command/configuration is unchanged.
+
+Covering regressions: `TestFetchHonorsTagSelection` tests no-tags, auto-follow of a tag outside fetched branch history, normal reachable-tag auto-follow, and explicit all-tags fetching of the otherwise unreachable tag. `TestFetchNoTagsIgnoresUnselectedTagCollisions` confirms no-tags permits an unselected differently cased remote tag while preserving the retained local tag and ref/log snapshot.
+
+RED command: `go test ./internal/gitcli -run 'TestFetchRefusesWritesThroughSymbolicRefs|TestFetchHonorsTagSelection' -count=1 -v`.
+
+The two original tag-selection cases failed with `fetch did not retain exact ref "refs/tags/intentionally-unfetched"`, despite successfully advancing the tracking branch and correctly not fetching the tag (overall FAIL, 9.032s).
+
+GREEN command: the same focused command passed after the fix (`ok bearforge/internal/gitcli 9.095s`).
+
+Final expanded package command: `go test ./internal/gitcli -count=1`.
+
+```text
+ok bearforge/internal/gitcli 50.907s
+```
+
+gofmt and `git diff --check` on the two changed Go files passed. No broad whole-project suite was run during ongoing integrations. The already documented newer-Git migration and Git 2.40 capability-fallback matrix gaps remain unchanged.

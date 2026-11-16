@@ -144,19 +144,29 @@ func (c *Client) advertised(ctx context.Context, dir, remote, remoteName string)
 }
 
 func (c *Client) refNames(ctx context.Context, path string) ([]string, error) {
+	names, _, err := c.refInventory(ctx, path)
+	return names, err
+}
+
+// Symbolic refs occupy destination names too. In particular, fetching through
+// origin/HEAD can dereference it and update an entirely different retained ref.
+func (c *Client) refInventory(ctx context.Context, path string) ([]string, map[string]string, error) {
 	b, err := c.Run(ctx, path, "for-each-ref", "--format=%(refname)%09%(symref)")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var names []string
+	symbolic := map[string]string{}
 	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
 		name, target, _ := strings.Cut(line, "\t")
-		// The default remote HEAD alias is managed separately from branch refs.
-		if name != "" && target == "" {
+		if name != "" {
 			names = append(names, name)
+			if target != "" {
+				symbolic[name] = target
+			}
 		}
 	}
-	return names, nil
+	return names, symbolic, nil
 }
 
 func (c *Client) probeReftable(ctx context.Context, parent string) error {
@@ -284,28 +294,65 @@ func (c *Client) fetchRefPlan(ctx context.Context, path string) ([]string, error
 	if err != nil {
 		return nil, err
 	}
-	retained, err := c.refNames(ctx, path)
+	retained, symbolic, err := c.refInventory(ctx, path)
 	if err != nil {
 		return nil, err
 	}
-	var expected []string
+	var expected, potential []string
 	for _, remote := range strings.Fields(string(b)) {
 		names, err := c.advertised(ctx, path, remote, remote)
 		if err != nil {
 			return nil, err
 		}
-		expected = append(expected, names...)
+		tagOpt, err := c.Config(ctx, path, "remote."+remote+".tagOpt")
+		if err != nil {
+			return nil, err
+		}
+		for _, name := range names {
+			if strings.HasPrefix(name, "refs/tags/") {
+				if tagOpt == "--no-tags" {
+					continue
+				}
+				// Auto-follow may write these tags, so keep them in collision
+				// checks, but only --tags promises to fetch every advertised tag.
+				potential = append(potential, name)
+				if tagOpt == "--tags" {
+					expected = append(expected, name)
+				}
+			} else {
+				potential = append(potential, name)
+				expected = append(expected, name)
+			}
+		}
 	}
 	format, err := c.ReferenceFormat(ctx, path)
 	if err != nil {
 		return nil, err
 	}
+	sensitive := true
 	if format == "files" {
-		sensitive, err := caseSensitive(path)
+		sensitive, err = caseSensitive(path)
 		if err != nil {
 			return nil, err
 		}
-		if a, b := refCollision(append(retained, expected...), sensitive); a != "" {
+	}
+	protected := map[string]string{}
+	key := func(name string) string {
+		if !sensitive {
+			return strings.ToLower(name)
+		}
+		return name
+	}
+	for name := range symbolic {
+		protected[key(name)] = name
+	}
+	for _, name := range potential {
+		if symref := protected[key(name)]; symref != "" {
+			return nil, domain.E("conflict", "fetch destination %q overlaps retained symbolic ref %q; reconcile remote names before syncing", name, symref)
+		}
+	}
+	if format == "files" {
+		if a, b := refCollision(append(retained, potential...), sensitive); a != "" {
 			return nil, domain.E("conflict", "files refs cannot preserve %q and %q; reconcile remote branch/tag names or arrange a separately planned migration (linked worktrees are never automatically migrated)", a, b)
 		}
 	}
@@ -313,13 +360,15 @@ func (c *Client) fetchRefPlan(ctx context.Context, path string) ([]string, error
 }
 
 func (c *Client) verifyFetchedRefs(ctx context.Context, path string, expected []string) error {
-	names, err := c.refNames(ctx, path)
+	names, symbolic, err := c.refInventory(ctx, path)
 	if err != nil {
 		return err
 	}
 	actual := map[string]bool{}
 	for _, name := range names {
-		actual[name] = true
+		if symbolic[name] == "" {
+			actual[name] = true
+		}
 	}
 	for _, name := range expected {
 		if !actual[name] {

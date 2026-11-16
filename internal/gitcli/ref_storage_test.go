@@ -262,3 +262,142 @@ func TestVerifyFetchedRefsRejectsCaseAlias(t *testing.T) {
 		t.Fatal("missing exact ref spelling accepted")
 	}
 }
+
+func TestFetchRefusesWritesThroughSymbolicRefs(t *testing.T) {
+	for _, branch := range []string{"head", "HEAD"} {
+		t.Run(branch, func(t *testing.T) {
+			c, bare, root := fixture(t)
+			if branch == "head" {
+				sensitive, err := caseSensitive(bare)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if sensitive {
+					t.Skip("case-sensitive destination; differently spelled symrefs do not alias")
+				}
+			}
+			linked := filepath.Join(root, "linked")
+			if err := c.Add(t.Context(), bare, linked, "main", "", false); err != nil {
+				t.Fatal(err)
+			}
+			remote := filepath.Join(root, "remote")
+			tree, err := c.Run(t.Context(), remote, "rev-parse", "HEAD^{tree}")
+			if err != nil {
+				t.Fatal(err)
+			}
+			oid, err := c.Run(t.Context(), remote, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit-tree", strings.TrimSpace(string(tree)), "-m", "distinct alias target")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.Run(t.Context(), remote, "update-ref", "refs/heads/"+branch, strings.TrimSpace(string(oid))); err != nil {
+				t.Fatal(err)
+			}
+			before, err := c.refSnapshot(t.Context(), bare)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.fetchRefPlan(t.Context(), bare); err == nil || !strings.Contains(err.Error(), "symbolic") {
+				t.Errorf("preflight did not protect symbolic destination: %v", err)
+			}
+			if err := c.Fetch(t.Context(), bare); err == nil {
+				t.Error("fetch accepted write through retained symbolic ref")
+			} else {
+				t.Logf("fetch refusal: %v", err)
+			}
+			after, err := c.refSnapshot(t.Context(), bare)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if before != after {
+				t.Error("refusing alias fetch changed retained refs, HEAD, or reflogs")
+			}
+			content, err := os.ReadFile(filepath.Join(linked, "tracked.txt"))
+			if err != nil || string(content) != "original\n" {
+				t.Fatalf("linked worktree changed: %v", err)
+			}
+		})
+	}
+}
+
+func TestFetchHonorsTagSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name, tagOpt    string
+		orphan, fetched bool
+	}{
+		{"no-tags", "--no-tags", false, false},
+		{"auto-outside-history", "", true, false},
+		{"auto-reachable", "", false, true},
+		{"all-outside-history", "--tags", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, bare, root := fixture(t)
+			remote := filepath.Join(root, "remote")
+			if tc.tagOpt != "" {
+				if _, err := c.Run(t.Context(), bare, "config", "remote.origin.tagOpt", tc.tagOpt); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := c.Run(t.Context(), remote, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "new main"); err != nil {
+				t.Fatal(err)
+			}
+			head, err := c.Resolve(t.Context(), remote, "HEAD")
+			if err != nil {
+				t.Fatal(err)
+			}
+			tagOID := head
+			if tc.orphan {
+				tree, err := c.Run(t.Context(), remote, "rev-parse", "HEAD^{tree}")
+				if err != nil {
+					t.Fatal(err)
+				}
+				orphan, err := c.Run(t.Context(), remote, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit-tree", strings.TrimSpace(string(tree)), "-m", "unfetched history")
+				if err != nil {
+					t.Fatal(err)
+				}
+				tagOID = strings.TrimSpace(string(orphan))
+			}
+			if _, err := c.Run(t.Context(), remote, "update-ref", "refs/tags/selection-fixture", tagOID); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Fetch(t.Context(), bare); err != nil {
+				t.Errorf("normal fetch rejected an intentionally unfetched tag: %v", err)
+			}
+			got := exactRefs(t, c, bare)
+			if got["refs/remotes/origin/main"] != head {
+				t.Error("tracking branch did not advance")
+			}
+			if _, ok := got["refs/tags/selection-fixture"]; ok != tc.fetched {
+				t.Errorf("tag fetched = %v, want %v; fetch changed configured selection", ok, tc.fetched)
+			}
+		})
+	}
+}
+
+func TestFetchNoTagsIgnoresUnselectedTagCollisions(t *testing.T) {
+	c, bare, root := fixture(t)
+	remote := filepath.Join(root, "remote")
+	if _, err := c.Run(t.Context(), bare, "config", "remote.origin.tagOpt", "--no-tags"); err != nil {
+		t.Fatal(err)
+	}
+	oid, err := c.Resolve(t.Context(), remote, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Run(t.Context(), bare, "update-ref", "refs/tags/Release", oid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Run(t.Context(), remote, "update-ref", "refs/tags/release", oid); err != nil {
+		t.Fatal(err)
+	}
+	before, err := c.refSnapshot(t.Context(), bare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Fetch(t.Context(), bare); err != nil {
+		t.Fatal(err)
+	}
+	after, err := c.refSnapshot(t.Context(), bare)
+	if err != nil || before != after {
+		t.Fatalf("no-tags fetch altered retained tag/ref/log state: %v", err)
+	}
+}
