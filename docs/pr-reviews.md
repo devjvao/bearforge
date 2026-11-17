@@ -98,6 +98,21 @@ appear as inline comments from the configured App, with a fresh summary for
 each run. Existing inline comments are preserved. Each run reviews the full PR
 diff.
 
+After publishing its findings, the App submits a GitHub review verdict:
+
+- **Approve** when every selected item was reviewed and there are no findings,
+  warnings, or exhausted token budget.
+- **Request changes** when a complete review reports any finding, including
+  low-severity findings.
+
+The verdict is attached to the reviewed commit. Failed, incomplete, or malformed
+reviews do not submit a verdict. Neither do reviews of closed or draft PRs, runs
+with no selected files, or runs whose PR head changed before the verdict check.
+OCR's normal file exclusions still apply: approval covers its selected files.
+A clean re-review can replace the App's previous request for changes with an
+approval. Existing comments remain available. This uses the same App token and
+requires no additional secrets or permissions.
+
 ## Approving contributor test CI
 
 The repository's **Settings > Actions > General > Approval for running fork pull
@@ -133,6 +148,9 @@ Reviews consume OpenAI API tokens, including when manually requested again.
 
 The workflow pins the action to an immutable commit and the OCR CLI to `1.13.11`.
 Update both deliberately, checking the action inputs and Responses support.
+Run `node --test .github/tests/*.test.cjs` after changing the verdict logic; the
+Linux CI job runs these checks too. They execute the workflow's inline script
+against review results and simulated GitHub responses without posting reviews.
 It uses `pull_request_target` so fork PRs can be reviewed with the configured
 credentials. The action checks out trusted base content and reads PR head blobs
 through Git; keep execution of PR code in the separate CI workflow.
