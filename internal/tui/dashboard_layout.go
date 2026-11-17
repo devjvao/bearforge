@@ -19,8 +19,14 @@ func (m dashboardModel) View() tea.View {
 	if m.stopping {
 		return dashboardView([]string{m.styles.brand.Render("Bearforge"), m.styles.warn.Render("Stopping; waiting for active work to finish...")}, m.width)
 	}
+	if m.showOperations && m.operationsRun != nil {
+		return m.operationsView()
+	}
 	if m.showWorkspace && m.workspaceRun != nil {
 		return m.workspaceView()
+	}
+	if m.showImport && m.importRun != nil {
+		return m.importView()
 	}
 	if m.showAdd && m.addRun != nil {
 		return m.addView()
@@ -123,7 +129,11 @@ func (m dashboardModel) headerLines() []string {
 		header = append(header, m.styles.bad.Render("Error: "+displayText(m.loadErr.Error())+" (r retry)"))
 	}
 	if len(m.data.PendingOperations) > 0 {
-		header = append(header, m.styles.warn.Render(fmt.Sprintf("Attention: %d unfinished operation(s); bearforge operations list", len(m.data.PendingOperations))))
+		if _, ok := m.reader.source.(DashboardRecoverer); ok {
+			header = append(header, m.styles.warn.Render(fmt.Sprintf("Attention: %d unfinished | o recover", len(m.data.PendingOperations))))
+		} else {
+			header = append(header, m.styles.warn.Render(fmt.Sprintf("Attention: %d unfinished operation(s); bearforge operations list", len(m.data.PendingOperations))))
+		}
 	}
 	if len(m.data.Problems) > 0 {
 		header = append(header, m.styles.warn.Render("Warning: "+displayText(m.data.Problems[0].Message)))
@@ -136,10 +146,13 @@ func (m dashboardModel) footerLines() []string {
 		return []string{m.styles.muted.Render("Type to filter"), actionHelp("Enter apply | Esc clear | Ctrl-C cancel", m.width, m.styles)}
 	}
 	actions := actionHelp("p PRs | P refresh | n new | d repo | D workspace | PgUp/PgDn details | Ctrl-C cancel", m.width, m.styles)
-	footer := actionHelp("q quit | Tab panes | j/k move | / filter | r refresh | s sync | a add | v view", m.width, m.styles)
+	footer := actionHelp("q quit | i import | Tab panes | j/k move | / filter | r refresh | s sync | a add | v view", m.width, m.styles)
 	if m.width < 70 {
 		actions = keyboardHelp(actionBindings("p PRs", "P refresh", "PgUp/PgDn", "^C", "n new", "d/D remove"), m.width, " ", m.styles)
-		footer = actionHelp("q quit | s sync | a add | Tab panes | / filter | r refresh | v view", m.width, m.styles)
+		footer = actionHelp("q quit | i import | s sync | a add | Tab panes | / filter | r refresh | v view", m.width, m.styles)
+	}
+	if _, ok := m.reader.source.(DashboardRecoverer); ok {
+		footer = actionHelp("o operations | q quit | i import | s sync | a add | Tab panes | r refresh | v view", m.width, m.styles)
 	}
 	return []string{actions, footer}
 }

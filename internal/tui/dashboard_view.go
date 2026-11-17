@@ -156,6 +156,11 @@ func (m dashboardModel) detailContent() []string {
 			return m.appendNotices([]string{"Loading local status..."})
 		}
 		if len(m.data.Workspaces) == 0 {
+			if m.reader != nil {
+				if _, ok := m.reader.source.(DashboardImporter); ok {
+					return m.appendNotices([]string{"No workspaces registered. Press i to import repositories; n creates a workspace."})
+				}
+			}
 			return m.appendNotices([]string{"No workspaces registered. Use bearforge workspace create NAME."})
 		}
 		if len(m.data.Items) == 0 {

@@ -17,6 +17,7 @@ import (
 	"golang.org/x/term"
 
 	"bearforge/internal/app"
+	"bearforge/internal/auth"
 	"bearforge/internal/config"
 	"bearforge/internal/domain"
 	"bearforge/internal/gitcli"
@@ -37,6 +38,7 @@ type options struct {
 	activeRoot                              string
 	progressTitle                           string
 	pullRequestProvider                     app.PullRequestProvider
+	authManager                             *auth.Manager
 }
 
 func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) int {
@@ -121,6 +123,7 @@ func newRoot(o *options) *cobra.Command {
 		return nil
 	}
 	addVersionCommand(root, o)
+	addAuthCommands(root, o)
 	addCommands(root, o)
 	configureHelp(root, o)
 	return root
@@ -177,7 +180,11 @@ func (o *options) perform(ctx context.Context, needsGit, progress bool, work fun
 	service := app.New(store, git, operation.New(store))
 	service.PRs = o.pullRequestProvider
 	if service.PRs == nil {
-		service.PRs = pullrequests.NewProvider()
+		manager, authErr := o.configureServiceAuthentication(service)
+		if authErr != nil {
+			return authErr
+		}
+		service.PRs = pullrequests.NewProviderWithResolver(manager)
 	}
 	o.activeRoot = store.RootPath()
 	service.Executor = process.Runner{Input: o.in, Output: o.out, Error: o.errOut}
@@ -240,6 +247,20 @@ func (o *options) render(r app.Result) error {
 	}
 	if o.output == "json" {
 		return json.NewEncoder(o.out).Encode(r)
+	}
+	if strings.HasPrefix(r.Command, "auth.") {
+		return o.renderAuthentication(r)
+	}
+	if _, ok := r.Data.(app.ImportReassociationPlan); ok {
+		return o.renderImportReassociation(r)
+	}
+	switch r.Data.(type) {
+	case app.Operation, *app.Operation, []app.Operation:
+		return o.renderOperationResult(r)
+	}
+	switch r.Command {
+	case "repo.add", "repo.inspect", "repo.import", "operations.resume", "operations.abandon":
+		return o.renderHumanResult(r, isTerminal(o.out))
 	}
 	if r.Command == "pr.list" {
 		return o.renderPullRequests(r, isTerminal(o.out))
@@ -326,21 +347,27 @@ func (o *options) confirm(ctx context.Context, plan app.Result) error {
 	if o.noInput || o.output != "human" || !isTerminal(o.in) {
 		return domain.E("confirmation", "confirmation required; review --dry-run then use --yes")
 	}
-	for _, item := range plan.Items {
-		name := item.Repository
-		if name == "" {
-			name = item.Workspace
+	if repair, ok := plan.Data.(app.ImportReassociationPlan); ok {
+		if err := o.writeImportReassociationReview(repair); err != nil {
+			return err
 		}
-		if name == "" {
-			name = item.Check
-		}
-		if move, ok := plan.Data.(app.RepositoryPlan); ok {
-			if err := o.confirmationText("Move %s intact from %s to %s; local history is preserved and trash is never purged automatically\n", name, move.Source, move.Destination); err != nil {
-				return err
+	} else {
+		for _, item := range plan.Items {
+			name := item.Repository
+			if name == "" {
+				name = item.Workspace
 			}
-		} else {
-			if err := o.confirmationText("Apply %s to %s (%s)\n", plan.Command, name, item.Path); err != nil {
-				return err
+			if name == "" {
+				name = item.Check
+			}
+			if move, ok := plan.Data.(app.RepositoryPlan); ok {
+				if err := o.confirmationText("Move %s intact from %s to %s; local history is preserved and trash is never purged automatically\n", name, move.Source, move.Destination); err != nil {
+					return err
+				}
+			} else {
+				if err := o.confirmationText("Apply %s to %s (%s)\n", plan.Command, name, item.Path); err != nil {
+					return err
+				}
 			}
 		}
 	}

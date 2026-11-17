@@ -15,10 +15,11 @@ import (
 )
 
 type Client struct {
-	executable   string
-	Timeout      time.Duration
-	globalConfig string
-	noSystem     bool
+	executable    string
+	Timeout       time.Duration
+	globalConfig  string
+	noSystem      bool
+	commandConfig []string
 }
 type CommandError struct {
 	ExitCode  int
@@ -77,6 +78,7 @@ func (c *Client) Run(ctx context.Context, dir string, args ...string) ([]byte, e
 	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
 	defer cancel()
 	prefix := []string{"--no-pager", "--no-optional-locks"}
+	prefix = append(prefix, c.commandConfig...)
 	if dir != "" {
 		prefix = append(prefix, "-C", dir)
 	}
@@ -140,13 +142,11 @@ func isExit(err error, code int) bool {
 }
 
 func (c *Client) Clone(ctx context.Context, remote, path string) error {
-	if err := domain.ValidateURL(remote); err != nil {
+	format, err := c.PlanClone(ctx, remote, path, "auto")
+	if err != nil {
 		return err
 	}
-	if _, err := c.Run(ctx, "", "clone", "--bare", "--no-local", "--", remote, path); err != nil {
-		return err
-	}
-	return c.Initialize(ctx, path)
+	return c.CloneWithFormat(ctx, remote, path, format)
 }
 
 // Initialize is resumable only for a freshly cloned directory owned by a journal.
@@ -162,9 +162,17 @@ func (c *Client) Initialize(ctx context.Context, path string) error {
 	if err := c.Fetch(ctx, path); err != nil {
 		return err
 	}
-	// Empty remotes can be registered without a default branch.
-	if _, err := c.Run(ctx, path, "remote", "set-head", "origin", "-a"); err != nil && !isExit(err, 1) {
+	// The optional default alias must never replace a real tracking branch.
+	// Remote branch names such as head, HEAD, and HEAD/child are valid refs.
+	occupied, err := c.defaultAliasOccupied(ctx, path, "origin")
+	if err != nil {
 		return err
+	}
+	if !occupied {
+		// Empty remotes can be registered without a default branch.
+		if _, err := c.Run(ctx, path, "remote", "set-head", "origin", "-a"); err != nil && !isExit(err, 1) {
+			return err
+		}
 	}
 	b, err := c.Run(ctx, path, "for-each-ref", "--format=%(refname:strip=2)", "refs/heads/")
 	if err != nil {
@@ -174,8 +182,12 @@ func (c *Client) Initialize(ctx context.Context, path string) error {
 		if _, err := c.Resolve(ctx, path, "refs/remotes/origin/"+branch); err != nil {
 			continue
 		}
-		if _, err := c.Run(ctx, path, "branch", "--set-upstream-to=origin/"+branch, branch); err != nil {
-			return err
+		// Configure the literal ref name. The branch porcelain interprets HEAD
+		// as the current branch even when refs/heads/HEAD exists independently.
+		for _, pair := range [][2]string{{"branch." + branch + ".remote", "origin"}, {"branch." + branch + ".merge", "refs/heads/" + branch}} {
+			if _, err := c.Run(ctx, path, "config", "--local", "--replace-all", pair[0], pair[1]); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -201,12 +213,12 @@ func (c *Client) Config(ctx context.Context, path, key string) (string, error) {
 }
 
 func (c *Client) ValidateFetch(ctx context.Context, path string) error {
-	b, err := c.Run(ctx, path, "remote")
+	remotes, err := c.fetchRemotes(ctx, path)
 	if err != nil {
 		return err
 	}
 	keys := []string{"fetch.pruneTags"}
-	for _, remote := range strings.Fields(string(b)) {
+	for _, remote := range remotes {
 		if err := domain.ValidateRemoteName(remote); err != nil {
 			return err
 		}
@@ -240,8 +252,36 @@ func (c *Client) Fetch(ctx context.Context, path string) error {
 	if err := c.ValidateFetch(ctx, path); err != nil {
 		return err
 	}
-	_, err := c.Run(ctx, path, "-c", "fetch.parallel=1", "fetch", "--all", "--prune")
-	return err
+	expected, err := c.fetchRefPlan(ctx, path)
+	if err != nil {
+		return err
+	}
+	var verificationErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if _, err := c.Run(ctx, path, "-c", "fetch.parallel=1", "fetch", "--all", "--prune"); err != nil {
+			return err
+		}
+		// Separate advertisements are not the transfer's snapshot. Reconcile
+		// changed names with another transfer rather than requiring their union.
+		after, err := c.fetchRefPlan(ctx, path)
+		if err != nil {
+			return err
+		}
+		verificationErr = nil
+		if sameRefNames(expected, after) {
+			verificationErr = c.verifyFetchedRefs(ctx, path, after)
+			if verificationErr == nil {
+				return nil
+			}
+			// A branch can disappear for the transfer and be recreated before
+			// the second advertisement, leaving equal names but a missing ref.
+		}
+		expected = after
+	}
+	if verificationErr != nil {
+		return verificationErr
+	}
+	return domain.E("conflict", "remote ref names kept changing during fetch; preserve this directory and retry syncing after remote changes settle")
 }
 
 func (c *Client) Resolve(ctx context.Context, path, ref string) (string, error) {
@@ -285,9 +325,30 @@ func (c *Client) RefExists(ctx context.Context, path, ref string) (bool, error) 
 }
 
 func (c *Client) DefaultBase(ctx context.Context, path, remote string) (string, error) {
-	b, err := c.Run(ctx, path, "symbolic-ref", "refs/remotes/"+remote+"/HEAD")
-	if err != nil {
-		return "", domain.E("conflict", "remote default branch is unresolved; provide --base")
+	if err := domain.ValidateRemoteName(remote); err != nil {
+		return "", err
 	}
-	return strings.TrimSpace(string(b)), nil
+	alias := "refs/remotes/" + remote + "/HEAD"
+	b, err := c.Run(ctx, path, "symbolic-ref", "--quiet", alias)
+	if err == nil {
+		return strings.TrimSpace(string(b)), nil
+	}
+	names, symbolic, inventoryErr := c.refInventory(ctx, path)
+	if inventoryErr != nil {
+		return "", inventoryErr
+	}
+	// Lookup stays read-only: conservatively recognize a suppressed alias from
+	// exact stored names without probing the filesystem during plan/inspection.
+	if remote == "origin" && defaultAliasConflicts(names, symbolic, alias, false) {
+		// A bare clone retains the remote default in its own HEAD. Use that
+		// exact tracking ref when its name prevents creating origin/HEAD.
+		b, err := c.Run(ctx, path, "symbolic-ref", "--quiet", "HEAD")
+		if err == nil && strings.HasPrefix(strings.TrimSpace(string(b)), "refs/heads/") {
+			ref := "refs/remotes/origin/" + strings.TrimPrefix(strings.TrimSpace(string(b)), "refs/heads/")
+			if err := c.verifyFetchedRefs(ctx, path, []string{ref}); err == nil {
+				return ref, nil
+			}
+		}
+	}
+	return "", domain.E("conflict", "remote default branch is unresolved; provide --base")
 }

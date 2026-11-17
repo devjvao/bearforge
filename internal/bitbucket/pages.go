@@ -44,7 +44,7 @@ func lookupEndpoint(origin *url.URL, q domain.PullRequestQuery) *url.URL {
 	return &endpoint
 }
 
-func (c *Client) readPages(ctx context.Context, origin, endpoint *url.URL, q domain.PullRequestQuery, token string, host *hostState) ([]domain.PullRequest, error) {
+func (c *Client) readPages(ctx context.Context, origin, endpoint *url.URL, q domain.PullRequestQuery, token requestCredential, host *hostState) ([]domain.PullRequest, error) {
 	prs := []domain.PullRequest{}
 	seen, ids := make(map[string]bool), make(map[int]bool)
 	path := endpoint.Path

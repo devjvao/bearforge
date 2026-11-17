@@ -20,6 +20,8 @@ func TestResolveCloudRemotesAndFork(t *testing.T) {
 		"https://bitbucket.org/team_name/api.git",
 		"https://alice@bitbucket.org/team_name/api.git",
 		"ssh://git@bitbucket.org/team_name/api.git",
+		"ssh://git@ssh.bitbucket.org:22/team_name/api.git",
+		"git@ssh.bitbucket.org:team_name/api.git",
 		"git@BITBUCKET.ORG:team_name/api.git",
 	} {
 		t.Run(remote, func(t *testing.T) {

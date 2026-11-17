@@ -3,7 +3,6 @@ package bitbucket
 
 import (
 	"context"
-	"crypto/sha256"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,6 +19,7 @@ import (
 // Construct clients with NewClient and reuse them across lookups.
 type Client struct {
 	httpClient *http.Client
+	resolver   domain.CredentialResolver
 	now        func() time.Time
 	mu         sync.Mutex
 	hosts      map[string]*hostState
@@ -39,6 +39,13 @@ func NewClient() *Client {
 	}
 }
 
+// NewClientWithResolver shares saved credentials while preserving legacy defaults.
+func NewClientWithResolver(resolver domain.CredentialResolver) *Client {
+	c := NewClient()
+	c.resolver = resolver
+	return c
+}
+
 // Lookup returns a complete, bounded observation. Failures are never cached.
 func (c *Client) Lookup(ctx context.Context, q domain.PullRequestQuery, refresh bool) (domain.PullRequestObservation, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -50,11 +57,15 @@ func (c *Client) Lookup(ctx context.Context, q domain.PullRequestQuery, refresh 
 		return domain.PullRequestObservation{}, err
 	}
 	origin, _ := apiURL(q.APIURL)
-	token, err := credential(q, origin)
+	token, err := c.credentialsFor(ctx, domain.CredentialRequest{
+		Provider: q.Provider, Host: q.Host, APIURL: q.APIURL,
+		Repository: q.Repository, Connection: q.Connection, GrantID: q.GrantID,
+		TokenEnv: q.TokenEnv, AllowRefresh: true,
+	})
 	if err != nil {
 		return domain.PullRequestObservation{}, err
 	}
-	key := cacheKey{query: q, credential: sha256.Sum256([]byte(token))}
+	key := cacheKey{query: q, credential: token.cacheIdentity()}
 	if !refresh {
 		if obs, ok := c.cached(key); ok {
 			return obs, nil

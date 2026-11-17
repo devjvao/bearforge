@@ -12,6 +12,8 @@ func TestResolveInfersPublicHostsAndHonorsExplicitKinds(t *testing.T) {
 		{remote: "git@github.com:team/api.git", want: "github"},
 		{remote: "https://bitbucket.org/team/api.git", want: "bitbucket"},
 		{remote: "ssh://git@bitbucket.org/team/api.git", want: "bitbucket"},
+		{remote: "git@ssh.bitbucket.org:team/api.git", want: "bitbucket"},
+		{remote: "ssh://git@ssh.bitbucket.org:22/team/api.git", want: "bitbucket"},
 		{remote: "git@company.example.com:TEAM/api.git", kind: "bitbucket-server", want: "bitbucket-server"},
 		{remote: "git@company.example.com:team/api.git", kind: "github", want: "github"},
 		{remote: "git@company.example.com:team/api.git", kind: "bitbucket", want: "bitbucket"},

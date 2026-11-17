@@ -30,7 +30,10 @@ func terminalDocument(text string, width int) string {
 		width = 80
 	}
 	width = min(width, max(1, lipgloss.Width(text)))
-	lines := strings.Split(ansi.Wrap(text, width, ""), "\n")
+	// Soft wrapping can leave a line wider than the limit at punctuation.
+	// Hard-wrap that remainder before the viewport can clip meaningful data.
+	wrapped := ansi.Hardwrap(ansi.Wrap(text, width, ""), width, true)
+	lines := strings.Split(wrapped, "\n")
 	component := viewport.New(viewport.WithWidth(width), viewport.WithHeight(len(lines)))
 	component.FillHeight = false
 	component.SetContent(strings.Join(lines, "\n"))

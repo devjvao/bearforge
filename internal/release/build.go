@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -47,15 +48,24 @@ type Manifest struct {
 }
 
 func buildEnvironment(source, goos, goarch string) []string {
-	blocked := map[string]bool{"GOOS": true, "GOARCH": true, "CGO_ENABLED": true, "GOTOOLCHAIN": true, "GOFLAGS": true, "GOEXPERIMENT": true, "GOENV": true, "GOWORK": true, "GOAMD64": true, "GOARM64": true, "GO111MODULE": true, "GOROOT": true, "GODEBUG": true, "PWD": true}
+	blocked := map[string]bool{"GOOS": true, "GOARCH": true, "GOTOOLCHAIN": true, "GOFLAGS": true, "GOEXPERIMENT": true, "GOENV": true, "GOWORK": true, "GOAMD64": true, "GOARM64": true, "GO111MODULE": true, "GOROOT": true, "GODEBUG": true, "PWD": true,
+		"CC": true, "CXX": true, "FC": true, "PKG_CONFIG": true, "SDKROOT": true, "DEVELOPER_DIR": true, "MACOSX_DEPLOYMENT_TARGET": true, "IPHONEOS_DEPLOYMENT_TARGET": true, "CPATH": true, "C_INCLUDE_PATH": true, "CPLUS_INCLUDE_PATH": true, "OBJC_INCLUDE_PATH": true, "LIBRARY_PATH": true}
 	result := []string{}
 	for _, entry := range os.Environ() {
 		key, _, _ := strings.Cut(entry, "=")
-		if !blocked[strings.ToUpper(key)] {
+		key = strings.ToUpper(key)
+		if !blocked[key] && !strings.HasPrefix(key, "CGO_") {
 			result = append(result, entry)
 		}
 	}
-	return append(result, "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED=0", "GOTOOLCHAIN=local", "GOFLAGS=", "GOEXPERIMENT=", "GOENV=off", "GOWORK=off", "GOAMD64=v1", "GOARM64=v8.0", "GO111MODULE=on", "PWD="+source)
+	cgo := "0"
+	if goos == "darwin" {
+		// Native Keychain access uses Security.framework. The Apple compiler
+		// supports both published architectures from the selected macOS SDK.
+		cgo = "1"
+		result = append(result, "CC=/usr/bin/clang", "CXX=/usr/bin/clang++", "CGO_CFLAGS=-O2 -g0", "CGO_CPPFLAGS=", "CGO_CXXFLAGS=-O2 -g0", "CGO_FFLAGS=-O2 -g0", "CGO_LDFLAGS=")
+	}
+	return append(result, "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED="+cgo, "GOTOOLCHAIN=local", "GOFLAGS=", "GOEXPERIMENT=", "GOENV=off", "GOWORK=off", "GOAMD64=v1", "GOARM64=v8.0", "GO111MODULE=on", "PWD="+source)
 }
 
 func runBuildTool(ctx context.Context, root string, environment, argv []string) ([]byte, error) {
@@ -83,6 +93,9 @@ func Build(ctx context.Context, options Options) (Manifest, error) {
 		goos, arch, ok := strings.Cut(target, "/")
 		if !ok || (goos != "darwin" && goos != "linux" && goos != "windows") || (arch != "amd64" && arch != "arm64") || (i > 0 && targets[i-1] == target) {
 			return manifest, fmt.Errorf("unsupported or duplicate target %q", target)
+		}
+		if goos == "darwin" && runtime.GOOS != "darwin" {
+			return manifest, fmt.Errorf("Darwin releases require a macOS host with Apple clang and the macOS SDK for native Keychain support; use --targets to select Linux/Windows targets on this host")
 		}
 	}
 	root, err := filepath.Abs(options.Source)

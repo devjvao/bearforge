@@ -36,6 +36,7 @@ func (c *Client) Resolve(repo domain.Repository, remote, branch string) (domain.
 		Provider: kind, Host: strings.ToLower(p["host"]), APIURL: p["api_url"],
 		Repository: p["repository"], SourceRepository: p["source_repository"],
 		TokenEnv: p["token_env"], Branch: branch, State: "open",
+		Connection: p["connection"], GrantID: p["grant_id"],
 	}
 	if q.Host == "" {
 		q.Host = identity.host
@@ -120,6 +121,9 @@ func parseRemote(raw string, server bool) (remoteIdentity, error) {
 		identity.host, path = strings.ToLower(authority), coordinates
 	}
 	identity.repository = strings.TrimSuffix(path, ".git")
+	if !server && ssh && identity.host == "ssh.bitbucket.org" {
+		identity.host = "bitbucket.org"
+	}
 	if !validRemoteHost(identity.host, ssh) || !validRepository(identity.repository, server) {
 		return remoteIdentity{}, invalid
 	}

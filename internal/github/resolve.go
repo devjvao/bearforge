@@ -27,7 +27,7 @@ func (c *Client) Resolve(repo domain.Repository, remote, branch string) (domain.
 	if e, ok := remoteErr.(*domain.Error); ok && e.Code == "invalid" {
 		return domain.PullRequestQuery{}, remoteErr
 	}
-	q := domain.PullRequestQuery{Host: p["host"], APIURL: p["api_url"], Repository: p["repository"], SourceRepository: p["source_repository"], TokenEnv: p["token_env"], Branch: branch, State: "open"}
+	q := domain.PullRequestQuery{Host: p["host"], APIURL: p["api_url"], Repository: p["repository"], SourceRepository: p["source_repository"], TokenEnv: p["token_env"], Connection: p["connection"], GrantID: p["grant_id"], Branch: branch, State: "open"}
 	if q.Host == "" {
 		q.Host = remoteHost
 	}

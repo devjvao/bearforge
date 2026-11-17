@@ -20,6 +20,7 @@ func addCommands(root *cobra.Command, o *options) {
 	ops := &cobra.Command{Use: "operations", Short: "Inspect and recover interrupted operations"}
 	root.AddCommand(repo, workspace, ops)
 	addRepositoryLifecycleCommands(repo, o)
+	addRepositoryRebindCommand(repo, o)
 	command := func(parent *cobra.Command, use, short string, args cobra.PositionalArgs, git, progress bool, fn func(context.Context, *app.Service, []string) (app.Result, error)) *cobra.Command {
 		c := &cobra.Command{Use: use, Short: short, Args: args, RunE: func(cmd *cobra.Command, args []string) error {
 			return o.perform(cmd.Context(), git, progress, func(ctx context.Context, s *app.Service) (app.Result, error) { return fn(ctx, s, args) })
@@ -27,9 +28,11 @@ func addCommands(root *cobra.Command, o *options) {
 		parent.AddCommand(c)
 		return c
 	}
-	command(repo, "add NAME URL", "Register and clone a bare repository", cobra.ExactArgs(2), true, true, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
-		return s.AddRepository(ctx, a[0], a[1], o.dry)
+	var refFormat string
+	repoAdd := command(repo, "add NAME URL", "Register and clone a bare repository", cobra.ExactArgs(2), true, true, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
+		return s.AddRepositoryWithFormat(ctx, a[0], a[1], refFormat, o.dry)
 	})
+	repoAdd.Flags().StringVar(&refFormat, "ref-format", "auto", "Reference storage: auto, files, reftable")
 	command(repo, "list", "List registered repositories", cobra.NoArgs, false, false, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
 		r := app.NewResult("repo.list")
 		c, _, err := s.Store.LoadCatalog()
@@ -56,6 +59,9 @@ func addCommands(root *cobra.Command, o *options) {
 		}
 		trees, err := s.Git.Worktrees(ctx, p)
 		r.Data = trees
+		if err == nil {
+			err = addReferenceFormat(ctx, s, &r, a[0], p)
+		}
 		return r, err
 	})
 	syncFn := func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
@@ -161,7 +167,34 @@ func addCommands(root *cobra.Command, o *options) {
 		r.Data = data
 		return r, err
 	})
-	command(ops, "resume ID", "Resume an interrupted mutation", cobra.ExactArgs(1), true, true, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
+	var resumeConnection string
+	resume := command(ops, "resume ID", "Resume an interrupted mutation", cobra.ExactArgs(1), true, false, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
+		if resumeConnection != "" {
+			manager, err := o.authentication()
+			if err != nil {
+				return app.NewResult("operations.resume"), err
+			}
+			connection, err := manager.Connection(ctx, resumeConnection)
+			if err != nil {
+				return app.NewResult("operations.resume"), err
+			}
+			request := app.ImportReassociationRequest{OperationID: a[0], Connection: connection.Name, GrantID: connection.GrantID, DryRun: true}
+			plan, err := s.ReassociateImport(ctx, request)
+			plan = annotateReassociationAccount(plan, connection)
+			if err != nil || o.dry {
+				return plan, err
+			}
+			if err := o.confirm(ctx, plan); err != nil {
+				return plan, err
+			}
+			request.DryRun, request.ExpectedPlan = false, plan.PlanDigest
+			return o.operationProgress(ctx, s, func(ctx context.Context, s *app.Service) (app.Result, error) {
+				if result, err := s.ReassociateImport(ctx, request); err != nil {
+					return result, err
+				}
+				return s.Resume(ctx, a[0])
+			})
+		}
 		if o.dry {
 			r := app.NewResult("operations.resume")
 			op, err := s.Journal.Load(a[0])
@@ -169,8 +202,11 @@ func addCommands(root *cobra.Command, o *options) {
 			r.Outcome = "planned"
 			return r, err
 		}
-		return s.Resume(ctx, a[0])
+		return o.operationProgress(ctx, s, func(ctx context.Context, s *app.Service) (app.Result, error) {
+			return s.Resume(ctx, a[0])
+		})
 	})
+	resume.Flags().StringVar(&resumeConnection, "connection", "", "Review a replacement saved connection for a partial repository import before resuming")
 	command(ops, "abandon ID", "Stop recovery tracking without deleting any files", cobra.ExactArgs(1), false, false, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
 		r := app.NewResult("operations.abandon")
 		if o.dry {

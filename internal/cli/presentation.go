@@ -25,27 +25,35 @@ func (o *options) presentation(output io.Writer, terminal bool) *colorprofile.Wr
 func outcomeStyle(value string) lipgloss.Style {
 	color := "7"
 	switch value {
-	case "success", "succeeded", "clean", "synced", "registered", "created", "removed", "restored", "valid", "passed", "ok", "completed", "unchanged":
+	case "success", "succeeded", "clean", "synced", "registered", "created", "removed", "restored", "valid", "passed", "ok", "complete", "completed", "unchanged", "verified", "readable":
 		color = "2"
-	case "partial", "changes", "mapping_drift", "planned", "queued", "running", "started", "output", "retired", "warning", "needs_attention", "container_retained", "skipped", "not_run", "not run":
+	case "partial", "changes", "mapping_drift", "planned", "queued", "running", "started", "output", "retired", "warning", "needs_attention", "container_retained", "skipped", "not_run", "not run", "not checked", "offline", "rate limited":
 		color = "3"
-	case "failed", "unhealthy", "unreadable", "cancelled", "conflict", "missing", "error":
+	case "failed", "unhealthy", "unreadable", "cancelled", "conflict", "missing", "error", "rejected", "unavailable", "insufficient permission", "missing credentials", "relogin required":
 		color = "1"
 	}
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(color))
 }
 
 func (o *options) diagnostic(label, message string) error {
-	if !isTerminal(o.errOut) {
-		_, err := fmt.Fprintln(o.errOut, label, message)
-		return err
-	}
-	p := o.presentation(o.errOut, true)
 	label = repositoryListText(label)
+	lines := strings.Split(message, "\n")
+	for index, line := range lines {
+		lines[index] = repositoryListText(line)
+	}
+	terminal := isTerminal(o.errOut)
+	p := o.presentation(o.errOut, terminal)
 	if p.Profile > colorprofile.ASCII {
 		label = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("1")).Render(label)
 	}
-	_, err := fmt.Fprintln(p, terminalDocument(label+" "+repositoryListText(message), outputWidth(o.errOut)))
+	document := label + " " + lines[0]
+	if len(lines) > 1 {
+		document = label + "\n  - " + strings.Join(lines, "\n  - ")
+	}
+	if terminal {
+		document = terminalDocument(document, outputWidth(o.errOut))
+	}
+	_, err := fmt.Fprintln(p, document)
 	return err
 }
 

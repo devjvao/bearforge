@@ -2,7 +2,7 @@
 
 Production releases are created by `.github/workflows/release.yml` after a version tag is pushed. The tag must identify a commit merged into `main`. The reusable CI workflow first tests Linux/macOS/Windows on the supported Go families and runs the disposable 60-repository validation. Existing published releases are never overwritten.
 
-The release job uses exact Go 1.27.4, CGO disabled, `-trimpath`, `-mod=readonly` and `-buildvcs=false`, with version/commit/dirty metadata injected explicitly. Production source must be clean and the version must match a tag at HEAD. Archives use the commit timestamp and fixed metadata; no wall-clock build date is embedded. Workflow actions and Cosign are pinned. [Go release downloads](https://go.dev/dl/), [Sigstore signing](https://docs.sigstore.dev/cosign/signing/signing_with_blobs/) and [GitHub provenance](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations) describe the upstream tools.
+The release job runs on macOS with exact Go 1.27.4, `-trimpath`, `-mod=readonly` and `-buildvcs=false`, with version/commit/dirty metadata injected explicitly. Darwin builds enable cgo and link Apple's Security.framework for saved Keychain credentials; Linux and Windows remain pure Go cross-builds with cgo disabled. The workflow records the selected Apple clang and macOS SDK versions and paths. Production source must be clean and the version must match a tag at HEAD. Archives use the commit timestamp and fixed metadata; no wall-clock build date is embedded. Workflow actions and Cosign are pinned. [Go release downloads](https://go.dev/dl/), [Sigstore signing](https://docs.sigstore.dev/cosign/signing/signing_with_blobs/) and [GitHub provenance](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations) describe the upstream tools.
 
 ## Artifacts
 
@@ -41,14 +41,14 @@ An additional provenance check is `gh attestation verify ARCHIVE --repo devjvao/
 
 ## Local snapshot and reproducibility checks
 
-The release helper only builds files; it never creates tags, pushes, publishes or requests a production signing identity. Use a new or empty output directory; existing artifacts are never overwritten or recursively cleaned:
+The release helper only builds files; it never creates tags, pushes, publishes or requests a production signing identity. Building all six default targets requires a macOS host with Apple clang and the macOS SDK selected through `xcode-select`. Darwin release targets fail early on other hosts rather than shipping an executable without saved authentication. Use a new or empty output directory; existing artifacts are never overwritten or recursively cleaned:
 
 ```sh
 go run ./cmd/release --snapshot --version v0.2.0-snapshot --out .tmp/release-one
 go run ./cmd/release --snapshot --version v0.2.0-snapshot --out .tmp/release-two
 ```
 
-Compare both `checksums.txt` files. With identical source, toolchain, targets and inputs, they should match byte for byte. `--targets windows/amd64,linux/amd64` limits a smoke build. Snapshot mode allows dirty source or a different supported Go patch and marks both explicitly in the manifest; snapshots have no production signature bundle. Local cross-builds do not prove native behavior on another OS.
+Compare both `checksums.txt` files. With identical source, toolchain, targets and inputs, they should match byte for byte. Darwin reproducibility also requires the same Apple clang, selected SDK and runner image recorded by the build run; a matching Go version alone is insufficient. The helper fixes the compiler to `/usr/bin/clang`, controls cgo flags and discards inherited compiler/SDK overrides. On Linux or Windows, add `--targets windows/amd64,linux/amd64` to each command for a supported local smoke build. Snapshot mode allows dirty source or a different supported Go patch and marks both explicitly in the manifest; snapshots have no production signature bundle. Local cross-builds do not prove native behavior on another OS.
 
 `bearforge version --json` reports the injected version, commit, dirty state, actual Go toolchain and platform. Production rebuilds need the exact pinned Go version and clean tagged checkout. Source builds, CI and production releases use the latest stable Go release pinned in `go.mod`; older Go releases are unsupported. CI and release workflows read that version directly from `go.mod`, and the production release toolchain requirement must match it.
 

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"slices"
@@ -14,6 +15,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 
 	"bearforge/internal/app"
+	"bearforge/internal/domain"
 )
 
 // DashboardSource deliberately exposes no mutation or network operations.
@@ -117,6 +119,12 @@ type dashboardModel struct {
 	prRun           *dashboardPullRequestRun
 	prItems         map[string]app.Item
 	prErr           error
+	importID        uint64
+	importRun       *dashboardImport
+	showImport      bool
+	operationID     uint64
+	operationsRun   *dashboardOperations
+	showOperations  bool
 }
 
 func newDashboardModel(ctx context.Context, source DashboardSource, workspace string) dashboardModel {
@@ -158,6 +166,20 @@ func (m dashboardModel) readCommand() tea.Cmd {
 	}
 }
 
+// Removal can delete the manifest before its final journal update fails. Keep
+// the current selection until a background observation proves it disappeared.
+func (m dashboardModel) readAfterWorkspaceRemovalCommand() tea.Cmd {
+	return func() tea.Msg {
+		snapshot, err := m.reader.read(m.requestCtx, m.workspace)
+		var missing *domain.Error
+		if m.workspace != "" && errors.As(err, &missing) && missing.Code == "not_found" &&
+			snapshot.Root == m.data.Root && snapshot.Workspace == "" && !slices.Contains(snapshot.Workspaces, m.workspace) {
+			snapshot, err = m.reader.read(m.requestCtx, "")
+		}
+		return dashboardLoadedMsg{requestID: m.requestID, snapshot: snapshot, err: err}
+	}
+}
+
 func (m dashboardModel) request(workspace string) (tea.Model, tea.Cmd) {
 	m.invalidatePullRequests()
 	m.cancel()
@@ -177,6 +199,17 @@ func (m dashboardModel) request(workspace string) (tea.Model, tea.Cmd) {
 	return m, m.readCommand()
 }
 
+// A completed newer operation owns the results toggle and recovery details.
+func (m *dashboardModel) discardImportResults() {
+	if m.importRun != nil && m.importRun.phase == importResults {
+		m.importRun, m.showImport = nil, false
+	}
+	if m.operationsRun != nil && m.operationsRun.phase == operationsResults {
+		m.operationsRun.cancel()
+		m.operationsRun, m.showOperations = nil, false
+	}
+}
+
 func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.stopping {
 		switch v := msg.(type) {
@@ -185,7 +218,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.WindowSizeMsg:
 			m.width, m.height = max(1, v.Width), max(1, v.Height)
 		case tea.KeyPressMsg:
-			if v.String() == "ctrl+c" {
+			if v.Keystroke() == "ctrl+c" {
 				m.exitErr = context.Canceled
 			}
 		case dashboardParentCancelledMsg:
@@ -194,13 +227,31 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch v := msg.(type) {
+	case dashboardOperationLoadedMsg, dashboardOperationDoneMsg, dashboardOperationProgressMsg:
+		return m.updateOperations(msg)
+	case dashboardImportMsg, dashboardImportSignalMsg, dashboardImportProgressMsg:
+		return m.updateImport(msg)
 	case dashboardPullRequestsMsg:
 		return m.updatePullRequests(v)
-	case dashboardWorkspacePreviewMsg, dashboardWorkspaceProgressMsg, dashboardWorkspaceDoneMsg:
+	case dashboardWorkspaceDoneMsg:
+		if m.workspaceRun != nil && v.id == m.workspaceID && m.workspaceRun.phase == workspaceExecuting {
+			m.discardImportResults()
+		}
+		return m.updateWorkspace(v)
+	case dashboardWorkspacePreviewMsg, dashboardWorkspaceProgressMsg:
 		return m.updateWorkspace(msg)
-	case dashboardChoicesMsg, dashboardAddPreviewMsg, dashboardAddProgressMsg, dashboardAddedMsg:
+	case dashboardAddedMsg:
+		if m.addRun != nil && v.id == m.addID && m.addRun.phase == addExecuting {
+			m.discardImportResults()
+		}
+		return m.updateAdd(v)
+	case dashboardChoicesMsg, dashboardAddPreviewMsg, dashboardAddProgressMsg:
 		return m.updateAdd(msg)
 	case tea.PasteMsg:
+		if m.showImport && m.importRun != nil {
+			m = m.importText(v.Content)
+			return m, nil
+		}
 		if m.showWorkspace && m.workspaceRun != nil && m.workspaceRun.phase == workspaceForm {
 			m = m.workspaceText(v.Content)
 		}
@@ -227,6 +278,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.syncRun == nil || !m.syncRun.running || v.id != m.syncID {
 			return m, nil
 		}
+		m.discardImportResults()
 		m.syncRun.running = false
 		m.syncRun.cancel()
 		m.syncRun.result, m.syncRun.err = v.result, v.err
@@ -263,8 +315,14 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyPressMsg:
 		key := v.String()
-		if key == "ctrl+c" {
+		if v.Keystroke() == "ctrl+c" {
 			return m.stop(context.Canceled)
+		}
+		if m.showOperations && m.operationsRun != nil {
+			return m.operationsKey(v)
+		}
+		if m.showImport && m.importRun != nil {
+			return m.importKey(v)
 		}
 		if m.showWorkspace && m.workspaceRun != nil {
 			return m.workspaceKey(v)
@@ -283,6 +341,8 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch key {
+		case "o":
+			return m.openOperations()
 		case "q":
 			return m.stop(nil)
 		case "s":
@@ -291,6 +351,9 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "a":
 			m.invalidatePullRequests()
 			return m.openAdd()
+		case "i":
+			m.invalidatePullRequests()
+			return m.openImport()
 		case "n":
 			m.invalidatePullRequests()
 			return m.openWorkspace(workspaceCreate)
@@ -303,7 +366,11 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "p", "P":
 			return m.startPullRequests(key == "P")
 		case "v":
-			if m.workspaceRun != nil && m.workspaceRun.phase == workspaceResults {
+			if m.operationsRun != nil && m.operationsRun.phase == operationsResults {
+				m.showOperations, m.operationsRun.offset = !m.showOperations, 0
+			} else if m.importRun != nil && m.importRun.phase == importResults {
+				m.showImport, m.importRun.offset = !m.showImport, 0
+			} else if m.workspaceRun != nil && m.workspaceRun.phase == workspaceResults {
 				m.showWorkspace, m.workspaceRun.offset = !m.showWorkspace, 0
 			} else if m.addRun != nil && m.addRun.phase == addResults {
 				m.showAdd = !m.showAdd

@@ -37,7 +37,7 @@ func staticTable(p *colorprofile.Writer, headers []string, rows [][]string, show
 			if p.Profile > colorprofile.ASCII {
 				if !showHeader && column == 0 {
 					value = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6")).Render(value)
-				} else if columns[column].Title == "STATUS" || columns[column].Title == "STATE" {
+				} else if outcomeColumn(columns[column].Title) {
 					value = outcomeStyle(value).Render(value)
 				}
 			}
@@ -66,6 +66,14 @@ func staticTable(p *colorprofile.Writer, headers []string, rows [][]string, show
 		_, view, _ = strings.Cut(view, "\n")
 	}
 	return view
+}
+
+func outcomeColumn(header string) bool {
+	switch header {
+	case "STATUS", "STATE", "API", "GIT READ":
+		return true
+	}
+	return false
 }
 
 func terminalRecords(p *colorprofile.Writer, rows [][]string, width int) string {

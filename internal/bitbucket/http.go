@@ -33,7 +33,7 @@ func safeEndpoint(origin, target *url.URL, path string) bool {
 	return target.Scheme == "https" && target.User == nil && target.Fragment == "" && apiHost(origin) == apiHost(target) && target.Path == path && safePath(target) && !strings.ContainsFunc(target.String(), unicode.IsControl)
 }
 
-func (c *Client) get(ctx context.Context, origin, endpoint *url.URL, path, token string, host *hostState) ([]byte, *url.URL, error) {
+func (c *Client) get(ctx context.Context, origin, endpoint *url.URL, path string, token requestCredential, host *hostState) ([]byte, *url.URL, error) {
 	if !safeEndpoint(origin, endpoint, path) {
 		return nil, nil, domain.E("provider_failed", "Bitbucket returned unsafe pagination")
 	}
@@ -63,8 +63,8 @@ func (c *Client) get(ctx context.Context, origin, endpoint *url.URL, path, token
 		}
 		req.Header.Set("Accept", "application/json")
 		req.Header.Set("User-Agent", "bearforge")
-		if token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
+		if err := token.authorize(req); err != nil {
+			return nil, nil, err
 		}
 		response, err := client.Do(req)
 		if err != nil {
