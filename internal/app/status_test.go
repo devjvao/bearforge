@@ -194,6 +194,90 @@ type statusJournal struct{ app.Journal }
 
 func (statusJournal) List() ([]app.Operation, error) { return nil, nil }
 
+type cancellingStatusCatalog struct {
+	app.IntentStore
+	cancel context.CancelFunc
+}
+
+func (s cancellingStatusCatalog) LoadCatalog() (domain.Catalog, string, error) {
+	catalog, revision, err := s.IntentStore.LoadCatalog()
+	s.cancel()
+	return catalog, revision, err
+}
+
+func TestStatusFinalizesCancellationAfterLoadingDefinitions(t *testing.T) {
+	s, g := statusFixture("b", "a")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	s.Store = cancellingStatusCatalog{IntentStore: s.Store, cancel: cancel}
+	result, err := s.StatusWithProgress(ctx, "feature", func(app.Item) {
+		t.Error("cancelled inspection emitted a completion")
+	})
+	if !errors.Is(err, context.Canceled) || result.Outcome != "partial" {
+		t.Fatalf("cancelled status: outcome=%s, error=%v", result.Outcome, err)
+	}
+	assertCancelledStatusRows(t, result.Items)
+	select {
+	case id := <-g.started:
+		t.Fatalf("cancelled status started inspection for %s", id)
+	default:
+	}
+}
+
+func TestStatusFinalizesEmptyWorkspaceCancellationAfterLoadingDefinitions(t *testing.T) {
+	s, _ := statusFixture()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	s.Store = cancellingStatusCatalog{IntentStore: s.Store, cancel: cancel}
+	result, err := s.Status(ctx, "feature")
+	if !errors.Is(err, context.Canceled) || result.Outcome != "partial" || len(result.Items) != 0 {
+		t.Fatalf("cancelled empty status: %+v, %v", result, err)
+	}
+}
+
+func TestDashboardFinalizesCancellationFromInitialProgress(t *testing.T) {
+	s, g := statusFixture("b", "a")
+	s.Journal = statusJournal{}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var initial app.DashboardSnapshot
+	updates := 0
+	final, err := s.DashboardWithProgress(ctx, "feature", func(snapshot app.DashboardSnapshot) {
+		updates++
+		initial = snapshot
+		cancel()
+	})
+	if !errors.Is(err, context.Canceled) || updates != 1 || !final.ObservedAt.IsZero() {
+		t.Fatalf("cancelled dashboard: updates=%d, observed=%s, error=%v", updates, final.ObservedAt, err)
+	}
+	assertCancelledStatusRows(t, final.Items)
+	if len(final.Problems) != 1 || final.Problems[0].Code != "cancelled" {
+		t.Fatalf("dashboard cancellation problem missing: %+v", final.Problems)
+	}
+	for _, item := range initial.Items {
+		if item.Outcome != "inspecting" || item.Problem != nil {
+			t.Fatalf("initial snapshot changed during finalization: %+v", item)
+		}
+	}
+	select {
+	case id := <-g.started:
+		t.Fatalf("cancelled dashboard started inspection for %s", id)
+	default:
+	}
+}
+
+func assertCancelledStatusRows(t *testing.T, items []app.Item) {
+	t.Helper()
+	if len(items) != 2 || items[0].Repository != "a" || items[1].Repository != "b" {
+		t.Fatalf("cancelled rows lost membership/order: %+v", items)
+	}
+	for _, item := range items {
+		if item.Outcome != "unreadable" || item.Problem == nil || item.Problem.Code != "cancelled" || item.Status != nil {
+			t.Fatalf("unfinished row was not finalized as cancelled: %+v", item)
+		}
+	}
+}
+
 func TestDashboardProgressKeepsSnapshotsIndependent(t *testing.T) {
 	s, g := statusFixture("d", "b", "a")
 	s.Journal = statusJournal{}

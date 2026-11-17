@@ -16,9 +16,11 @@
 
 ## Verification
 
-Full tests (`go test -json ./... -count=1 -timeout=15m`), `go vet ./...`, build, formatting and diff checks passed. Independent review found no material issues. Both historical and current five-sample benchmark runs passed; results and limits are in [status performance](../../development/status-performance.md).
+Full race tests (`CGO_ENABLED=1`, `go test -race -json ./... -count=1 -timeout=20m`), `go vet ./...`, build, formatting and diff checks passed. Independent review found no further issues. Both historical and bounded five-sample benchmark runs passed; results and limits are in [status performance](../../development/status-performance.md).
 
-Installed WinLibs GCC 16.2.0 / MinGW-w64 14.0.0 per user through winget and verified `libsynchronization.a`. The complete Windows race run (`CGO_ENABLED=1`, `go test -race -json ./... -count=1 -timeout=20m`) passed: 15 packages, 1,176 test/subtest passes, zero failures or race reports. Five existing checks skipped because symlink privileges or shell adapters were unavailable, or because the scale test is opt-in. No code fixes were required. Compiler setup and reproduction are documented in the development guide. Existing Linux race CI provides separate platform coverage.
+Installed WinLibs GCC 16.2.0 / MinGW-w64 14.0.0 per user through winget and verified `libsynchronization.a`. The complete Windows race run passed: 15 packages, 1,179 test/subtest passes, zero failures or race reports. Five existing checks skipped because symlink privileges or shell adapters were unavailable, or because the scale test is opt-in. Compiler setup and reproduction are documented in the development guide. Existing Linux race CI provides separate platform coverage.
+
+Review correction: both cancellation exits after row initialization now use the same finalizer as drained inspections. Regression tests reproduced and fixed successful/inspecting results after cancellation during definition loading or the initial dashboard callback, including empty workspaces and immutable initial snapshots.
 
 ## Review focus
 

@@ -11,6 +11,7 @@ Measured on 2026-11-17 using Windows 11 Pro 10.0.26300, amd64, an Intel Core
 i5-14600K (14 cores, 20 logical processors), Go 1.27.4 and Git
 2.47.0.windows.1. Each entry is the median of five full-workspace samples. Runs
 were serial, with other project test processes stopped during timed samples.
+The bounded samples used the implementation committed as `814aac4`.
 
 | Workspace members | Historical sequential total / first observation | New total, four workers | New first completed Git observation | Total speedup | First observation sooner |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -96,19 +97,21 @@ status call; the tables use the explicit `total-ms` metric.
 
 ## Correctness verification
 
-The full test suite, `go vet ./...` and the CLI build passed on this machine.
+The full race-enabled test suite, `go vet ./...` and build passed on this machine.
 Tests cover bounded active inspections, completion before a blocked repository,
 ordered partial results, cancellation, immutable progress snapshots, early
 dashboard rendering, stable selection, stale requests and shutdown while update
-delivery is blocked. Independent review found no material issues.
+delivery is blocked. Cancellation regressions also cover definition loading,
+empty workspaces, and the initial dashboard progress callback. Independent
+review found no further issues.
 
 The full Windows race run also passed on 2026-11-17 after installing WinLibs GCC
 16.2.0 / MinGW-w64 14.0.0 through winget. The compiler resolved
 `libsynchronization.a`, and the run used `CGO_ENABLED=1` with
-`go test -race -json ./... -count=1 -timeout=20m`: 15 packages passed, with 1,176
+`go test -race -json ./... -count=1 -timeout=20m`: 15 packages passed, with 1,179
 test/subtest passes, no failures and no race reports. Five existing checks skipped
 because symlink privileges or shell adapters were unavailable, or because the
-scale test is opt-in. No code fixes were required. See the
+scale test is opt-in. See the
 [Windows race setup](README.md#tests-and-ci) for reproduction; Linux CI remains
 separate platform coverage.
 

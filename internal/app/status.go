@@ -46,14 +46,15 @@ func (s *Service) status(ctx context.Context, name string, onStart func([]Item),
 	for _, id := range names {
 		r.Items = append(r.Items, Item{Repository: id, Workspace: name, ExpectedBranch: w.Repositories[id].Branch, Outcome: "inspecting"})
 	}
+	failures := make([]error, len(names))
 	if err := ctx.Err(); err != nil {
-		return r, err
+		return finalizeStatus(r, failures, err)
 	}
 	if onStart != nil {
 		onStart(slices.Clone(r.Items))
 	}
 	if err := ctx.Err(); err != nil {
-		return r, err
+		return finalizeStatus(r, failures, err)
 	}
 	type completion struct {
 		index int
@@ -85,7 +86,6 @@ func (s *Service) status(ctx context.Context, name string, onStart func([]Item),
 		})
 	}
 	go func() { workers.Wait(); close(completed) }()
-	failures := make([]error, len(names))
 	for result := range completed {
 		r.Items[result.index] = result.item
 		failures[result.index] = result.err
@@ -93,16 +93,20 @@ func (s *Service) status(ctx context.Context, name string, onStart func([]Item),
 			onItem(result.item)
 		}
 	}
-	if err := ctx.Err(); err != nil {
+	return finalizeStatus(r, failures, ctx.Err())
+}
+
+func finalizeStatus(r Result, failures []error, ctxErr error) (Result, error) {
+	if ctxErr != nil {
 		for i := range r.Items {
 			if r.Items[i].Outcome == "inspecting" {
-				r.Items[i].Outcome, r.Items[i].Problem = "unreadable", ProblemFor(err)
-				failures[i] = err
+				r.Items[i].Outcome, r.Items[i].Problem = "unreadable", ProblemFor(ctxErr)
+				failures[i] = ctxErr
 			}
 		}
-		failures = append(failures, err)
+		failures = append(failures, ctxErr)
 	}
-	err = errors.Join(failures...)
+	err := errors.Join(failures...)
 	if err != nil {
 		r.Outcome = "partial"
 	}
