@@ -1,0 +1,111 @@
+name: OpenCodeReview PR Review
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+# Only owner-authorized requests share a PR's group. Outside PR events and
+# ordinary comments must not cancel an active review. Check the triggering
+# actor as well so another writer cannot rerun an owner's paid review.
+concurrency:
+  group: >-
+    ${{
+      github.triggering_actor == github.repository_owner
+      && (
+        (
+          github.event_name == 'pull_request_target'
+          && github.event.pull_request.user.login == github.repository_owner
+          && !github.event.pull_request.draft
+        )
+        || (
+          github.event_name == 'issue_comment'
+          && github.event.issue.pull_request
+          && github.event.comment.user.type != 'Bot'
+          && github.event.comment.user.login == github.repository_owner
+          && startsWith(github.event.comment.body, '/open-code-review')
+        )
+      )
+      && format('ocr-{0}', github.event.pull_request.number || github.event.issue.number)
+      || format('ocr-noop-{0}', github.run_id)
+    }}
+  cancel-in-progress: true
+
+jobs:
+  code-review:
+    if: >-
+      github.triggering_actor == github.repository_owner
+      && (
+        (
+          github.event_name == 'pull_request_target'
+          && github.event.pull_request.user.login == github.repository_owner
+          && !github.event.pull_request.draft
+        )
+        || (
+          github.event_name == 'issue_comment'
+          && github.event.issue.pull_request
+          && github.event.comment.user.type != 'Bot'
+          && github.event.comment.user.login == github.repository_owner
+          && startsWith(github.event.comment.body, '/open-code-review')
+        )
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Resolve pull request for manual review
+        id: pr-context
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.0.1
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: context.issue.number
+            });
+            core.setOutput('state', pr.state);
+            core.setOutput('base_ref', pr.base.ref);
+            core.setOutput('head_sha', pr.head.sha);
+
+      - name: Create GitHub App token
+        id: app-token
+        if: github.event_name == 'pull_request_target' || steps.pr-context.outputs.state == 'open'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.OCR_APP_CLIENT_ID }}
+          private-key: ${{ secrets.OCR_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
+          permission-pull-requests: write
+
+      # The action checks out the trusted base and reads PR head blobs through
+      # Git. Keep builds and tests that execute PR code in the separate CI job.
+      - name: Review pull request
+        if: github.event_name == 'pull_request_target' || steps.pr-context.outputs.state == 'open'
+        uses: alibaba/open-code-review@178543d92fecb7fcfe2da55ffcdc4486997fa75b # main, 2026-11-17
+        with:
+          github_token: ${{ steps.app-token.outputs.token }}
+          ocr_version: '1.13.11'
+          llm_url: ${{ vars.OCR_LLM_URL || 'https://api.openai.com/v1/responses' }}
+          llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+          llm_model: ${{ vars.OCR_LLM_MODEL || 'gpt-6.1-sol' }}
+          llm_use_anthropic: 'false'
+          llm_protocol: openai-responses
+          # Responses uses reasoning.effort; llm_reasoning_effort would add
+          # the Chat Completions field reasoning_effort instead.
+          llm_extra_body: '{"reasoning":{"effort":"high"}}'
+          effort: high
+          # The pinned OCR action cannot reliably identify a custom App for
+          # sticky summaries or inline deduplication. Fresh posts ensure the
+          # App authors every new summary and finding.
+          sticky_summary: 'false'
+          incremental: 'false'
+          base_ref: ${{ steps.pr-context.outputs.base_ref }}
+          head_sha: ${{ steps.pr-context.outputs.head_sha }}

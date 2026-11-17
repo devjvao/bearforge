@@ -134,6 +134,11 @@ Configure SSH agents or Git credential helpers before invoking network commands.
 
 ## Development
 
+GitHub PRs use [OpenCodeReview with GPT-6.1 Sol at high effort](docs/pr-reviews.md),
+with automatic reviews for owner PRs and owner-approved contributor reviews via
+`/open-code-review`. The setup guide covers contributor CI approval, OpenAI
+settings, and the GitHub App credentials used to post reviews.
+
 ```sh
 go test ./...
 go vet ./...
