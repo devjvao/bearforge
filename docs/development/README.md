@@ -38,7 +38,13 @@ go build ./cmd/bearforge
 
 Integration tests create disposable local Git repositories. They do not need company repository credentials. Native tests are required on Windows, Linux and macOS; cross-compilation alone does not prove filesystem, process, credential-store or terminal behavior. Some restricted Windows environments block Git transport helpers or atomic file replacement; run checks in an ordinary developer terminal when those restrictions prevent execution.
 
-The [CI workflow](https://github.com/devjvao/bearforge/blob/main/.github/workflows/ci.yml) reads its Go version from `go.mod`, runs tests/vet/build on all three operating systems, and runs race tests on Linux with cgo enabled. The opt-in scale job exercises 60 disposable repositories:
+The [CI workflow](https://github.com/devjvao/bearforge/blob/main/.github/workflows/ci.yml) reads its Go version from `go.mod`, runs tests/vet/build on all three operating systems, and runs race tests on Linux with cgo enabled.
+
+PRs and pushes to `main` use Intel macOS 26 (`macos-26-intel`). Release verification
+calls the same CI workflow with `macos-arm64: true`, requiring native ARM64 macOS 26
+(`macos-26`) tests before release builds and publication.
+
+The opt-in scale job exercises 60 disposable repositories:
 
 ```sh
 BEARFORGE_SCALE_TEST=1 go test ./internal/app -run TestPhase2Scale60 -count=1 -timeout=12m
