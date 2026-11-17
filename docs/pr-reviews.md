@@ -148,9 +148,12 @@ Reviews consume OpenAI API tokens, including when manually requested again.
 
 The workflow pins the action to an immutable commit and the OCR CLI to `1.13.11`.
 Update both deliberately, checking the action inputs and Responses support.
-Run `node --test .github/tests/*.test.cjs` after changing the verdict logic; the
-Linux CI job runs these checks too. They execute the workflow's inline script
-against review results and simulated GitHub responses without posting reviews.
+The verdict logic lives in `.github/scripts/ocr-review-verdict.cjs`. After editing
+it, run `node .github/scripts/sync-ocr-review-verdict.cjs` to update the inline
+workflow bundle. Linux CI checks that bundle with the generator's `--check` flag
+and runs `node --disallow-code-generation-from-strings --test .github/tests/*.test.cjs`.
+The tests import the module directly and use simulated GitHub responses without
+posting reviews. The privileged workflow executes only its inline bundle.
 It uses `pull_request_target` so fork PRs can be reviewed with the configured
 credentials. The action checks out trusted base content and reads PR head blobs
 through Git; keep execution of PR code in the separate CI workflow.

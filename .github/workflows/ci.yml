@@ -15,9 +15,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check generated review verdict
+        if: runner.os == 'Linux'
+        run: node --disallow-code-generation-from-strings .github/scripts/sync-ocr-review-verdict.cjs --check
       - name: Test review verdict automation
         if: runner.os == 'Linux'
-        run: node --test .github/tests/*.test.cjs
+        run: node --disallow-code-generation-from-strings --test .github/tests/*.test.cjs
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod

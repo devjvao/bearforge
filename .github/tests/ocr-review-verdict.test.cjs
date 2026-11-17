@@ -1,11 +1,9 @@
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const { test } = require('node:test');
+const { submitReviewVerdict } = require('../scripts/ocr-review-verdict.cjs');
 
 const head = 'a'.repeat(40);
 const otherHead = 'b'.repeat(40);
-const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 function completeResult() {
   return {
@@ -28,13 +26,6 @@ function completeResult() {
 }
 
 async function runVerdict(result, options = {}) {
-  // Execute the actual inline workflow script; no PR code or API calls run.
-  const workflow = fs.readFileSync(path.join(__dirname, '../workflows/ocr-review.yml'), 'utf8');
-  const step = workflow.split('      - name: Submit review verdict')[1];
-  assert.ok(step, 'workflow must submit a review verdict');
-  const block = step.match(/          script: \|\r?\n((?: {12}[^\n]*(?:\n|$)|\r?\n)+)/);
-  assert.ok(block, 'verdict step must have an inline script');
-  const script = block[1].replace(/^ {12}/gm, '');
   const reviews = [];
   const messages = [];
   const github = { rest: { pulls: {
@@ -60,9 +51,7 @@ async function runVerdict(result, options = {}) {
   } };
   let error;
   try {
-    await new AsyncFunction('github', 'context', 'core', 'require', 'process', script)(
-      github, context, core, name => { assert.equal(name, 'fs'); return readResult; }, { env },
-    );
+    await submitReviewVerdict({ github, context, core, fs: readResult, env });
   } catch (caught) { error = caught; }
   return { reviews, messages, error };
 }
