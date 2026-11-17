@@ -213,12 +213,12 @@ func (c *Client) Config(ctx context.Context, path, key string) (string, error) {
 }
 
 func (c *Client) ValidateFetch(ctx context.Context, path string) error {
-	b, err := c.Run(ctx, path, "remote")
+	remotes, err := c.fetchRemotes(ctx, path)
 	if err != nil {
 		return err
 	}
 	keys := []string{"fetch.pruneTags"}
-	for _, remote := range strings.Fields(string(b)) {
+	for _, remote := range remotes {
 		if err := domain.ValidateRemoteName(remote); err != nil {
 			return err
 		}
@@ -256,16 +256,32 @@ func (c *Client) Fetch(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := c.Run(ctx, path, "-c", "fetch.parallel=1", "fetch", "--all", "--prune"); err != nil {
-		return err
+	var verificationErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if _, err := c.Run(ctx, path, "-c", "fetch.parallel=1", "fetch", "--all", "--prune"); err != nil {
+			return err
+		}
+		// Separate advertisements are not the transfer's snapshot. Reconcile
+		// changed names with another transfer rather than requiring their union.
+		after, err := c.fetchRefPlan(ctx, path)
+		if err != nil {
+			return err
+		}
+		verificationErr = nil
+		if sameRefNames(expected, after) {
+			verificationErr = c.verifyFetchedRefs(ctx, path, after)
+			if verificationErr == nil {
+				return nil
+			}
+			// A branch can disappear for the transfer and be recreated before
+			// the second advertisement, leaving equal names but a missing ref.
+		}
+		expected = after
 	}
-	// Advertisements can change while transfer is running. Recheck exact names
-	// afterwards as well; do not require stale preflight object IDs to match.
-	after, err := c.fetchRefPlan(ctx, path)
-	if err != nil {
-		return err
+	if verificationErr != nil {
+		return verificationErr
 	}
-	return c.verifyFetchedRefs(ctx, path, append(expected, after...))
+	return domain.E("conflict", "remote ref names kept changing during fetch; preserve this directory and retry syncing after remote changes settle")
 }
 
 func (c *Client) Resolve(ctx context.Context, path, ref string) (string, error) {

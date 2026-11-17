@@ -121,6 +121,9 @@ func parseRemote(raw string, server bool) (remoteIdentity, error) {
 		identity.host, path = strings.ToLower(authority), coordinates
 	}
 	identity.repository = strings.TrimSuffix(path, ".git")
+	if !server && ssh && identity.host == "ssh.bitbucket.org" {
+		identity.host = "bitbucket.org"
+	}
 	if !validRemoteHost(identity.host, ssh) || !validRepository(identity.repository, server) {
 		return remoteIdentity{}, invalid
 	}

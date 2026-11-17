@@ -19,6 +19,37 @@ func TestCloneRefusesCredentialQueryAndUnsafeCoordinates(t *testing.T) {
 	}
 }
 
+func TestCloneBitbucketCloudCanonicalSSHHost(t *testing.T) {
+	for _, gitURL := range []string{"", "https://bitbucket.org", "https://bitbucket.org:443/"} {
+		source := domain.RepositorySource{Provider: "bitbucket", Host: "bitbucket.org", GitURL: gitURL}
+		for _, raw := range []string{"git@ssh.bitbucket.org:team/api.git", "ssh://git@ssh.bitbucket.org:22/team/api.git"} {
+			if got, err := Clone(raw, "ssh", source); err != nil || got != raw {
+				t.Fatalf("canonical Cloud clone rejected with GitURL=%q: %q, %v", gitURL, got, err)
+			}
+		}
+	}
+	for _, source := range []domain.RepositorySource{
+		{Provider: "github", Host: "bitbucket.org"},
+		{Provider: "bitbucket-server", Host: "bitbucket.org"},
+		{Provider: "bitbucket", Host: "company.example.com"},
+		{Provider: "bitbucket", Host: "bitbucket.org", GitURL: "https://git.company.example.com"},
+		{Provider: "bitbucket", Host: "bitbucket.org", GitURL: "https://bitbucket.org:8443/context"},
+	} {
+		if _, err := Clone("git@ssh.bitbucket.org:team/api.git", "ssh", source); err == nil {
+			t.Fatalf("Cloud alias bypassed custom source: %+v", source)
+		}
+	}
+	source := domain.RepositorySource{Provider: "bitbucket", Host: "bitbucket.org", GitURL: "https://bitbucket.org"}
+	for _, raw := range []string{"git@ssh.bitbucket.org.evil.example:team/api.git", "git@ssh.bitbucket.org:team/../api.git", "ssh://git:secret@ssh.bitbucket.org/team/api.git", "ssh://git@ssh.bitbucket.org:7999/team/api.git", "ssh://alice@ssh.bitbucket.org/team/api.git"} {
+		if _, err := Clone(raw, "ssh", source); err == nil {
+			t.Fatalf("accepted noncanonical Cloud SSH clone: %s", raw)
+		}
+	}
+	if _, err := Clone("https://ssh.bitbucket.org/team/api.git", "https", source); err == nil {
+		t.Fatal("SSH host exception allowed an HTTPS destination")
+	}
+}
+
 func TestPageRejectsChangedFixedQueryAndRestoresOmittedOptions(t *testing.T) {
 	first, _ := url.Parse("https://git.example.com/context/repos?limit=100&projectkey=TEAM&start=0")
 	target, _ := first.Parse("?start=42")

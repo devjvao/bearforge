@@ -37,7 +37,7 @@ func (p *Provider) Resolve(repo domain.Repository, remote, branch string) (domai
 		switch remoteHost(remote) {
 		case "github.com":
 			kind = "github"
-		case "bitbucket.org":
+		case "bitbucket.org", "ssh.bitbucket.org":
 			kind = "bitbucket"
 		}
 	}

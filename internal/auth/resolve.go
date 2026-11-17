@@ -212,9 +212,14 @@ func (m *Manager) Resolve(ctx context.Context, r domain.CredentialRequest) (doma
 	if err != nil {
 		return nil, err
 	}
-	r.Host, r.APIURL = normalized.Host, normalized.APIURL
-	public := r.Provider == "github" && (r.Host == "" || r.Host == "github.com" || r.Host == "https://github.com") && (r.APIURL == "" || r.APIURL == "https://api.github.com")
-	bb := sameProvider(r.Provider, "bitbucket") && (r.Host == "" || r.Host == "bitbucket.org" || r.Host == "https://bitbucket.org") && (r.APIURL == "" || r.APIURL == "https://api.bitbucket.org/2.0")
+	// Keep explicit hostname metadata available to matches: an API URL can
+	// identify an installation's port and context that the hostname omits.
+	if r.Host == "" {
+		r.Host = normalized.Host
+	}
+	r.APIURL = normalized.APIURL
+	public := r.Provider == "github" && normalized.Host == "https://github.com" && normalized.APIURL == "https://api.github.com"
+	bb := sameProvider(r.Provider, "bitbucket") && normalized.Host == "https://bitbucket.org" && normalized.APIURL == "https://api.bitbucket.org/2.0"
 	names := []string{}
 	if public {
 		names = []string{"GH_TOKEN", "GITHUB_TOKEN"}

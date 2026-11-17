@@ -30,7 +30,7 @@ func TestRepositoryDiscoveryCloudWorkspacesAndRepositories(t *testing.T) {
 			fmt.Fprint(w, `{"values":[]}`)
 			return
 		}
-		fmt.Fprint(w, `{"values":[{"uuid":"{repo}","slug":"api","name":"API","full_name":"one/api","description":"Service","mainbranch":{"name":"main"},"is_private":true,"links":{"clone":[{"name":"https","href":"https://bitbucket.org/one/api.git"},{"name":"ssh","href":"git@bitbucket.org:one/api.git"}]}}],"next":"?page=2"}`)
+		fmt.Fprint(w, `{"values":[{"uuid":"{repo}","slug":"api","name":"API","full_name":"one/api","description":"Service","mainbranch":{"name":"main"},"is_private":true,"links":{"clone":[{"name":"https","href":"https://bitbucket.org/one/api.git"},{"name":"ssh","href":"git@ssh.bitbucket.org:one/api.git"}]}}],"next":"?page=2"}`)
 	})
 	source := domain.RepositorySource{Provider: "bitbucket", Host: q.Host, APIURL: q.APIURL + "/2.0"}
 	workspaces, err := c.ListWorkspaces(context.Background(), source)
@@ -38,8 +38,9 @@ func TestRepositoryDiscoveryCloudWorkspacesAndRepositories(t *testing.T) {
 		t.Fatalf("workspaces %#v %v", workspaces, err)
 	}
 	source.Scope = "one"
+	source.GitURL = "https://bitbucket.org"
 	repos, err := c.ListRepositories(context.Background(), source)
-	if err != nil || len(repos) != 1 || repos[0].FullName != "one/api" || repos[0].SSHURL != "git@bitbucket.org:one/api.git" || calls != 4 {
+	if err != nil || len(repos) != 1 || repos[0].FullName != "one/api" || repos[0].SSHURL != "git@ssh.bitbucket.org:one/api.git" || calls != 4 {
 		t.Fatalf("repositories %#v %v calls=%d", repos, err, calls)
 	}
 }

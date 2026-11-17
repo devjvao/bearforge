@@ -146,11 +146,26 @@ func Clone(raw, transport string, s domain.RepositorySource) (string, error) {
 			allowed = allowed && authority(u) == authority(git) && strings.HasPrefix(u.Path, strings.TrimRight(git.Path, "/")+"/")
 		}
 	}
+	if transport == "ssh" && canonicalCloudSSH(u, s) {
+		allowed = true
+	}
 	if !allowed {
 		return "", invalid
 	}
 	return raw, nil
 }
+
+func canonicalCloudSSH(u *url.URL, source domain.RepositorySource) bool {
+	if source.Provider != "bitbucket" || !strings.EqualFold(source.Host, "bitbucket.org") || !strings.EqualFold(u.Hostname(), "ssh.bitbucket.org") || (u.Port() != "" && u.Port() != "22") || u.User == nil || u.User.Username() != "git" {
+		return false
+	}
+	if source.GitURL == "" {
+		return true
+	}
+	git, err := APIURL(source.GitURL)
+	return err == nil && authority(git) == "bitbucket.org:443" && (git.Path == "" || git.Path == "/")
+}
+
 func authority(u *url.URL) string {
 	port := u.Port()
 	if port == "" {

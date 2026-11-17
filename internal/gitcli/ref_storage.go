@@ -325,9 +325,99 @@ func (c *Client) CloneWithFormat(ctx context.Context, remote, path, format strin
 	return c.Initialize(ctx, path)
 }
 
-// fetchRefPlan inspects every remote before the first fetch writes any refs.
-func (c *Client) fetchRefPlan(ctx context.Context, path string) ([]string, error) {
+// fetchRemotes follows fetch --all's effective skipFetchAll/skipDefaultUpdate
+// booleans, including aliases, valueless true, and later configuration values.
+func (c *Client) fetchRemotes(ctx context.Context, path string) ([]string, error) {
 	b, err := c.Run(ctx, path, "remote")
+	if err != nil {
+		return nil, err
+	}
+	remotes := strings.Fields(string(b))
+	settings, err := c.Run(ctx, path, "config", "--null", "--bool", "--get-regexp", `^remote\..*\.(skipfetchall|skipdefaultupdate)$`)
+	if err != nil && !isExit(err, 1) {
+		return nil, err
+	}
+	skipped := map[string]bool{}
+	for _, entry := range strings.Split(string(settings), "\x00") {
+		key, value, ok := strings.Cut(entry, "\n")
+		if !ok {
+			continue
+		}
+		end := strings.LastIndex(key, ".")
+		if end > len("remote.") {
+			skipped[key[len("remote."):end]] = value == "true"
+		}
+	}
+	selected := remotes[:0]
+	for _, remote := range remotes {
+		if !skipped[remote] {
+			selected = append(selected, remote)
+		}
+	}
+	return selected, nil
+}
+
+func sameRefNames(a, b []string) bool {
+	names := make(map[string]bool, len(a))
+	for _, name := range a {
+		names[name] = true
+	}
+	for _, name := range b {
+		if !names[name] {
+			return false
+		}
+	}
+	other := make(map[string]bool, len(b))
+	for _, name := range b {
+		other[name] = true
+	}
+	return len(names) == len(other)
+}
+
+// looseRefSpellings inspects names only, never reference contents. On an
+// insensitive files backend a dangling loose "topic" can shadow packed "Topic"
+// while for-each-ref still reports the packed spelling as direct. Such aliases
+// and symlink paths need the conservative native symbolic-ref fallback.
+func (c *Client) looseRefSpellings(ctx context.Context, path string, sensitive bool) (map[string]string, map[string]bool, error) {
+	b, err := c.Run(ctx, path, "rev-parse", "--git-path", "refs")
+	if err != nil {
+		return nil, nil, err
+	}
+	root := strings.TrimSpace(string(b))
+	if !filepath.IsAbs(root) {
+		root = filepath.Join(path, root)
+	}
+	spellings := map[string]string{}
+	symlinks := map[string]bool{}
+	err = filepath.WalkDir(root, func(name string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(root, name)
+		if err != nil {
+			return err
+		}
+		ref := "refs"
+		if relative != "." {
+			ref += "/" + filepath.ToSlash(relative)
+		}
+		key := ref
+		if !sensitive {
+			key = strings.ToLower(key)
+		}
+		spellings[key] = ref
+		if entry.Type()&os.ModeSymlink != 0 {
+			// WalkDir does not follow these, so protect every descendant too.
+			symlinks[key] = true
+		}
+		return nil
+	})
+	return spellings, symlinks, err
+}
+
+// fetchRefPlan inspects every selected remote before fetch writes any refs.
+func (c *Client) fetchRefPlan(ctx context.Context, path string) ([]string, error) {
+	remotes, err := c.fetchRemotes(ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -336,7 +426,7 @@ func (c *Client) fetchRefPlan(ctx context.Context, path string) ([]string, error
 		return nil, err
 	}
 	var expected, potential []string
-	for _, remote := range strings.Fields(string(b)) {
+	for _, remote := range remotes {
 		names, err := c.advertised(ctx, path, remote, remote)
 		if err != nil {
 			return nil, err
@@ -388,16 +478,53 @@ func (c *Client) fetchRefPlan(ctx context.Context, path string) ([]string, error
 			return nil, domain.E("conflict", "fetch destination %q overlaps retained symbolic ref %q; reconcile remote names before syncing", name, symref)
 		}
 	}
+	direct := map[string]bool{}
+	for _, name := range retained {
+		if symbolic[name] == "" {
+			direct[name] = true
+		}
+	}
+	var loose map[string]string
+	var symlinks map[string]bool
+	if format == "files" {
+		loose, symlinks, err = c.looseRefSpellings(ctx, path, sensitive)
+		if err != nil {
+			return nil, err
+		}
+	}
+	knownDirect := func(name string) bool {
+		if !direct[name] {
+			return false
+		}
+		if spelling := loose[key(name)]; spelling != "" && spelling != name {
+			return false
+		}
+		for prefix := name; prefix != ""; {
+			if symlinks[key(prefix)] {
+				return false
+			}
+			end := strings.LastIndex(prefix, "/")
+			if end < 0 {
+				break
+			}
+			prefix = prefix[:end]
+		}
+		return true
+	}
 	// for-each-ref omits symbolic refs whose targets no longer exist. Query
-	// each writable destination without dereferencing it, so a dangling symref
-	// (including a differently cased files-backend alias) cannot be overwritten
-	// or used to recreate its missing target by fetch.
+	// destinations not already proven direct without dereferencing them. This
+	// retains dangling/case-alias protection without a subprocess per existing
+	// direct ref. Git 2.40 has no batched symbolic-ref query, so unknown/new refs
+	// and potentially auto-followed but unfetched tags still need this fallback.
 	checked := map[string]bool{}
 	for _, name := range potential {
 		if checked[key(name)] {
 			continue
 		}
 		checked[key(name)] = true
+		if knownDirect(name) {
+			continue
+		}
 		target, err := c.Run(ctx, path, "symbolic-ref", "--no-recurse", "--quiet", name)
 		if err == nil {
 			return nil, domain.E("conflict", "fetch destination %q is a retained symbolic ref to %q; reconcile remote names before syncing", name, strings.TrimSpace(string(target)))

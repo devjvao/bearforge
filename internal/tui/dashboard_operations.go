@@ -194,7 +194,9 @@ func (m dashboardModel) updateOperations(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		target := m.workspace
 		if run.operation.Kind == "workspace.remove" && run.operation.Workspace == target {
-			target = ""
+			updated, _ := m.request(target)
+			refreshed := updated.(dashboardModel)
+			return refreshed, refreshed.readAfterWorkspaceRemovalCommand()
 		}
 		return m.request(target)
 	}

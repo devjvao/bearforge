@@ -49,11 +49,14 @@ type Options struct {
 }
 type Manager struct {
 	registryPath string
-	secrets      SecretStore
-	http         *http.Client
-	browser      Browser
-	now          func() time.Time
-	lookupEnv    func(string) (string, bool)
+	// publishRegistry separates atomic file publication from credential cleanup.
+	// A true result means the new registry may already be visible despite an error.
+	publishRegistry func(source, target string) (published bool, err error)
+	secrets         SecretStore
+	http            *http.Client
+	browser         Browser
+	now             func() time.Time
+	lookupEnv       func(string) (string, bool)
 }
 
 // NewManager only captures dependencies. All I/O occurs in explicit operations.

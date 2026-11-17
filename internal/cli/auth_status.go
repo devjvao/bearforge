@@ -53,6 +53,9 @@ func (o *options) authenticationStatus(ctx context.Context, connection, reposito
 		if !ok {
 			return domain.E("not_found", "repository %s is not registered", repository)
 		}
+		if connection != "" && repo.Provider["connection"] != connection {
+			return domain.E("invalid", "repository %s is not associated with connection %s; check its configured connection or review a repo rebind", repository, connection)
+		}
 		if connection == "" {
 			connection = repo.Provider["connection"]
 		}
@@ -114,12 +117,26 @@ func (o *options) authenticationStatus(ctx context.Context, connection, reposito
 			}
 		}
 		git, gitErr := gitcli.New()
-		if gitErr == nil && query.TokenEnv == "" && strings.HasPrefix(remote, "https://") && status.Connection != "" {
+		var repoPath string
+		if gitErr == nil {
+			repoPath, gitErr = store.SafePath("repos", id+".git")
+		}
+		if gitErr == nil {
+			gitErr = git.VerifyBare(ctx, repoPath)
+		}
+		if gitErr == nil {
+			var actualOrigin string
+			actualOrigin, gitErr = git.Config(ctx, repoPath, "remote.origin.url")
+			if gitErr == nil && actualOrigin != remote {
+				gitErr = domain.E("conflict", "repository %s origin differs from its registered URL", id)
+			}
+		}
+		if gitErr == nil && repo.Provider["token_env"] == "" && strings.HasPrefix(remote, "https://") && status.Connection != "" {
 			git, gitErr = o.connectionGit(git, repo.Provider["connection"], repo.Provider["grant_id"], remote)
 		}
 		if gitErr == nil {
 			readCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-			_, gitErr = git.Run(readCtx, "", "ls-remote", "--refs", "--", remote)
+			_, gitErr = git.Run(readCtx, repoPath, "ls-remote", "--refs", "--", remote)
 			cancel()
 		}
 		status.GitRead = "readable"

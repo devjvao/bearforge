@@ -103,6 +103,8 @@ Saved tokens use Windows Credential Manager, Linux Secret Service, or macOS Keyc
 
 `auth status` performs read-only checks and separates account/API verification from repository API access and Git read access. A public read or successful `ls-remote` is not proof of account identity or push permission. `--local` reads metadata without network requests or secret-store access, so its values are unverified or previously observed. A Server/Data Center API may not attest account identity; Bearforge reports that explicitly rather than trusting the supplied username.
 
+Repository Git checks use the registered bare repository's configuration, including its SSH command, URL rewrites, credential helpers, and TLS settings. A missing repository or an origin that differs from the catalog cannot pass this check. When combining `--repo NAME` with `--connection NAME`, the connection must match that repository's saved association; otherwise the command reports an error. To inspect a replacement connection before rebinding, use `auth status --connection NAME` separately.
+
 `bearforge auth logout --connection NAME` removes that local saved grant. It does not revoke the token at the provider. Existing repository references remain disconnected and cannot silently choose another account; use the displayed management link for provider-side revocation. `--yes` is required to replace an existing connection grant noninteractively.
 
 ### Token-only setup and renewal
@@ -135,6 +137,8 @@ Once every repository using the old connection has been moved and its new access
 
 Start `bearforge tui` and press `i` for **Import repositories**. This action works with an empty root and no workspace. Select a saved connection or use the shared login flow to create one for GitHub or Bitbucket. Choose a repository scope and HTTPS or SSH transport, then explicitly load the list. GitHub scopes use an owner/organization, Bitbucket Cloud scopes use a Bitbucket workspace, and Server/Data Center scopes use a project key. Cloud workspace enumeration and a directly entered workspace are supported. A Bitbucket workspace is separate from a Bearforge workspace.
 
+Changing the source requires a successful reload before previewing repositories. A failed reload leaves the error visible and prevents importing a previous list as though it belonged to the changed source. Compatible reloads preserve selections and edited local IDs. During guided login, switching provider resets its dependent endpoints and username. Use PgUp/PgDown to scroll token instructions while entering a hidden token; the token prompt is brought into view when input is requested.
+
 The environment/anonymous option also supports public GitHub browsing. Without a token, enter an owner or organization scope; Bearforge uses the matching public listing endpoint. A saved connection or environment token lists repositories accessible to that credential, optionally filtered by owner. See [GitHub's repository listing API](https://docs.github.com/en/rest/repos/repos#list-repositories-for-a-user).
 
 Filter and select the repositories to import, edit any conflicting portable local IDs, and review clone URLs, destination paths, the selected connection, and scoped HTTPS Git integration. Already registered repositories are disabled; retired repositories point to restoration. Selections survive filtering. Enter previews; only `y` starts the reviewed batch. Import adds repositories to the catalog; use the existing `a` picker afterward to add them to a Bearforge workspace.
@@ -150,7 +154,9 @@ bearforge operations resume OPERATION_ID --connection work-bitbucket
 
 An unfinished operation blocks unrelated writes until it is resumed or explicitly abandoned. In the dashboard, press `o` to open **Operations**, select the unfinished batch, and inspect its failed steps. Press `r` to review retrying, or `a` to review stopping recovery tracking; only `y` executes either action. Retry reuses successful clones and retained directories. Stopping tracking retains successful registrations, files, and Git effects, clears the write block, and prevents resuming that operation afterward. A retry that fails again remains available in Operations. Navigation, local refresh, and inspection remain available while writes are blocked.
 
-The repair preview is confirmed before changing the journal and resuming. Successful clones are verified and reused during resume. Bearforge never deletes retained clone state to retry. Authentication-only repair remains available while an import is partial. The rooted CLI recovery commands remain available if token replacement or other manual repair is needed.
+The repair preview is confirmed before changing the journal and resuming. Terminal progress starts only after that confirmation, so the review prompt owns terminal input. Successful clones are verified and reused during resume. Bearforge never deletes retained clone state to retry. Authentication-only repair remains available while an import is partial. The rooted CLI recovery commands remain available if token replacement or other manual repair is needed.
+
+Recovering or abandoning a workspace removal keeps the current workspace selected while its manifest remains. If removal has deleted the manifest, refresh selects another available workspace, including when a later journal update fails.
 
 HTTPS imports route credentials through a helper scoped to the selected remote, including after the dashboard closes. Ordinary Git and GoLand can use that routing when they use the same installed Bearforge executable and operating-system credential store. Keep the executable at a stable absolute path. Existing unrelated helpers and SSH setup are preserved; a conflicting scoped helper requires review. An explicit disconnected binding stops fallback to another cached account. SSH imports continue to use the existing agent/keys independently of API login.
 
@@ -159,6 +165,8 @@ HTTPS imports route credentials through a helper scoped to the selected remote, 
 Repository initialization checks the actual destination filesystem and advertised ref names before choosing storage. Repositories with incompatible case-distinct names use reftable when Git supports it; ordinary repositories keep files storage. You can deliberately choose a backend with `bearforge repo add NAME URL --ref-format reftable` or `--ref-format files`, and inspect the actual backend with `bearforge repo inspect NAME`. Explicit files storage refuses conflicts instead of dropping a branch. The normal Git 2.40 minimum remains sufficient for ordinary repositories; affected repositories may require a newer Git.
 
 If an interrupted addition needs migration, resume preserves refs, HEAD, and reflogs and refuses unsupported conversion. Git 2.47 cannot migrate populated reflogs: upgrade Git to a version supporting preservation, stop external Git writers, inspect the operation, and resume. Bearforge never uses reflog-discarding migration options. Existing repositories with linked worktrees are not automatically converted; an incompatible later fetch is refused before writing, with guidance to reconcile remote names or plan migration separately. Reftable compatibility with other tools depends on the Git implementation they use.
+
+Fetch planning respects remotes excluded from fetch-all by Git configuration. If remote ref names change during a fetch, Bearforge retries reconciliation a bounded number of times before reporting a conflict; it continues to verify exact ref spelling and reject unsafe symbolic refs.
 
 ## Register repositories and create two workspaces
 
@@ -228,7 +236,7 @@ Pagination links and same-origin redirects must retain the configured repository
 
 ### Bitbucket Cloud
 
-Public and private Bitbucket Cloud repositories use the same commands and dashboard keys. Actual Git remotes such as `https://bitbucket.org/team/api.git`, `https://alice@bitbucket.org/team/api.git`, `ssh://git@bitbucket.org/team/api.git` and `git@bitbucket.org:team/api.git` are recognized without provider metadata. A username in a Git remote is not reused for API authentication; embedded passwords are refused.
+Public and private Bitbucket Cloud repositories use the same commands and dashboard keys. Actual Git remotes such as `https://bitbucket.org/team/api.git`, `https://alice@bitbucket.org/team/api.git`, `ssh://git@bitbucket.org/team/api.git` and `git@bitbucket.org:team/api.git` are recognized without provider metadata. Cloud's canonical SSH clone host, `ssh.bitbucket.org`, is also recognized, including `git@ssh.bitbucket.org:team/api.git`. Discovery accepts that SSH host alongside Cloud's HTTPS host, `bitbucket.org`; custom installations retain their configured endpoint restrictions. A username in a Git remote is not reused for API authentication; embedded passwords are refused.
 
 When using HTTPS, repository registration and catalog entries require URLs without userinfo. Register with `bearforge repo add api https://bitbucket.org/team/api.git` and use your Git credential helper for clone/fetch authentication, or use an SSH remote. Username-only HTTPS support above applies when PR lookup observes an actual Git remote that differs from its registered URL. Keep catalog URLs free of usernames and passwords.
 

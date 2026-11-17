@@ -168,7 +168,7 @@ func addCommands(root *cobra.Command, o *options) {
 		return r, err
 	})
 	var resumeConnection string
-	resume := command(ops, "resume ID", "Resume an interrupted mutation", cobra.ExactArgs(1), true, true, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
+	resume := command(ops, "resume ID", "Resume an interrupted mutation", cobra.ExactArgs(1), true, false, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
 		if resumeConnection != "" {
 			manager, err := o.authentication()
 			if err != nil {
@@ -188,10 +188,12 @@ func addCommands(root *cobra.Command, o *options) {
 				return plan, err
 			}
 			request.DryRun, request.ExpectedPlan = false, plan.PlanDigest
-			if result, err := s.ReassociateImport(ctx, request); err != nil {
-				return result, err
-			}
-			return s.Resume(ctx, a[0])
+			return o.operationProgress(ctx, s, func(ctx context.Context, s *app.Service) (app.Result, error) {
+				if result, err := s.ReassociateImport(ctx, request); err != nil {
+					return result, err
+				}
+				return s.Resume(ctx, a[0])
+			})
 		}
 		if o.dry {
 			r := app.NewResult("operations.resume")
@@ -200,7 +202,9 @@ func addCommands(root *cobra.Command, o *options) {
 			r.Outcome = "planned"
 			return r, err
 		}
-		return s.Resume(ctx, a[0])
+		return o.operationProgress(ctx, s, func(ctx context.Context, s *app.Service) (app.Result, error) {
+			return s.Resume(ctx, a[0])
+		})
 	})
 	resume.Flags().StringVar(&resumeConnection, "connection", "", "Review a replacement saved connection for a partial repository import before resuming")
 	command(ops, "abandon ID", "Stop recovery tracking without deleting any files", cobra.ExactArgs(1), false, false, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {

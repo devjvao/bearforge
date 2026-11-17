@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"slices"
@@ -14,6 +15,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 
 	"bearforge/internal/app"
+	"bearforge/internal/domain"
 )
 
 // DashboardSource deliberately exposes no mutation or network operations.
@@ -160,6 +162,20 @@ func (m dashboardModel) stop(err error) (tea.Model, tea.Cmd) {
 func (m dashboardModel) readCommand() tea.Cmd {
 	return func() tea.Msg {
 		snapshot, err := m.reader.read(m.requestCtx, m.workspace)
+		return dashboardLoadedMsg{requestID: m.requestID, snapshot: snapshot, err: err}
+	}
+}
+
+// Removal can delete the manifest before its final journal update fails. Keep
+// the current selection until a background observation proves it disappeared.
+func (m dashboardModel) readAfterWorkspaceRemovalCommand() tea.Cmd {
+	return func() tea.Msg {
+		snapshot, err := m.reader.read(m.requestCtx, m.workspace)
+		var missing *domain.Error
+		if m.workspace != "" && errors.As(err, &missing) && missing.Code == "not_found" &&
+			snapshot.Root == m.data.Root && snapshot.Workspace == "" && !slices.Contains(snapshot.Workspaces, m.workspace) {
+			snapshot, err = m.reader.read(m.requestCtx, "")
+		}
 		return dashboardLoadedMsg{requestID: m.requestID, snapshot: snapshot, err: err}
 	}
 }

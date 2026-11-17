@@ -4,4 +4,15 @@ package auth
 
 import "os"
 
-func replaceFile(source, target string) error { return os.Rename(source, target) }
+func replaceFile(source, target string) (bool, error) {
+	return replaceAndSyncFile(source, target, os.Rename, syncRegistryDirectory)
+}
+
+func syncRegistryDirectory(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
+}

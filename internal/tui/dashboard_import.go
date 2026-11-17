@@ -84,6 +84,9 @@ type dashboardImport struct {
 	connections          []auth.Connection
 	connection           auth.Connection
 	source               domain.RepositorySource
+	choicesSource        domain.RepositorySource
+	discoverySource      domain.RepositorySource
+	choicesValid         bool
 	transport            string
 	login                auth.LoginRequest
 	choices              []app.RepositoryImportChoice
@@ -124,6 +127,10 @@ func (m dashboardModel) importCommand(kind importReply) (tea.Model, tea.Cmd) {
 	run.offset = 0
 	id, ctx, reader := m.importID, run.ctx, m.reader
 	source, req := run.source, run.request
+	if kind == importDiscovered {
+		run.discoverySource = source
+		run.choicesValid = false
+	}
 	req.Repositories = slices.Clone(req.Repositories)
 	capability := reader.source.(DashboardImporter)
 	return m, func() tea.Msg {
@@ -181,6 +188,12 @@ func (m dashboardModel) importChoices() []app.RepositoryImportChoice {
 }
 func (m dashboardModel) previewImport() (tea.Model, tea.Cmd) {
 	run := m.importRun
+	if !run.choicesValid || run.choicesSource != run.source {
+		if run.err == nil {
+			run.err = errors.New("load repositories successfully for the current source before previewing")
+		}
+		return m, nil
+	}
 	req := app.ImportRequest{DryRun: true}
 	ids := map[string]bool{}
 	for _, c := range run.choices {
@@ -288,6 +301,9 @@ func (m dashboardModel) updateImport(msg tea.Msg) (tea.Model, tea.Cmd) {
 			signal := v.signal
 			run.prompt = &signal
 			run.secret = ""
+			if signal.kind == "secret" {
+				run.offset = max(0, len(m.importWrappedContent())-max(1, m.height-4))
+			}
 		}
 		return m, m.importSignalCommand()
 	case dashboardImportProgressMsg:
@@ -336,6 +352,12 @@ func (m dashboardModel) updateImport(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			run.phase = importPicking
 			if v.err == nil {
+				if run.choicesSource != run.discoverySource {
+					run.selected = map[string]bool{}
+					run.ids = map[string]string{}
+				}
+				run.choicesSource = run.discoverySource
+				run.choicesValid = run.source == run.discoverySource
 				run.choices = v.choices
 				run.index = 0
 				for _, c := range v.choices {
@@ -508,6 +530,16 @@ func (m dashboardModel) importKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if name == "pgdown" || name == "pgup" {
+		if m.width >= 36 && m.height >= 12 {
+			delta := max(1, m.height-6)
+			if name == "pgup" {
+				delta = -delta
+			}
+			run.offset = max(0, min(max(0, len(m.importWrappedContent())-1), run.offset+delta))
+		}
+		return m, nil
+	}
 	if run.phase == importLoggingIn && run.prompt != nil && run.prompt.kind == "secret" {
 		if name == "enter" {
 			value := run.secret
@@ -523,14 +555,6 @@ func (m dashboardModel) importKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.stop(nil)
 	}
 	if m.width < 36 || m.height < 12 {
-		return m, nil
-	}
-	if name == "pgdown" || name == "pgup" {
-		delta := max(1, m.height-6)
-		if name == "pgup" {
-			delta = -delta
-		}
-		run.offset = max(0, min(max(0, len(m.importWrappedContent())-1), run.offset+delta))
 		return m, nil
 	}
 	switch run.phase {
@@ -600,13 +624,9 @@ func (m dashboardModel) importKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			if run.phase == importLoginForm && run.field == 0 {
 				if run.login.Provider == "github" {
-					run.login.Provider = "bitbucket"
-					run.login.Host = "https://bitbucket.org"
-					run.login.Name = "bitbucket"
+					run.login = auth.LoginRequest{Provider: "bitbucket", Host: "https://bitbucket.org", Name: "bitbucket"}
 				} else {
-					run.login.Provider = "github"
-					run.login.Host = "https://github.com"
-					run.login.Name = "github"
+					run.login = auth.LoginRequest{Provider: "github", Host: "https://github.com", Name: "github"}
 				}
 				return m, nil
 			}

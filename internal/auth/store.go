@@ -21,6 +21,24 @@ type registry struct {
 	Connections map[string]Connection `json:"connections"`
 }
 
+const registrySizeLimit = 2 << 20
+
+// registryPublicationError means either registry generation may survive a crash.
+// Callers must retain the secrets referenced by both generations.
+type registryPublicationError struct{ cause error }
+
+func (e *registryPublicationError) Error() string {
+	return "authentication registry publication durability is uncertain: " + e.cause.Error()
+}
+func (e *registryPublicationError) Unwrap() error { return e.cause }
+
+func replaceAndSyncFile(source, target string, replace func(string, string) error, syncDirectory func(string) error) (bool, error) {
+	if err := replace(source, target); err != nil {
+		return false, err
+	}
+	return true, syncDirectory(filepath.Dir(target))
+}
+
 func (m *Manager) readRegistry() (registry, error) {
 	r := registry{Version: 1, Connections: map[string]Connection{}}
 	f, e := os.Open(m.path())
@@ -31,8 +49,14 @@ func (m *Manager) readRegistry() (registry, error) {
 		return r, errors.New("cannot read authentication registry")
 	}
 	defer f.Close()
-	d := json.NewDecoder(io.LimitReader(f, 2<<20))
-	if e = d.Decode(&r); e != nil {
+	b, e := io.ReadAll(io.LimitReader(f, registrySizeLimit+1))
+	if e != nil {
+		return r, errors.New("cannot read authentication registry")
+	}
+	if len(b) > registrySizeLimit {
+		return r, errors.New("authentication registry exceeds size limit")
+	}
+	if e = json.Unmarshal(b, &r); e != nil {
 		return r, errors.New("invalid authentication registry")
 	}
 	if r.Version != 1 || r.Connections == nil {
@@ -62,6 +86,9 @@ func (m *Manager) writeRegistry(r registry) error {
 	if e != nil {
 		return e
 	}
+	if len(b) > registrySizeLimit {
+		return errors.New("authentication registry exceeds size limit")
+	}
 	f, e := os.CreateTemp(filepath.Dir(m.path()), ".connections-*")
 	if e != nil {
 		return e
@@ -81,7 +108,15 @@ func (m *Manager) writeRegistry(r registry) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	return replaceFile(p, m.path())
+	publish := m.publishRegistry
+	if publish == nil {
+		publish = replaceFile
+	}
+	published, e := publish(p, m.path())
+	if e != nil && published {
+		return &registryPublicationError{cause: e}
+	}
+	return e
 }
 func (m *Manager) Connections(ctx context.Context) ([]Connection, error) {
 	if e := ctx.Err(); e != nil {
@@ -135,7 +170,10 @@ func (m *Manager) save(ctx context.Context, c Connection, access string) (Connec
 	}
 	r.Connections[c.Name] = c
 	if e = m.writeRegistry(r); e != nil {
-		m.deleteSecrets(context.WithoutCancel(ctx), c)
+		var uncertain *registryPublicationError
+		if !errors.As(e, &uncertain) {
+			m.deleteSecrets(context.WithoutCancel(ctx), c)
+		}
 		return Connection{}, e
 	}
 	m.deleteSecrets(context.WithoutCancel(ctx), old)
