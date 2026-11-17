@@ -6,7 +6,7 @@ async function submitReviewVerdict({ github, context, core, fs, env }) {
       || manifest?.schema_version !== 'ocr.run-manifest/v1'
       || manifest.operation !== 'review'
       || manifest.terminal_state !== 'complete'
-      || manifest.run_failure != null) {
+      || (manifest.run_failure !== null && manifest.run_failure !== undefined)) {
     throw new Error('OCR did not produce a complete review; no verdict submitted.');
   }
 
@@ -14,6 +14,12 @@ async function submitReviewVerdict({ github, context, core, fs, env }) {
   if (!/^[0-9a-f]{40}$/.test(head || '')
       || head !== env.OCR_EXPECTED_HEAD) {
     throw new Error('OCR reviewed an unexpected commit; no verdict submitted.');
+  }
+  const baseRef = env.OCR_EXPECTED_BASE_REF;
+  const baseRepository = env.OCR_EXPECTED_BASE_REPOSITORY;
+  if (typeof baseRef !== 'string' || baseRef.length === 0
+      || typeof baseRepository !== 'string' || baseRepository.length === 0) {
+    throw new Error('OCR base snapshot is missing; no verdict submitted.');
   }
 
   const coverage = manifest.coverage;
@@ -42,7 +48,7 @@ async function submitReviewVerdict({ github, context, core, fs, env }) {
       || env.OCR_COMMENTS_FAILED !== '0') {
     throw new Error('OCR findings were not fully published; no verdict submitted.');
   }
-  if (result.warnings != null && !Array.isArray(result.warnings)) {
+  if (result.warnings !== null && result.warnings !== undefined && !Array.isArray(result.warnings)) {
     throw new Error('OCR warnings are invalid; no verdict submitted.');
   }
   if (selected.length === 0) {
@@ -58,8 +64,9 @@ async function submitReviewVerdict({ github, context, core, fs, env }) {
     ...context.repo,
     pull_number: context.issue.number
   });
-  if (pr.state !== 'open' || pr.draft || pr.head.sha !== head) {
-    core.info('PR is closed, a draft, or has new commits; no verdict submitted.');
+  if (pr.state !== 'open' || pr.draft || pr.head.sha !== head
+      || pr.base?.ref !== baseRef || pr.base?.repo?.full_name !== baseRepository) {
+    core.info('PR is closed, a draft, or its head or base changed; no verdict submitted.');
     return;
   }
   const event = count === 0 ? 'APPROVE' : 'REQUEST_CHANGES';

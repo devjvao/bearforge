@@ -31,7 +31,11 @@ async function runVerdict(result, options = {}) {
   const github = { rest: { pulls: {
     async get(params) {
       assert.deepEqual(params, { owner: 'owner', repo: 'repository', pull_number: 10 });
-      return { data: { state: 'open', draft: false, head: { sha: head }, ...options.pr } };
+      return { data: {
+        state: 'open', draft: false, head: { sha: head },
+        base: { ref: 'main', repo: { full_name: 'owner/repository' } },
+        ...options.pr,
+      } };
     },
     async createReview(params) { reviews.push(params); return { data: { html_url: 'https://example.test/review' } }; },
   } } };
@@ -39,6 +43,8 @@ async function runVerdict(result, options = {}) {
   const context = { repo: { owner: 'owner', repo: 'repository' }, issue: { number: 10 } };
   const env = {
     OCR_EXPECTED_HEAD: head,
+    OCR_EXPECTED_BASE_REF: 'main',
+    OCR_EXPECTED_BASE_REPOSITORY: 'owner/repository',
     OCR_EXIT_CODE: '0',
     OCR_COMMENTS_TOTAL: String(result?.comments?.length || 0),
     OCR_COMMENTS_FAILED: '0',
@@ -86,6 +92,27 @@ test('accepts reused coverage and an empty comments array', async () => {
   const { reviews, error } = await runVerdict(result);
   assert.ifError(error);
   assert.equal(reviews[0]?.event, 'APPROVE');
+});
+
+test('accepts explicit null warnings and run failure', async () => {
+  const result = completeResult();
+  result.warnings = null;
+  result.manifest.run_failure = null;
+  const { reviews, error } = await runVerdict(result);
+  assert.ifError(error);
+  assert.equal(reviews[0]?.event, 'APPROVE');
+});
+
+test('does not request changes after the PR base changes at the same head', async () => {
+  const result = completeResult();
+  result.comments = [{ severity: 'medium', comment: 'An issue in the old comparison.' }];
+  result.summary.comments = 1;
+  const { reviews, messages, error } = await runVerdict(result, {
+    pr: { base: { ref: 'release', repo: { full_name: 'owner/repository' } } },
+  });
+  assert.ifError(error);
+  assert.equal(reviews.length, 0);
+  assert.ok(messages.length > 0);
 });
 
 const invalidResults = {
@@ -137,6 +164,8 @@ for (const [name, options] of Object.entries({
   'PR head changed': { pr: { head: { sha: otherHead } } },
   'PR closed': { pr: { state: 'closed' } },
   'PR still a draft': { pr: { draft: true } },
+  'PR base ref changed at the same head': { pr: { base: { ref: 'release', repo: { full_name: 'owner/repository' } } } },
+  'PR base repository changed at the same head': { pr: { base: { ref: 'main', repo: { full_name: 'owner/other-repository' } } } },
 })) {
   test(`submits no verdict when ${name}`, async () => {
     const { reviews, messages, error } = await runVerdict(completeResult(), options);
@@ -152,6 +181,8 @@ for (const [name, options] of Object.entries({
   'missing publication output': { env: { OCR_COMMENTS_FAILED: '' } },
   'inconsistent publication count': { env: { OCR_COMMENTS_TOTAL: '1' } },
   'missing expected commit': { env: { OCR_EXPECTED_HEAD: '' } },
+  'missing expected base ref': { env: { OCR_EXPECTED_BASE_REF: '' } },
+  'missing expected base repository': { env: { OCR_EXPECTED_BASE_REPOSITORY: '' } },
   'unreadable result': { readError: new Error('ENOENT') },
   'malformed JSON': { raw: '{' },
 })) {

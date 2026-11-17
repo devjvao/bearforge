@@ -71,6 +71,7 @@ jobs:
             });
             core.setOutput('state', pr.state);
             core.setOutput('base_ref', pr.base.ref);
+            core.setOutput('base_repository', pr.base.repo.full_name);
             core.setOutput('head_sha', pr.head.sha);
 
       - name: Create GitHub App token
@@ -82,7 +83,8 @@ jobs:
           private-key: ${{ secrets.OCR_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
-          permission-contents: read
+          # GitHub requires repository write access to resolve review threads.
+          permission-contents: write
           permission-pull-requests: write
 
       # The action checks out the trusted base and reads PR head blobs through
@@ -108,6 +110,7 @@ jobs:
           # App authors every new summary and finding.
           sticky_summary: 'false'
           incremental: 'false'
+          resolve_outdated: 'true'
           base_ref: ${{ steps.pr-context.outputs.base_ref }}
           head_sha: ${{ steps.pr-context.outputs.head_sha }}
 
@@ -116,6 +119,8 @@ jobs:
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.0.1
         env:
           OCR_EXPECTED_HEAD: ${{ steps.pr-context.outputs.head_sha || github.event.pull_request.head.sha }}
+          OCR_EXPECTED_BASE_REF: ${{ steps.pr-context.outputs.base_ref || github.event.pull_request.base.ref }}
+          OCR_EXPECTED_BASE_REPOSITORY: ${{ steps.pr-context.outputs.base_repository || github.event.pull_request.base.repo.full_name }}
           OCR_COMMENTS_TOTAL: ${{ steps.ocr.outputs.comments_total }}
           OCR_COMMENTS_FAILED: ${{ steps.ocr.outputs.comments_failed }}
         with:
@@ -132,7 +137,7 @@ jobs:
                   || manifest?.schema_version !== 'ocr.run-manifest/v1'
                   || manifest.operation !== 'review'
                   || manifest.terminal_state !== 'complete'
-                  || manifest.run_failure != null) {
+                  || (manifest.run_failure !== null && manifest.run_failure !== undefined)) {
                 throw new Error('OCR did not produce a complete review; no verdict submitted.');
               }
 
@@ -140,6 +145,12 @@ jobs:
               if (!/^[0-9a-f]{40}$/.test(head || '')
                   || head !== env.OCR_EXPECTED_HEAD) {
                 throw new Error('OCR reviewed an unexpected commit; no verdict submitted.');
+              }
+              const baseRef = env.OCR_EXPECTED_BASE_REF;
+              const baseRepository = env.OCR_EXPECTED_BASE_REPOSITORY;
+              if (typeof baseRef !== 'string' || baseRef.length === 0
+                  || typeof baseRepository !== 'string' || baseRepository.length === 0) {
+                throw new Error('OCR base snapshot is missing; no verdict submitted.');
               }
 
               const coverage = manifest.coverage;
@@ -168,7 +179,7 @@ jobs:
                   || env.OCR_COMMENTS_FAILED !== '0') {
                 throw new Error('OCR findings were not fully published; no verdict submitted.');
               }
-              if (result.warnings != null && !Array.isArray(result.warnings)) {
+              if (result.warnings !== null && result.warnings !== undefined && !Array.isArray(result.warnings)) {
                 throw new Error('OCR warnings are invalid; no verdict submitted.');
               }
               if (selected.length === 0) {
@@ -184,8 +195,9 @@ jobs:
                 ...context.repo,
                 pull_number: context.issue.number
               });
-              if (pr.state !== 'open' || pr.draft || pr.head.sha !== head) {
-                core.info('PR is closed, a draft, or has new commits; no verdict submitted.');
+              if (pr.state !== 'open' || pr.draft || pr.head.sha !== head
+                  || pr.base?.ref !== baseRef || pr.base?.repo?.full_name !== baseRepository) {
+                core.info('PR is closed, a draft, or its head or base changed; no verdict submitted.');
                 return;
               }
               const event = count === 0 ? 'APPROVE' : 'REQUEST_CHANGES';

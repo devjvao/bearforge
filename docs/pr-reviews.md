@@ -20,7 +20,8 @@ In the repository's **Settings > Secrets and variables > Actions**, configure:
 The OpenAI model and endpoint have defaults; the OpenAI API key and GitHub App
 credentials must be configured before reviews can run. GitHub supplies a
 read-only `GITHUB_TOKEN` for resolving PR context and checking out trusted base
-content. A separate App installation token posts the review comments.
+content. A separate App installation token posts reviews and resolves outdated
+OCR threads.
 
 The workflow explicitly selects `openai-responses` and sends
 `{"reasoning":{"effort":"high"}}`. GPT-6.1 Sol requires the Responses API for
@@ -38,7 +39,7 @@ and [OCR action inputs](https://github.com/alibaba/open-code-review/blob/178543d
    name, for example `Devjvao Code Review`, and use `https://github.com/devjvao`
    as its homepage. Disable **Active** under **Webhook**; this workflow does not
    need a webhook endpoint or event subscriptions.
-2. Grant these **Repository permissions**: **Contents: Read-only**, **Pull
+2. Grant these **Repository permissions**: **Contents: Read and write**, **Pull
    requests: Read and write**, and the automatically included **Metadata:
    Read-only**. Select **Only on this account** under where the App can be
    installed to keep it available for repositories in your account.
@@ -54,8 +55,12 @@ and [OCR action inputs](https://github.com/alibaba/open-code-review/blob/178543d
    repository. The same App can serve multiple repositories; this workflow
    requests a token scoped only to Bearforge.
 
+For an existing App, update its Contents permission and approve the installation's
+new permission request before merging the workflow. GitHub requires repository
+write access to resolve review threads, in addition to Pull requests write.
+
 The pinned `actions/create-github-app-token` action creates a token scoped to
-this repository with only Contents read and Pull requests write permissions.
+this repository with Contents write and Pull requests write permissions.
 It revokes the token at job completion. Installation tokens last up to one hour,
 so the workflow's 30-minute limit stays within their lifetime. No installation
 ID or personal access token is needed. See
@@ -96,7 +101,16 @@ Each PR has one active review; a new review request cancels its previous run.
 Ordinary comments and outside PR events do not cancel a running review. Findings
 appear as inline comments from the configured App, with a fresh summary for
 each run. Existing inline comments are preserved. Each run reviews the full PR
-diff.
+diff from the merge base to the reviewed head, including on each new push.
+`incremental` only deduplicates posted comments; it does not reduce the files sent
+to the model. Reviewing only changes since a prior successful run requires
+`checkpoint_range` with sticky summaries, which this workflow leaves disabled.
+
+`resolve_outdated: 'true'` resolves OCR-marked threads that GitHub marks outdated,
+provided they have no human replies and no overlapping finding in the new review.
+This works with the App's identity. The pinned action only attempts cleanup after
+a run reports at least one finding; a zero-finding run leaves old threads open.
+Failed cleanup is reported as a warning and does not discard the review.
 
 After publishing its findings, the App submits a GitHub review verdict:
 
@@ -107,11 +121,12 @@ After publishing its findings, the App submits a GitHub review verdict:
 
 The verdict is attached to the reviewed commit. Failed, incomplete, or malformed
 reviews do not submit a verdict. Neither do reviews of closed or draft PRs, runs
-with no selected files, or runs whose PR head changed before the verdict check.
+with no selected files, or runs whose PR head, base branch, or base repository
+changed before the verdict check.
 OCR's normal file exclusions still apply: approval covers its selected files.
 A clean re-review can replace the App's previous request for changes with an
 approval. Existing comments remain available. This uses the same App token and
-requires no additional secrets or permissions.
+requires no additional secrets. Contents write is used for outdated-thread cleanup.
 
 ## Approving contributor test CI
 
