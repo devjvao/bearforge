@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/devjvao/bearforge/internal/app"
@@ -84,14 +85,18 @@ func TestImportChoicesMarkRetiredProviderIdentity(t *testing.T) {
 
 type importGit struct {
 	app.Git
-	local       string
-	fail        string
+	local string
+	fail  string
+	// mu guards transfer observations while repositories run concurrently.
+	mu          sync.Mutex
 	attempts    []string
 	initialized int
 }
 
 func (g *importGit) Clone(ctx context.Context, remote, path string) error {
+	g.mu.Lock()
 	g.attempts = append(g.attempts, remote)
+	g.mu.Unlock()
 	if err := g.Git.Clone(ctx, g.local, path); err != nil {
 		return err
 	}
@@ -104,7 +109,12 @@ func (g *importGit) Clone(ctx context.Context, remote, path string) error {
 	}
 	return nil
 }
-func (g *importGit) Initialize(context.Context, string) error { g.initialized++; return nil }
+func (g *importGit) Initialize(context.Context, string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.initialized++
+	return nil
+}
 
 func TestImportContinuesIndependentFailureAndResumePreservesDirectory(t *testing.T) {
 	s, store, remote := fixture(t)
@@ -151,7 +161,7 @@ func TestImportCatalogFailureStopsBatchAndResumeDoesNotReclone(t *testing.T) {
 	s.Git = g
 	failing := &failingCatalog{IntentStore: store, fail: true}
 	s.Store = failing
-	req := app.ImportRequest{Repositories: []app.ImportRepository{importSelection("api"), importSelection("worker")}, DryRun: true}
+	req := app.ImportRequest{Repositories: []app.ImportRepository{importSelection("api"), importSelection("worker")}, Jobs: 1, DryRun: true}
 	p, err := s.ImportRepositories(t.Context(), req)
 	if err != nil {
 		t.Fatal(err)
@@ -326,7 +336,7 @@ func TestImportCancellationStopsScheduling(t *testing.T) {
 	s, store, remote := fixture(t)
 	g := &importGit{Git: s.Git, local: remote}
 	s.Git = g
-	req := app.ImportRequest{Repositories: []app.ImportRepository{importSelection("api"), importSelection("worker")}, DryRun: true}
+	req := app.ImportRequest{Repositories: []app.ImportRepository{importSelection("api"), importSelection("worker")}, Jobs: 1, DryRun: true}
 	p, err := s.ImportRepositories(t.Context(), req)
 	if err != nil {
 		t.Fatal(err)

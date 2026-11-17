@@ -99,7 +99,7 @@ func newRoot(o *options) *cobra.Command {
 	f.BoolVar(&o.noInput, "no-input", false, "Never prompt")
 	f.BoolVar(&o.dry, "dry-run", false, "Preview without writing")
 	f.BoolVar(&o.yes, "yes", false, "Confirm the displayed operation")
-	f.IntVarP(&o.jobs, "jobs", "j", 0, "Concurrent workers (fetch default 4, exec default 1)")
+	f.IntVarP(&o.jobs, "jobs", "j", 0, "Concurrent workers (fetch/import default 4, exec default 1)")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		o.progressTitle = strings.TrimPrefix(cmd.CommandPath(), "bearforge ")
 		if o.json {

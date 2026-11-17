@@ -40,7 +40,7 @@ func TestDashboardImportAdapterKeepsPreviewObserverLocal(t *testing.T) {
 	original := app.New(store, nil, operation.New(store))
 	original.Observe = func(app.Event) { t.Error("adapter used original observer") }
 	source := dashboardService{Service: original}
-	req := app.ImportRequest{DryRun: true, Repositories: []app.ImportRepository{{ID: "api", Repository: domain.RemoteRepository{Provider: "github", Host: "github.com", APIURL: "https://api.github.com", ID: "123", Name: "api", FullName: "org/api", HTTPSURL: "https://github.com/org/api.git"}, Source: domain.RepositorySource{Provider: "github", Host: "github.com", APIURL: "https://api.github.com"}}}}
+	req := dashboardImportRequest()
 	result, err := source.ImportRepositories(t.Context(), req, func(app.Event) {})
 	if err != nil || result.PlanDigest == "" || len(result.Items) != 1 {
 		t.Fatalf("adapter preview: %+v, %v", result, err)
@@ -54,6 +54,31 @@ func TestDashboardImportAdapterKeepsPreviewObserverLocal(t *testing.T) {
 		t.Fatal("adapter discarded expected plan")
 	}
 }
+
+func TestDashboardImportAdapterForwardsConfiguredJobs(t *testing.T) {
+	store := config.New(filepath.Join(cliFixtureDir(t), "root"))
+	source := dashboardService{Service: app.New(store, nil, operation.New(store)), jobs: 65}
+	_, err := source.ImportRepositories(t.Context(), dashboardImportRequest(), nil)
+	var problem *domain.Error
+	if !errors.As(err, &problem) || problem.Code != "invalid" {
+		t.Fatalf("invalid --jobs did not reach import validation: %v", err)
+	}
+}
+
+func TestDashboardImportAdapterPreservesExplicitJobs(t *testing.T) {
+	store := config.New(filepath.Join(cliFixtureDir(t), "root"))
+	source := dashboardService{Service: app.New(store, nil, operation.New(store)), jobs: 65}
+	req := dashboardImportRequest()
+	req.Jobs = 1
+	if _, err := source.ImportRepositories(t.Context(), req, nil); err != nil {
+		t.Fatalf("adapter replaced explicit import jobs: %v", err)
+	}
+}
+
+func dashboardImportRequest() app.ImportRequest {
+	return app.ImportRequest{DryRun: true, Repositories: []app.ImportRepository{{ID: "api", Repository: domain.RemoteRepository{Provider: "github", Host: "github.com", APIURL: "https://api.github.com", ID: "123", Name: "api", FullName: "org/api", HTTPSURL: "https://github.com/org/api.git"}, Source: domain.RepositorySource{Provider: "github", Host: "github.com", APIURL: "https://api.github.com"}}}}
+}
+
 func TestDashboardImportReportsAuthInitializationFailure(t *testing.T) {
 	expected := errors.New("registry unavailable")
 	source := dashboardService{authErr: expected}
