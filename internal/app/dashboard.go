@@ -33,6 +33,14 @@ type OperationSummary struct {
 // first registered workspace. Observation failures remain visible alongside any
 // usable results; cancellation and invalid selections are returned as errors.
 func (s *Service) Dashboard(ctx context.Context, workspace string) (DashboardSnapshot, error) {
+	return s.DashboardWithProgress(ctx, workspace, nil)
+}
+
+// DashboardWithProgress publishes an initial snapshot with inspecting rows,
+// followed by independent snapshots as repositories finish. Callbacks run
+// serially on the caller and must return promptly. The returned snapshot is the
+// final observation, including aggregate problems and its observation time.
+func (s *Service) DashboardWithProgress(ctx context.Context, workspace string, onProgress func(DashboardSnapshot)) (DashboardSnapshot, error) {
 	snapshot := DashboardSnapshot{Root: s.Store.RootPath()}
 	if err := ctx.Err(); err != nil {
 		return snapshot, err
@@ -72,12 +80,41 @@ func (s *Service) Dashboard(ctx context.Context, workspace string) (DashboardSna
 	if err := ctx.Err(); err != nil {
 		return snapshot, err
 	}
+	publish := func() {
+		if onProgress == nil {
+			return
+		}
+		update := snapshot
+		update.Items = slices.Clone(snapshot.Items)
+		update.Workspaces = slices.Clone(snapshot.Workspaces)
+		update.PendingOperations = slices.Clone(snapshot.PendingOperations)
+		update.Problems = slices.Clone(snapshot.Problems)
+		onProgress(update)
+	}
 	if workspace != "" {
-		result, err := s.Status(ctx, workspace)
+		indices := map[string]int{}
+		var start func([]Item)
+		var completed func(Item)
+		if onProgress != nil {
+			start = func(items []Item) {
+				snapshot.Items = items
+				for i, item := range items {
+					indices[item.Repository] = i
+				}
+				publish()
+			}
+			completed = func(item Item) {
+				snapshot.Items[indices[item.Repository]] = item
+				publish()
+			}
+		}
+		result, err := s.status(ctx, workspace, start, completed)
 		snapshot.Items = result.Items
 		if err != nil {
 			snapshot.Problems = append(snapshot.Problems, *ProblemFor(err))
 		}
+	} else {
+		publish()
 	}
 	if err := ctx.Err(); err != nil {
 		return snapshot, err

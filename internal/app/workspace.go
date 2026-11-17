@@ -511,66 +511,6 @@ func (s *Service) applyAddStep(ctx context.Context, op *Operation, step *Step, w
 	return s.Store.SaveWorkspace(w, rev)
 }
 
-func (s *Service) Status(ctx context.Context, name string) (Result, error) {
-	r := NewResult("status")
-	w, _, err := s.Store.LoadWorkspace(name)
-	if err != nil {
-		return r, err
-	}
-	c, _, err := s.Store.LoadCatalog()
-	if err != nil {
-		return r, err
-	}
-	names := []string{}
-	for id := range w.Repositories {
-		names = append(names, id)
-	}
-	var failures []error
-	for _, id := range unique(names) {
-		mapping := w.Repositories[id]
-		item := Item{Repository: id, Workspace: name, ExpectedBranch: mapping.Branch}
-		p, err := s.treePath(name, id)
-		item.Path = p
-		if err == nil {
-			repo, ok := c.Repositories[id]
-			if !ok {
-				err = domain.E("conflict", "repository is no longer registered")
-			} else {
-				var bare string
-				bare, err = s.checkRepository(ctx, repo)
-				if err == nil {
-					err = s.Git.VerifyCommon(ctx, p, bare)
-				}
-			}
-		}
-		if err == nil {
-			var status domain.Status
-			status, err = s.Git.Inspect(ctx, p)
-			if err == nil {
-				item.Status = &status
-				item.Branch = status.Branch
-				item.Outcome = "clean"
-				if status.Dirty() {
-					item.Outcome = "changes"
-				}
-				if status.Branch != mapping.Branch {
-					item.Outcome = "mapping_drift"
-				}
-			}
-		}
-		if err != nil {
-			item.Outcome = "unreadable"
-			item.Problem = ProblemFor(err)
-			failures = append(failures, err)
-		}
-		r.Items = append(r.Items, item)
-	}
-	if len(failures) > 0 {
-		r.Outcome = "partial"
-	}
-	return r, errors.Join(failures...)
-}
-
 func pathsEqual(a, b string) bool {
 	if runtime.GOOS == "windows" {
 		return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))

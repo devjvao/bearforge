@@ -10,6 +10,8 @@ bearforge --root /path/to/code tui audit-feature
 
 Starting without a workspace selects the first workspace alphabetically. The dashboard inspects only the selected workspace. Repository details show actual/intended branches, staged/modified/untracked/conflicted counts, upstream and locally observed ahead/behind, detached/unborn HEAD, and per-repository errors. Observations are snapshots; external Git or editor activity can change state during inspection.
 
+Local inspection uses `defaults.jobs` in `<root>/.bearforge/catalog.yaml` (default 4, range 1–64). Rows start as `inspecting` and update as each repository finishes; the header counts completed repositories, including failures. Repository order and selection remain stable. Refreshing or switching workspaces cancels the previous inspection; quitting waits for active checks to stop. Refresh stays local and does not fetch.
+
 For first-time setup, follow [authentication](onboarding.md#authenticate-github-or-bitbucket) and [repository discovery/import](onboarding.md#discover-and-import-several-repositories). Import registers repositories; adding them to a workspace is a separate action.
 
 ## Controls

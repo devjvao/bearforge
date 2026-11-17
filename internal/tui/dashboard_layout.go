@@ -106,6 +106,15 @@ func (m dashboardModel) headerLines() []string {
 	}
 	if m.loading {
 		summary = "Reading local repository status..."
+		if m.loadProgress && len(m.data.Items) > 0 {
+			completed := 0
+			for _, item := range m.data.Items {
+				if item.Outcome != "inspecting" {
+					completed++
+				}
+			}
+			summary = fmt.Sprintf("Reading local repository status... %d/%d", completed, len(m.data.Items))
+		}
 	}
 	if m.syncRun != nil {
 		summary = m.syncHeader()
