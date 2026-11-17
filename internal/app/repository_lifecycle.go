@@ -3,7 +3,7 @@ package app
 import (
 	"context"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func (s *Service) applyRepositoryLifecycle(ctx context.Context, op *Operation) (Result, error) {

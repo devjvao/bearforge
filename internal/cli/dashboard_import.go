@@ -3,9 +3,9 @@ package cli
 import (
 	"context"
 
-	"bearforge/internal/app"
-	"bearforge/internal/auth"
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/auth"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func (s dashboardService) ImportConnections(ctx context.Context) ([]auth.Connection, error) {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 // ConnectionBinding contains only nonsecret routing metadata for one Git remote.

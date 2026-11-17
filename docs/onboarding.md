@@ -6,14 +6,7 @@ Bearforge keeps one managed bare repository per identity and ordinary linked wor
 
 For a published release, download the archive for your OS/architecture, `checksums.txt`, and `checksums.txt.sigstore.json`. Follow [release verification](releases.md) before extracting or running it. Archives include the executable, license, this guide, release instructions and a binary-derived dependency inventory.
 
-To evaluate a source checkout:
-
-```powershell
-go build -trimpath -o bin/bearforge.exe ./cmd/bearforge
-.\bin\bearforge.exe version
-```
-
-On Linux/macOS, build with `go build -trimpath -o bin/bearforge ./cmd/bearforge` and put that executable on PATH. Source builds, CI and production releases require Go 1.27.4, the latest stable release pinned in `go.mod`. Older Go releases are unsupported.
+To evaluate a source checkout, follow [the source build guide](development/README.md#build-from-source). The canonical module is `github.com/devjvao/bearforge`; the currently published `v0.2.0` tag predates that module-path change, so use a release archive or a checkout build for now.
 
 Choose a new root for managed data. PowerShell:
 
@@ -31,11 +24,35 @@ bearforge version
 
 An explicit `--root PATH` overrides this environment variable. Otherwise Bearforge searches upward from the current directory for `.bearforge/catalog.yaml`, then falls back to `~/code`. Keep the same root selection when inspecting or recovering an operation.
 
+Definitions live under `.bearforge`, bare repositories under `repos`, and worktrees under the workspace name. Workspace names must be portable directory names. Local source paths such as `./remote` are made absolute at registration so sync and recovery retain the same repository identity after directory changes.
+
 ## Configuration formats
 
 The repository catalog uses `schema_version: 2` and records active and retired repository identities.
 
 After registering repositories, use `bearforge config validate` to check the catalog and workspace definitions, and `bearforge doctor` to inspect storage and Git health. Ordinary catalog updates preserve comments and extension data.
+
+## Command reference
+
+Use `bearforge COMMAND --help` for flags and examples.
+
+| Command | Purpose |
+| --- | --- |
+| `auth login`, `status`, `logout` | Save, inspect or remove a provider token connection |
+| `repo add`, `list`, `inspect`, `sync` | Register and inspect managed repositories |
+| `repo rebind` | Review a replacement saved connection for registered repositories |
+| `repo remove` / `retire`, `retired`, `restore --operation ID` | Retire and restore bare repositories without deletion |
+| `workspace create` / `init`, `add`, `list`, `show` / `ls`, `path` | Create workspaces and manage membership |
+| `workspace remove-repo`, `remove` | Review safe worktree/workspace removal |
+| `sync`, `status` | Fetch registered repositories or inspect local workspace state |
+| `exec WORKSPACE -- COMMAND ARG...` | Run a command across verified worktrees |
+| `doctor [WORKSPACE]` | Run read-only accumulated health/recovery checks |
+| `pr list WORKSPACE` | Look up GitHub/Bitbucket pull requests |
+| `tui [WORKSPACE]` | Open the interactive dashboard, including provider discovery/import |
+| `operations list`, `show`, `resume`, `abandon` | Inspect and resolve unfinished mutations |
+| `config validate`, `completion`, `version` | Validate definitions, generate shell completion or inspect the executable |
+
+`workspace create` makes an empty workspace; use `workspace add` or the dashboard's `a` picker to select members. There are no workspace templates. Use `workspace path NAME` to obtain a path for your shell or editor; the command cannot change its parent shell's working directory.
 
 ## Authenticate GitHub or Bitbucket
 
@@ -185,7 +202,7 @@ bearforge tui audit-feature
 
 Each workspace gets a separate worktree per member. Branches default to the workspace name. `workspace add` supports `--branch`, `--branch-map`, `--base` and `--track` when defaults are insufficient. Existing branches are reused only after safety checks; a branch already checked out elsewhere is refused.
 
-The dashboard offers `i` provider discovery/import, `p` open PR lookup, `P` uncached PR refresh, `s` sync, `a` registered-repository selection, `n` workspace creation, `d` selected repository removal and `D` whole workspace removal. PR lookup includes filtered members and remains keyboard-responsive. Its header shows progress and completion feedback, including no matches, failures and cached results, without scrolling; timestamped snapshots/errors remain in scrollable repository details. Startup, navigation and `r` stay local; local refresh/workspace changes cancel and invalidate PR results. Mutation previews require `y`; Escape returns without executing. `v` reopens the latest results. Ctrl-C cancels and drains active work before restoring the terminal. See [dashboard controls](../README.md#workspace-dashboard).
+The dashboard offers provider import, workspace creation, repository selection, sync, pull-request lookup and recovery inspection. Mutation previews require `y`; Escape returns without executing. See [dashboard controls and behavior](dashboard.md).
 
 Sync fetches/prunes remote-tracking refs. It does not rebase, merge, reset, switch branches or push. Refresh/status/doctor use local observations and do not fetch.
 
@@ -230,7 +247,9 @@ repositories:
       token_env: COMPANY_GITHUB_TOKEN
 ```
 
-Set the named environment variable using your normal secret-management process. `token_env` is a variable name, never a token value. Explicitly naming an unset/empty variable fails authentication. Default public `GH_TOKEN`/`GITHUB_TOKEN` credentials are never forwarded to custom APIs; without `token_env`, a custom API is accessed anonymously. API URLs must use HTTPS without embedded credentials, query or fragment. Cross-origin pagination/redirects are refused. Configure `source_repository` explicitly when the actual remote cannot identify the head repository or its host differs from the provider host. Use `github.com` with `api_url: https://api.github.com` for explicit public configuration.
+For Enterprise authentication, use a saved connection scoped to that installation or set the named environment variable through your normal secret-management process. `token_env` is a variable name, never a token value; it overrides a saved connection, and an unset/empty explicitly named variable fails authentication. Without that override, an explicitly bound saved connection is used; an unbound repository can use a single matching saved connection. Multiple matches require an explicit connection selection. With no applicable credential, requests are anonymous. Default public `GH_TOKEN`/`GITHUB_TOKEN` credentials are never forwarded to custom APIs.
+
+API URLs must use HTTPS without embedded credentials, query or fragment. Cross-origin pagination/redirects are refused. Configure `source_repository` explicitly when the actual remote cannot identify the head repository or its host differs from the provider host. Use `github.com` with `api_url: https://api.github.com` for explicit public configuration.
 
 Pagination links and same-origin redirects must retain the configured repository's PR-list path. A rename, redirect or pagination link that changes or obscures those coordinates returns a provider error without caching an empty result. Update the actual Git remote or explicit provider repository metadata to the current repository coordinates, then retry.
 
@@ -252,7 +271,7 @@ repositories:
       host: bitbucket.org
       repository: team/api
       source_repository: alice/api # Optional when inferred from the actual remote
-      token_env: TEAM_BITBUCKET_TOKEN # Optional override of BITBUCKET_TOKEN
+      token_env: TEAM_BITBUCKET_TOKEN # Optional explicit credential override
 ```
 
 Cloud closed results include merged, declined and superseded PRs. Merged results display `merged`; declined/superseded results display `closed`. The [Cloud endpoint reference](https://developer.atlassian.com/cloud/bitbucket/rest/api-group-pullrequests/) describes its read scope and state filters.
@@ -273,11 +292,11 @@ repositories:
       token_env: COMPANY_BITBUCKET_TOKEN
 ```
 
-Use an HTTP access token with repository read permission; the adapter sends Bearer authentication. [Atlassian documents Server/Data Center HTTP access tokens](https://confluence.atlassian.com/bitbucketserver093/http-access-tokens-1472430864.html). `token_env` names an environment variable, never its value. An unset explicitly selected variable fails authentication. Without `token_env`, company endpoints are anonymous; default Cloud and GitHub credentials are never forwarded.
+Use an HTTP access token with repository read permission; the adapter sends Bearer authentication. [Atlassian documents Server/Data Center HTTP access tokens](https://confluence.atlassian.com/bitbucketserver093/http-access-tokens-1472430864.html). A saved connection scoped to the installation can supply it. Alternatively, `token_env` names an environment variable, never its value; it takes precedence over saved credentials, and an unset explicitly selected variable fails authentication. With neither a bound/matching saved connection nor an explicit environment credential, requests are anonymous. Default Cloud and GitHub credentials are never forwarded to company endpoints.
 
 The API URL is the REST root, without a repository path. HTTPS remotes such as `https://git.company.example:8443/bitbucket/scm/TEAM/api.git` infer the HTTPS port and installation context. SSH remotes such as `ssh://git@git.company.example:7999/TEAM/api.git` or `git@git.company.example:TEAM/api.git` default to `https://HOST/rest/api/1.0`; an SSH port does not identify the HTTPS port. Set `api_url` for a proxy, different API host or installation context. If the Git remote uses an SSH alias, provide the real `host`, `repository` and `source_repository` explicitly.
 
-API URLs require HTTPS and the system trust store; no TLS-verification bypass is provided. Pagination and redirects retain the configured API origin and exact repository PR-list path. Renames, unsafe pages, access/rate-limit errors and incomplete responses fail per repository without caching an empty result. Mixed GitHub, Cloud and Server members work in one request. The query in JSON/JSONL includes the selected `provider` kind. [Bitbucket verification evidence](development/bitbucket-pr-lookup-progress.md) records local coverage and deployment limits.
+API URLs require HTTPS and the system trust store; no TLS-verification bypass is provided. Pagination and redirects retain the configured API origin and exact repository PR-list path. Renames, unsafe pages, access/rate-limit errors and incomplete responses fail per repository without caching an empty result. Mixed GitHub, Cloud and Server members work in one request. The query in JSON/JSONL includes the selected `provider` kind. The repository's [Bitbucket verification evidence](https://github.com/devjvao/bearforge/blob/main/docs/development/bitbucket-pr-lookup-progress.md) records local coverage and deployment limits.
 
 To narrow PR matches to a target branch by default, extend the member in the workspace definition with `pr_target` (distinct from worktree creation `base`):
 
@@ -290,7 +309,7 @@ repositories:
 
 `--base` overrides that target for one CLI request. Dry runs verify local identity and resolve the query without contacting provider APIs. Lookup never fetches/checks out, changes refs/files, takes a mutation lock or creates a journal. Human output includes titles, URLs, state/draft, source/target, update time, `observed_at` and `cached`. JSON returns one result document, and JSONL a sequenced final result; successful no-match observations carry an empty PR array.
 
-The provider bounds each lookup to 30 seconds, 100 pages and 8 MiB per response, with two transient retries at most. Rate limits produce errors and a host cooldown; refresh does not bypass that cooldown. Successful observations stay in process memory for 60 seconds, up to 128 entries per provider client, separated by complete query and credential identity. No cache is written to disk; separate CLI processes start empty. The dashboard reuses its provider clients: `p` may return a cached snapshot, and `P` bypasses cached successes. Details label observation time/cache status and remain historical snapshots as they age; use `P` for a new observation. Local refresh and workspace changes discard old PR results. [GitHub verification](development/github-pr-lookup-progress.md) and [Bitbucket verification](development/bitbucket-pr-lookup-progress.md) distinguish fixture coverage, public smoke testing and maintainer-owned private/enterprise validation.
+The provider bounds each lookup to 30 seconds, 100 pages and 8 MiB per response, with two transient retries at most. Rate limits produce errors and a host cooldown; refresh does not bypass that cooldown. Successful observations stay in process memory for 60 seconds, up to 128 entries per provider client, separated by complete query and credential identity. No cache is written to disk; separate CLI processes start empty. The dashboard reuses its provider clients: `p` may return a cached snapshot, and `P` bypasses cached successes. Details label observation time/cache status and remain historical snapshots as they age; use `P` for a new observation. Local refresh and workspace changes discard old PR results. The repository's [GitHub verification](https://github.com/devjvao/bearforge/blob/main/docs/development/github-pr-lookup-progress.md) and [Bitbucket verification](https://github.com/devjvao/bearforge/blob/main/docs/development/bitbucket-pr-lookup-progress.md) distinguish fixture coverage, public smoke testing and maintainer-owned private/enterprise validation.
 
 ## Run a command across a workspace
 
@@ -319,6 +338,8 @@ Child stdin is closed by default. `--interactive` requires terminal streams, hum
 
 ## Output and automation
 
+`--output=json` emits one final result; `--output=jsonl` emits sequenced progress and a final result. Use `status WORKSPACE --check` for automation that must fail on worktree changes or drift, or `status WORKSPACE --json` for structured observations. Ahead/behind values describe locally fetched refs rather than a live server query.
+
 ```sh
 bearforge --output=json exec audit-feature -- git status --short
 bearforge --output=jsonl exec audit-feature -- git status --short
@@ -331,6 +352,23 @@ JSONL emits sequenced started/output/completed events and a final result. Output
 
 Independent jobs finish by default. Successful repositories are retained after failures. A fully drained exec journal is complete even when a child failed, so a failed build does not block future mutations. If Bearforge itself was interrupted, inspect its execution journal and explicitly abandon it after reviewing child effects. `operations resume` never reruns arbitrary commands.
 
+### Human terminal output
+
+Interactive commands use tables and complete wrapped documents, then exit without a pager or dismissal key. Status shows change counts and upstream drift; inspection, retired repositories, operations, dry-run plans and summaries use readable tables. Long names, hashes, paths and operation IDs wrap without losing data, and static tables print every row. Narrow tables switch to labeled records to preserve full values. Empty lists include guidance where applicable; successful validation is explicit.
+
+Interactive `repo add`, `sync`, `workspace add` and `operations resume` show a compact spinner with an operation title, elapsed time and repository states. Status, workspace inspection and doctor show local checking feedback. Removal/restoration start progress only after confirmation. Labels distinguish synced, skipped, not-run and cancelled states; the spinner indicates activity rather than Git transfer percentage. Ctrl-C or `q` cancels and waits for cleanup. Use `--ui=plain` to disable inline progress. Pipes, CI, quiet/no-input and machine-output modes remain plain.
+
+Human styling follows the [dashboard's color policy](dashboard.md#terminal-layout-and-color). `--color=never`, any nonempty `NO_COLOR`, or `TERM=dumb` disables color and emphasis. Redirected output stays plain even with `--color=always`. JSON/JSONL, shell completions, child-process output and `workspace path` remain undecorated.
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | Success |
+| 1 | Operation failure |
+| 2 | Invalid input |
+| 3 | Safety, conflict or confirmation refusal |
+| 4 | Missing Git |
+| 130 | Cancellation |
+
 ## Diagnose and retire safely
 
 ```sh
@@ -342,7 +380,7 @@ bearforge operations show OPERATION_ID
 
 Doctor is read-only and accumulates independent findings: catalog/schema problems, malformed workspace definitions, remote/common-directory drift, changed worktrees, missing/prunable registrations, unregistered destinations, preserved retired storage and unfinished/corrupt journals. It does not fetch, prune, repair, clone or change files. Healthy returns zero; actionable health findings return three.
 
-Before retiring a repository, remove its clean worktrees and workspace references. Safe removal refuses local/untracked/ignored data and retains branches/history:
+Before retiring a repository, remove its clean worktrees and workspace references. Safe removal refuses tracked changes, untracked/ignored content, special index flags, sparse checkouts, locked worktrees, unfinished rebase/merge/cherry-pick/revert operations and submodules. It preserves branches and otherwise-unreferenced surviving HEAD reflog tips through Git recovery branches. It never recursively deletes a checkout as a fallback and has no force/discard option:
 
 ```sh
 bearforge workspace remove-repo audit-feature api --dry-run
@@ -368,6 +406,12 @@ bearforge operations abandon OPERATION_ID --yes
 ```
 
 Resume verifies observed state and never blindly repeats destructive effects. Abandon leaves all files and Git effects intact and records that you will reconcile manually. Exec is the exception to replay: inspect and abandon an interrupted exec, then run a new command explicitly if appropriate.
+
+Mutations write journals before Git effects. An unfinished mutation blocks further mutations in the same root until resolved. Resume checks paths, repository identity, branches and commit IDs, and refuses changed or ambiguous state. Lifecycle recovery probes its source/destination and metadata. Fetch can be safely repeated and is not journaled.
+
+If workspace creation stops after making its directory but before saving its manifest, recovery refuses that unexplained directory. Inspect it and move it aside, or remove it yourself only if empty, before resuming. Bearforge does not assume that an existing directory is disposable.
+
+Configure SSH agents or Git credential helpers before network commands unless using the scoped HTTPS helper from a saved-connection import. Managed Git operations disable terminal prompts; credential managers may have their own UI. Keep passwords/tokens out of remote URLs, and avoid simultaneous manual configuration/worktree changes during mutations.
 
 Generate completion for your shell:
 

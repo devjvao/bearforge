@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bearforge/internal/app"
-	"bearforge/internal/buildinfo"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/buildinfo"
 )
 
 func addVersionCommand(root *cobra.Command, o *options) {

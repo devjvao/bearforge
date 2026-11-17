@@ -3,7 +3,7 @@ package cli
 import (
 	"context"
 
-	"bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/app"
 )
 
 func (s dashboardService) InspectOperation(ctx context.Context, id string) (*app.Operation, error) {

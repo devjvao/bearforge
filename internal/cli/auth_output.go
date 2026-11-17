@@ -8,8 +8,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
 
-	"bearforge/internal/app"
-	"bearforge/internal/auth"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/auth"
 )
 
 func (o *options) renderAuthentication(result app.Result) error {

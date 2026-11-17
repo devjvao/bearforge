@@ -8,8 +8,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"bearforge/internal/app"
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 type workspaceRemovalRecoveryDashboard struct {

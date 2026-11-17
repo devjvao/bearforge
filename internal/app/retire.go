@@ -10,7 +10,7 @@ import (
 	"os"
 	"slices"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 type RetireRequest struct {

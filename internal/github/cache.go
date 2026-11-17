@@ -3,7 +3,7 @@ package github
 import (
 	"time"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 type cacheKey struct {

@@ -9,8 +9,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"bearforge/internal/app"
-	"bearforge/internal/auth"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/auth"
 )
 
 func TestDashboardImportReloginProviderSwitchResetsEndpoints(t *testing.T) {

@@ -12,8 +12,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"bearforge/internal/app"
-	"bearforge/internal/config"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/config"
 )
 
 func operationFixture(t *testing.T) (*config.Store, *Store) {

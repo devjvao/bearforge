@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"bearforge/internal/app"
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 type execRunnerFunc func(context.Context, domain.ProcessSpec, func(domain.OutputChunk)) (domain.ProcessResult, error)

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func TestLoginDefaultsToGuidedTokenDespiteOAuthEnvironment(t *testing.T) {

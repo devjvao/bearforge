@@ -5,7 +5,7 @@ import (
 	"maps"
 	"sync"
 
-	"bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/app"
 )
 
 // One replaceable state per selected repository and one notification bound the

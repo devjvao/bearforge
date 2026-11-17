@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"time"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 type cloudRef struct {

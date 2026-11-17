@@ -10,9 +10,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"bearforge/internal/app"
-	"bearforge/internal/auth"
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/auth"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func importControl(m dashboardModel, code rune) (dashboardModel, tea.Cmd) {

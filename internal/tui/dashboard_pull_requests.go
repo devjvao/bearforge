@@ -8,7 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/app"
 )
 
 // DashboardPullRequester optionally provides explicit, read-only network lookups.

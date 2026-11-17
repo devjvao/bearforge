@@ -5,7 +5,7 @@ import (
 	"maps"
 	"testing"
 
-	"bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/app"
 )
 
 func TestImportReassociationPreviewDescribesBindingsAndGitScope(t *testing.T) {

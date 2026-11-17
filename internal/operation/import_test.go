@@ -4,8 +4,8 @@ import (
 	"maps"
 	"testing"
 
-	"bearforge/internal/app"
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func importSnapshot() domain.Repository {

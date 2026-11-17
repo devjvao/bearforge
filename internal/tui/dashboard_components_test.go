@@ -9,7 +9,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/app"
 )
 
 func TestWorkspaceProgressShowsKnownCompletedItems(t *testing.T) {

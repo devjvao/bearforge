@@ -10,8 +10,8 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 
-	"bearforge/internal/app"
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func TestResultRowsNarrowLayoutsPreserveEveryField(t *testing.T) {

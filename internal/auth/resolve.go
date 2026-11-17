@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"strings"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 type credential struct{ secret, username, scheme, gitUsername, api, git, key string }

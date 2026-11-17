@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 // ReferenceFormat reports the repository's actual ref backend, including on Git

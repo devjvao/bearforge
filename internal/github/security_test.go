@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

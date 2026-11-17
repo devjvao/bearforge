@@ -6,8 +6,8 @@ import (
 
 	"github.com/charmbracelet/colorprofile"
 
-	"bearforge/internal/app"
-	"bearforge/internal/auth"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/auth"
 )
 
 func annotateReassociationAccount(result app.Result, connection auth.Connection) app.Result {

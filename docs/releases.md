@@ -1,12 +1,14 @@
 # Build and verify Bearforge releases
 
-Production releases are created by `.github/workflows/release.yml` after a version tag is pushed. The tag must identify a commit merged into `main`. The reusable CI workflow first tests Linux/macOS/Windows on the supported Go families and runs the disposable 60-repository validation. Existing published releases are never overwritten.
+Production releases are created by `.github/workflows/release.yml` after a version tag is pushed. The tag must identify a commit merged into `main`. The reusable CI workflow first tests Linux/macOS/Windows on the Go release pinned in `go.mod` and runs the disposable 60-repository validation. Existing published releases are never overwritten.
+
+The canonical source module is `github.com/devjvao/bearforge`. The currently published `v0.2.0` tag still declares the earlier module path; install a verified archive or follow [source build instructions](development/README.md#build-from-source) until a tag containing the module-path change is published. Do not assume `go install github.com/devjvao/bearforge/cmd/bearforge@latest` works against the existing release.
 
 The release job runs on macOS with exact Go 1.27.4, `-trimpath`, `-mod=readonly` and `-buildvcs=false`, with version/commit/dirty metadata injected explicitly. Darwin builds enable cgo and link Apple's Security.framework for saved Keychain credentials; Linux and Windows remain pure Go cross-builds with cgo disabled. The workflow records the selected Apple clang and macOS SDK versions and paths. Production source must be clean and the version must match a tag at HEAD. Archives use the commit timestamp and fixed metadata; no wall-clock build date is embedded. Workflow actions and Cosign are pinned. [Go release downloads](https://go.dev/dl/), [Sigstore signing](https://docs.sigstore.dev/cosign/signing/signing_with_blobs/) and [GitHub provenance](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations) describe the upstream tools.
 
 ## Artifacts
 
-Linux and macOS use `.tar.gz`; Windows uses `.zip`. Both amd64 and arm64 are built. Each archive contains the executable, README, MIT license, onboarding/release guides and `sbom.cdx.json` derived from modules actually linked into that binary. Standalone CycloneDX SBOMs, `manifest.json` and all archives are listed in sorted `checksums.txt` entries.
+Linux and macOS use `.tar.gz`; Windows uses `.zip`. Both amd64 and arm64 are built. Each archive contains the executable, README, MIT license, user/developer guides, PR-review setup and architecture reference, plus `sbom.cdx.json` derived from modules actually linked into that binary. Standalone CycloneDX SBOMs, `manifest.json` and all archives are listed in sorted `checksums.txt` entries.
 
 CI signs the exact checksums using Cosign and GitHub OIDC and verifies the resulting `checksums.txt.sigstore.json` bundle before publication. No production signing key is stored locally or in a repository secret. Build provenance attestations cover the checksummed artifacts. The manifest records the source commit, dirty/snapshot status, toolchain, target names and binary hashes.
 

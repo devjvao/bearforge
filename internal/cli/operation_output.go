@@ -10,7 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
 
-	"bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/app"
 )
 
 func recoveryOutputHeading(p *colorprofile.Writer, title string) string {

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 // readAuthInput joins the reader before returning cancellation. It never leaves

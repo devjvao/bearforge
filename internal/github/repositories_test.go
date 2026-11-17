@@ -1,10 +1,10 @@
 package github
 
 import (
-	"bearforge/internal/domain"
 	"context"
 	"errors"
 	"fmt"
+	"github.com/devjvao/bearforge/internal/domain"
 	"net/http"
 	"net/http/httptest"
 	"strings"

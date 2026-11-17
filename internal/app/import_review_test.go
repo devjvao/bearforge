@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"bearforge/internal/app"
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 // reviewedBindingAdapter models the production adapter's exact old/current

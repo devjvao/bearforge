@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"testing"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 type credentialResolverFunc func(context.Context, domain.CredentialRequest) (domain.Credential, error)

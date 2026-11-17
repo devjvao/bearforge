@@ -1,10 +1,10 @@
 package bitbucket
 
 import (
-	"bearforge/internal/domain"
 	"context"
 	"errors"
 	"fmt"
+	"github.com/devjvao/bearforge/internal/domain"
 	"net/http"
 	"net/url"
 	"strings"

@@ -10,9 +10,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"bearforge/internal/app"
-	"bearforge/internal/auth"
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/auth"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 // DashboardImporter is an explicit-action capability. Observers finish before

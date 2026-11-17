@@ -8,7 +8,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/app"
 )
 
 // displayText removes terminal commands and flattens external data to one line.

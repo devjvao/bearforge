@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"bearforge/internal/app"
-	"bearforge/internal/process"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/process"
 )
 
 func TestScaleProcessHelper(t *testing.T) {

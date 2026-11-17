@@ -5,9 +5,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bearforge/internal/app"
-	"bearforge/internal/domain"
-	"bearforge/internal/process"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/process"
 )
 
 func addExecCommand(root *cobra.Command, o *options) {

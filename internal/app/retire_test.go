@@ -8,9 +8,9 @@ import (
 	"reflect"
 	"testing"
 
-	"bearforge/internal/app"
-	"bearforge/internal/config"
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/config"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func retirementFixture(t *testing.T) (*app.Service, *config.Store, string) {

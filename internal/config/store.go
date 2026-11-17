@@ -14,7 +14,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 const (

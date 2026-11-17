@@ -7,7 +7,7 @@ import (
 	"sort"
 	"time"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 // DashboardSnapshot is a local observation, without fetching or recovery effects.

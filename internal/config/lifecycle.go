@@ -4,7 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 // MoveDirectory is an opaque, same-root rename. It never replaces a destination

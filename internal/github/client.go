@@ -11,7 +11,7 @@ import (
 	"time"
 	"unicode"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 // Client resolves GitHub coordinates and reads pull-request metadata.

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func runGit(t *testing.T, c *Client, path string, args ...string) []byte {

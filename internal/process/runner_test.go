@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"bearforge/internal/domain"
-	"bearforge/internal/process"
+	"github.com/devjvao/bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/process"
 )
 
 func TestProcessHelper(t *testing.T) {

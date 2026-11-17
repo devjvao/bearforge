@@ -6,7 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"bearforge/internal/auth"
+	"github.com/devjvao/bearforge/internal/auth"
 )
 
 // Prompt responses are buffered once so abandoning the modal can never leave

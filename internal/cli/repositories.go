@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/app"
 )
 
 func addRepositoryLifecycleCommands(repo *cobra.Command, o *options) {

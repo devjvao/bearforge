@@ -5,7 +5,7 @@ import (
 	"errors"
 	"sync"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func (s *Service) Sync(ctx context.Context, names []string, jobs int, dry bool) (Result, error) {

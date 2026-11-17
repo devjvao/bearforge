@@ -1,8 +1,8 @@
 package app
 
 import (
-	"bearforge/internal/domain"
 	"context"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func (s *Service) Resume(ctx context.Context, id string) (Result, error) {

@@ -18,8 +18,8 @@ import (
 	"github.com/creack/pty"
 	"golang.org/x/term"
 
-	"bearforge/internal/app"
-	"bearforge/internal/buildinfo"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/buildinfo"
 )
 
 func TestTerminalFeedbackFitsWithoutLosingPromptSpace(t *testing.T) {

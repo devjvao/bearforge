@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"strings"
 
-	"bearforge/internal/release"
+	"github.com/devjvao/bearforge/internal/release"
 )
 
 func main() { os.Exit(run()) }

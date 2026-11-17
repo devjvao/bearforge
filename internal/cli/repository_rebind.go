@@ -5,8 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bearforge/internal/app"
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func addRepositoryRebindCommand(repo *cobra.Command, o *options) {

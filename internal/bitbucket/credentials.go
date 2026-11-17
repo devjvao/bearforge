@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"net/http"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 // requestCredential preserves the legacy Bearer contract while allowing saved

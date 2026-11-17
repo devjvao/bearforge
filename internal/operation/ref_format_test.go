@@ -3,7 +3,7 @@ package operation
 import (
 	"testing"
 
-	"bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/app"
 )
 
 func TestReferenceFormatJournalCompatibility(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/app"
 )
 
 func TestRepositoryAddRefFormatHelp(t *testing.T) {

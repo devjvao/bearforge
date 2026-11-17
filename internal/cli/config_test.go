@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"bearforge/internal/app"
-	"bearforge/internal/config"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/config"
 )
 
 func TestConfigRejectsLegacyCatalogWithoutMigrationAdviceOrWrites(t *testing.T) {

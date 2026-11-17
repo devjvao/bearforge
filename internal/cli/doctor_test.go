@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/app"
 )
 
 func TestDoctorCLIReportsHealthAndMissingRootWithoutWrites(t *testing.T) {

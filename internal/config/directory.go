@@ -4,7 +4,7 @@ import (
 	"errors"
 	"os"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 // ReadDirectory reports immediate entries without following child links. A

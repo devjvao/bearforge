@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func (s *Service) AddRepository(ctx context.Context, id, remote string, dry bool) (Result, error) {
