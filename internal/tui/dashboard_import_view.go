@@ -262,7 +262,7 @@ func (m dashboardModel) importContent() []string {
 					done++
 				}
 			}
-			lines = append(lines, m.batchProgress(done, len(run.states), 0))
+			lines = append(lines, fmt.Sprintf("Repositories: %d/%d complete", done, len(run.states)), m.batchProgress(done, len(run.states), 0))
 		}
 		if run.result.Problem != nil && run.err == nil {
 			lines = append(lines, displayText(run.result.Problem.Message))

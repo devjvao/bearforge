@@ -5,9 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"net/url"
-	"reflect"
 	"sort"
 	"strings"
 	"unicode"
@@ -25,6 +23,7 @@ type ImportRepository struct {
 
 type ImportRequest struct {
 	Repositories []ImportRepository
+	Jobs         int
 	DryRun       bool
 	ExpectedPlan string
 	RefFormat    string
@@ -133,6 +132,9 @@ func proposedImportID(r domain.RemoteRepository) string {
 
 func (s *Service) ImportRepositories(ctx context.Context, req ImportRequest) (Result, error) {
 	r := NewResult("repo.import")
+	if req.Jobs < 0 || req.Jobs > 64 {
+		return r, domain.E("invalid", "jobs must be between 1 and 64")
+	}
 	if err := ValidateRefFormat(req.RefFormat); err != nil {
 		return r, err
 	}
@@ -209,7 +211,7 @@ func (s *Service) ImportRepositories(ctx context.Context, req ImportRequest) (Re
 	if err := s.Journal.Save(op); err != nil {
 		return r, err
 	}
-	return s.applyImport(ctx, op)
+	return s.applyImportWithJobs(ctx, op, req.Jobs)
 }
 
 func importPlanDigest(root, revision string, selection []ImportRepository, steps []Step) string {
@@ -566,143 +568,16 @@ func (s *Service) importGit(repo domain.Repository) (Git, error) {
 	return s.Git, nil
 }
 
-func (s *Service) applyImport(ctx context.Context, op *Operation) (Result, error) {
-	r := NewResult("repo.import")
-	r.OperationID = op.ID
-	if len(op.Steps) == 0 {
-		return s.finish(op, r, domain.E("invalid", "empty import journal"))
-	}
-	for _, step := range op.Steps {
-		if err := ValidateImportStep(step); err != nil {
-			return s.finish(op, r, err)
-		}
-		if err := s.validateImportCredentials(ctx, *step.ImportedRepository, true); err != nil {
-			return s.finish(op, r, err)
-		}
-	}
-	var failures []error
-	for i := range op.Steps {
-		if err := ctx.Err(); err != nil {
-			return s.finish(op, r, errors.Join(append(failures, err)...))
-		}
-		step := &op.Steps[i]
-		repo := *step.ImportedRepository
-		path, err := s.repoPath(repo.ID)
-		if err != nil {
-			return s.finish(op, r, err)
-		}
-		c, rev, err := s.Store.LoadCatalog()
-		if err != nil {
-			return s.finish(op, r, err)
-		}
-		git, err := s.importGit(repo)
-		if err != nil {
-			return s.finish(op, r, err)
-		}
-		scoped := *s
-		scoped.Git = git
-		if registered, ok := c.Repositories[repo.ID]; ok {
-			if !reflect.DeepEqual(registered, repo) && (step.PreviousImportedRepository == nil || !reflect.DeepEqual(registered, *step.PreviousImportedRepository)) {
-				return s.finish(op, r, domain.E("conflict", "imported registration for %s changed", repo.ID))
-			}
-			if err := scoped.verifyRepositoryAt(ctx, repo, path); err != nil {
-				return s.finish(op, r, err)
-			}
-			if err := s.bindImportStep(ctx, *step, path); err != nil {
-				return s.finish(op, r, err)
-			}
-			if !reflect.DeepEqual(registered, repo) {
-				c.Repositories[repo.ID] = repo
-				if err := s.Store.SaveCatalog(c, rev); err != nil {
-					return s.finish(op, r, err)
-				}
-			}
-			step.State, step.Error = "succeeded", ""
-			if err := s.Journal.Save(op); err != nil {
-				return importDurabilityFailure(r, err)
-			}
-			r.Items = append(r.Items, Item{Repository: repo.ID, Path: path, RefFormat: step.RefFormat, Outcome: "unchanged"})
-			continue
-		}
-		if step.State == "succeeded" {
-			return s.finish(op, r, domain.E("conflict", "successful import %s is missing from the catalog", repo.ID))
-		}
-		active, retired := importConflict(c, repo)
-		if active != "" || retired != "" {
-			return s.finish(op, r, domain.E("conflict", "import identity %s is already registered or retired", repo.ID))
-		}
-		exists, err := s.Store.Exists("repos", repo.ID+".git")
-		if err != nil {
-			return s.finish(op, r, err)
-		}
-		if exists && step.State == "planned" {
-			return s.finish(op, r, domain.E("conflict", "destination appeared before import %s started", repo.ID))
-		}
-		if exists {
-			if err := scoped.verifyInterruptedClone(ctx, path, repo.Remotes["origin"]); err != nil {
-				return s.finish(op, r, err)
-			}
-		}
-		step.State, step.Error = "started", ""
-		if err := s.Journal.Save(op); err != nil {
-			return importDurabilityFailure(r, err)
-		}
-		if err := s.Store.EnsureDir("repos"); err != nil {
-			return s.finish(op, r, err)
-		}
-		s.event(repo.ID, "running")
-		err = scoped.transferImport(ctx, step, path, exists, op)
-		if err == nil {
-			err = scoped.verifyInterruptedClone(ctx, path, repo.Remotes["origin"])
-		}
-		if err != nil {
-			// A refused journal write is shared durability failure; it must never
-			// be treated as an independent failed Git transfer.
-			var durable *importJournalError
-			if errors.As(err, &durable) {
-				return importDurabilityFailure(r, durable.err)
-			}
-			step.State, step.Error = "failed", err.Error()
-			s.event(repo.ID, "failed")
-			r.Items = append(r.Items, Item{Repository: repo.ID, Path: path, RefFormat: step.RefFormat, Outcome: "failed", Problem: ProblemFor(err)})
-			failures = append(failures, err)
-			if err := s.Journal.Save(op); err != nil {
-				return importDurabilityFailure(r, err)
-			}
-			if ctx.Err() != nil {
-				return s.finish(op, r, errors.Join(append(failures, ctx.Err())...))
-			}
-			continue
-		}
-		if err := s.bindImportStep(ctx, *step, path); err != nil {
-			return s.finish(op, r, err)
-		}
-		c.Repositories[repo.ID] = repo
-		if err := s.Store.SaveCatalog(c, rev); err != nil {
-			return s.finish(op, r, err)
-		}
-		step.State = "succeeded"
-		if err := s.Journal.Save(op); err != nil {
-			return importDurabilityFailure(r, err)
-		}
-		s.event(repo.ID, "succeeded")
-		r.Items = append(r.Items, Item{Repository: repo.ID, Path: path, RefFormat: step.RefFormat, Outcome: "created"})
-	}
-	return s.finish(op, r, errors.Join(failures...))
-}
-
 func importDurabilityFailure(r Result, err error) (Result, error) {
 	r.Outcome = "partial"
 	r.Problem = ProblemFor(err)
 	return r, err
 }
 
-type importJournalError struct{ err error }
-
-func (e *importJournalError) Error() string { return e.err.Error() }
-func (e *importJournalError) Unwrap() error { return e.err }
-
-func (s *Service) transferImport(ctx context.Context, step *Step, path string, exists bool, op *Operation) error {
+func (s *Service) transferImport(ctx context.Context, step *Step, path string, exists bool, checkpoint func(Step) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	remote := step.ImportedRepository.Remotes["origin"]
 	planner, canPlan := s.Git.(ClonePlanner)
 	if step.RefFormat == "" || (exists && canPlan && step.RefFormat == "files" && step.RequestedRefFormat != "files") {
@@ -721,9 +596,12 @@ func (s *Service) transferImport(ctx context.Context, step *Step, path string, e
 			}
 			step.RefFormat = "files"
 		}
-		if err := s.Journal.Save(op); err != nil {
-			return &importJournalError{err}
+		if err := checkpoint(*step); err != nil {
+			return err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if exists {
 		if canPlan {

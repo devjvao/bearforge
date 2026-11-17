@@ -160,6 +160,8 @@ The environment/anonymous option also supports public GitHub browsing. Without a
 
 Filter and select the repositories to import, edit any conflicting portable local IDs, and review clone URLs, destination paths, the selected connection, and scoped HTTPS Git integration. Already registered repositories are disabled; retired repositories point to restoration. Selections survive filtering. Enter previews; only `y` starts the reviewed batch. Import adds repositories to the catalog; use the existing `a` picker afterward to add them to a Bearforge workspace.
 
+Clones run concurrently using the catalog's `defaults.jobs` limit (default 4, range 1–64). Pass `bearforge --jobs 2 tui` to override it for new import batches and fetches in that dashboard session. Resuming an unfinished import uses the current catalog limit. Each repository's completion appears as it finishes, including failures, and the completed/total count advances while other clones continue. Catalog and journal writes stay serialized. Cancellation stops queued work, cancels active clones, and waits for finalization.
+
 Progress and results retain independent successes if a clone fails. Inspect and resume the displayed operation before starting an unrelated mutation. If its saved grant has been replaced or removed, log in again and review the replacement through the same operation:
 
 ```sh

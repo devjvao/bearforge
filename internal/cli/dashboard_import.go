@@ -47,5 +47,8 @@ func (s dashboardService) DiscoverWorkspaces(ctx context.Context, source domain.
 func (s dashboardService) ImportRepositories(ctx context.Context, request app.ImportRequest, observe func(app.Event)) (app.Result, error) {
 	service := *s.Service
 	service.Observe = observe
+	if request.Jobs == 0 {
+		request.Jobs = s.jobs
+	}
 	return service.ImportRepositories(ctx, request)
 }

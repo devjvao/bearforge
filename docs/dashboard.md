@@ -41,6 +41,8 @@ Press `i` even when the root has no workspaces. Choose a saved GitHub or Bitbuck
 
 Enter previews clone URLs, destination paths, connection identity and scoped HTTPS credential integration. Only `y` starts the reviewed batch. Independent successes remain if a clone fails. Once repositories are registered, use `n` to create a workspace and `a` to add its members.
 
+New import batches clone concurrently up to the catalog's `defaults.jobs` limit (default 4, range 1–64), or the dashboard's `--jobs` override. Resuming an unfinished import uses the current catalog limit. Each repository's row updates as it finishes, while the completed/total count advances independently of slower clones. Catalog and recovery-journal updates remain serialized. Ctrl-C stops queued work, cancels active clones, and waits for active clones and journal updates to drain; retained clones remain available for recovery.
+
 Changing the source requires a successful reload before another preview. Guided setup uses provider tokens with hidden input; it requires no OAuth application or callback setup. The [import guide](onboarding.md#discover-and-import-several-repositories) covers provider scopes, token replacement, Git credential routing and partial-import recovery.
 
 ## Create and change workspaces

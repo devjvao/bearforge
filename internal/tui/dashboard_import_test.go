@@ -322,6 +322,60 @@ func TestDashboardImportSharedLoginHooksAndHiddenToken(t *testing.T) {
 	}
 }
 
+func TestDashboardImportShowsCompletedRepositoryWhileAnotherCloneRuns(t *testing.T) {
+	finish, fastCompleted := make(chan struct{}), make(chan struct{})
+	m := loadImportPicker(t, func(ctx context.Context, r app.ImportRequest, observe func(app.Event)) (app.Result, error) {
+		if r.DryRun {
+			return importPreview(r), nil
+		}
+		observe(app.Event{Repository: "api", State: "running"})
+		observe(app.Event{Repository: "web", State: "running"})
+		observe(app.Event{Repository: "web", State: "succeeded"})
+		close(fastCompleted)
+		select {
+		case <-finish:
+		case <-ctx.Done():
+			return app.Result{}, ctx.Err()
+		}
+		observe(app.Event{Repository: "api", State: "succeeded"})
+		return app.Result{Outcome: "success", Items: []app.Item{{Repository: "api", Outcome: "created"}, {Repository: "web", Outcome: "created"}}}, nil
+	})
+	m, _ = dashboardKey(m, ' ', " ")
+	m, _ = dashboardKey(m, tea.KeyDown, "")
+	m, _ = dashboardKey(m, ' ', " ")
+	m, cmd := dashboardKey(m, tea.KeyEnter, "")
+	updated, _ := m.Update(cmd())
+	m = updated.(dashboardModel)
+	m, cmd = dashboardKey(m, 'y', "y")
+	messages := runDashboardCommands(t, cmd)
+	select {
+	case <-fastCompleted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("fast repository did not finish")
+	}
+	updated, next := m.Update(dashboardMessage(t, messages))
+	m = updated.(dashboardModel)
+	for m.importRun.states["web"] != "succeeded" {
+		updated, next = m.Update(runDashboardCommand(t, next))
+		m = updated.(dashboardModel)
+	}
+	if m.importRun.phase != importExecuting || m.importRun.states["api"] != "running" {
+		t.Fatalf("completion waited for the remaining clone: phase=%v, states=%v", m.importRun.phase, m.importRun.states)
+	}
+	view := ansi.Strip(m.View().Content)
+	for _, want := range []string{"1/2", "api", "running", "web", "succeeded"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("live import progress hides %q: %s", want, view)
+		}
+	}
+	close(finish)
+	updated, _ = m.Update(dashboardMessage(t, messages))
+	m = updated.(dashboardModel)
+	if m.importRun.phase != importResults || m.importRun.states["api"] != "created" || m.importRun.states["web"] != "created" {
+		t.Fatalf("final import result missing: phase=%v, states=%v", m.importRun.phase, m.importRun.states)
+	}
+}
+
 func TestDashboardImportPartialResultsProgressAndNarrowOutput(t *testing.T) {
 	finish := make(chan struct{})
 	m := loadImportPicker(t, func(ctx context.Context, r app.ImportRequest, observe func(app.Event)) (app.Result, error) {
