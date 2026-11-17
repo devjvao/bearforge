@@ -12,8 +12,8 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 
-	"bearforge/internal/app"
-	"bearforge/internal/auth"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/auth"
 )
 
 func authOutputFixture() app.Result {

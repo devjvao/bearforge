@@ -1,8 +1,8 @@
 package discovery
 
 import (
-	"bearforge/internal/domain"
 	"context"
+	"github.com/devjvao/bearforge/internal/domain"
 	"testing"
 )
 

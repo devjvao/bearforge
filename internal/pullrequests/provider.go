@@ -6,10 +6,10 @@ import (
 	"net/url"
 	"strings"
 
-	"bearforge/internal/app"
-	"bearforge/internal/bitbucket"
-	"bearforge/internal/domain"
-	"bearforge/internal/github"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/bitbucket"
+	"github.com/devjvao/bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/github"
 )
 
 // Provider shares concrete clients and their caches across workspace lookups.

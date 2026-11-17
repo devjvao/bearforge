@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 // RepositoryRebindRequest selects registered repositories and the exact saved

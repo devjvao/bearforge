@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func testServer(t *testing.T, handler http.HandlerFunc) (*Client, domain.PullRequestQuery, *httptest.Server) {

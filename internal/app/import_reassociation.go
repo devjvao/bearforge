@@ -11,7 +11,7 @@ import (
 	"slices"
 	"sort"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 // ImportReassociationRequest reviews a replacement grant within an unfinished

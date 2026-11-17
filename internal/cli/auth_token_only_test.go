@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"bearforge/internal/auth"
+	"github.com/devjvao/bearforge/internal/auth"
 )
 
 func TestTokenOnlyLoginHelpHasNoAuthorizationMethodChoice(t *testing.T) {

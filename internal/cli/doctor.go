@@ -5,8 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bearforge/internal/app"
-	"bearforge/internal/gitcli"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/gitcli"
 )
 
 func addDoctorCommand(root *cobra.Command, o *options) {

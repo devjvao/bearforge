@@ -9,9 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bearforge/internal/auth"
-	"bearforge/internal/domain"
-	"bearforge/internal/gitcli"
+	"github.com/devjvao/bearforge/internal/auth"
+	"github.com/devjvao/bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/gitcli"
 )
 
 func (o *options) connectionGit(client *gitcli.Client, connection, grantID, remote string) (*gitcli.Client, error) {

@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"bearforge/internal/app"
-	"bearforge/internal/config"
-	"bearforge/internal/domain"
-	"bearforge/internal/github"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/config"
+	"github.com/devjvao/bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/github"
 )
 
 type prProvider struct {

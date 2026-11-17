@@ -14,9 +14,9 @@ import (
 
 	"github.com/gofrs/flock"
 
-	"bearforge/internal/app"
-	"bearforge/internal/config"
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/config"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 const maxDocument = 2 << 20

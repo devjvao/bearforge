@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func errorCode(t *testing.T, err error, want string) {

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"bearforge/internal/auth"
+	"github.com/devjvao/bearforge/internal/auth"
 )
 
 func TestGitCredentialAcceptsHTTPAuthenticationCapabilities(t *testing.T) {

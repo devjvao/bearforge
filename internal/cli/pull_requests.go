@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/app"
 )
 
 func addPullRequestCommands(root *cobra.Command, o *options) {

@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"bearforge/internal/app"
-	"bearforge/internal/tui"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/tui"
 )
 
 var _ tui.DashboardWorkspaceActions = dashboardService{}

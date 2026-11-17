@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"bearforge/internal/app"
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func (o *options) renderPullRequests(r app.Result, terminal bool) error {

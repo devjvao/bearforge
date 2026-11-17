@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"bearforge/internal/app"
-	"bearforge/internal/domain"
-	"bearforge/internal/tui"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/tui"
 )
 
 func TestDashboardServiceSharesInjectedPullRequestProvider(t *testing.T) {

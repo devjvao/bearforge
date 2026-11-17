@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func TestResolveHostnameMetadataPreservesInstallationScope(t *testing.T) {

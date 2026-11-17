@@ -3,7 +3,7 @@ package cli
 import (
 	"context"
 
-	"bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/app"
 )
 
 func addReferenceFormat(ctx context.Context, service *app.Service, result *app.Result, id, path string) error {

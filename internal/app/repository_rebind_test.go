@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"bearforge/internal/app"
-	"bearforge/internal/config"
-	"bearforge/internal/domain"
-	"bearforge/internal/gitcli"
-	"bearforge/internal/pullrequests"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/config"
+	"github.com/devjvao/bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/gitcli"
+	"github.com/devjvao/bearforge/internal/pullrequests"
 )
 
 func rebindFixture(t *testing.T, connected bool) (*app.Service, *config.Store, string, *importResolver) {

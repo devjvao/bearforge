@@ -9,10 +9,10 @@ import (
 	"sync"
 	"testing"
 
-	"bearforge/internal/app"
-	"bearforge/internal/config"
-	"bearforge/internal/gitcli"
-	"bearforge/internal/operation"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/config"
+	"github.com/devjvao/bearforge/internal/gitcli"
+	"github.com/devjvao/bearforge/internal/operation"
 )
 
 func dashboardGit(t *testing.T, args ...string) string {

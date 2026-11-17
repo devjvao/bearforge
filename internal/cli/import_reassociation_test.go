@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"bearforge/internal/app"
-	"bearforge/internal/auth"
-	"bearforge/internal/config"
-	"bearforge/internal/domain"
-	"bearforge/internal/operation"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/auth"
+	"github.com/devjvao/bearforge/internal/config"
+	"github.com/devjvao/bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/operation"
 )
 
 func repairPreviewResult() app.Result {

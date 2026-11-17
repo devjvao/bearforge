@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func TestOutputViewportPreservesLongPunctuatedValues(t *testing.T) {

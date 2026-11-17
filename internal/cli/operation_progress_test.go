@@ -5,7 +5,7 @@ import (
 	"context"
 	"testing"
 
-	"bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/app"
 )
 
 func TestOperationProgressPreservesObserverAndStreamsOutsideTerminal(t *testing.T) {

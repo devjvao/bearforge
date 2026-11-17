@@ -3,7 +3,7 @@
 Bearforge uses [OpenCodeReview](https://github.com/alibaba/open-code-review) to
 review GitHub pull requests with GPT-6.1 Sol (`gpt-6.1-sol`). Both OCR's review
 effort and the model's reasoning effort are set to `high` in
-[the workflow](../.github/workflows/ocr-review.yml).
+[the workflow](https://github.com/devjvao/bearforge/blob/main/.github/workflows/ocr-review.yml).
 
 ## GitHub Actions configuration
 
@@ -106,7 +106,7 @@ external contributors**. This is a GitHub repository setting, separate from the
 workflow files. It also covers returning contributors, who can bypass a
 first-time-contributors-only policy.
 
-The regular [CI workflow](../.github/workflows/ci.yml) uses `pull_request`, so
+The regular [CI workflow](https://github.com/devjvao/bearforge/blob/main/.github/workflows/ci.yml) uses `pull_request`, so
 outside fork PR workflow runs wait for approval. Review the proposed changes,
 then choose **Awaiting approval > Approve workflows to run** on the PR. GitHub
 allows users with repository write access to approve these runs; if more writers

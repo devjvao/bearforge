@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"bearforge/internal/domain"
-	"bearforge/internal/process"
+	"github.com/devjvao/bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/process"
 )
 
 func TestShellAdaptersKeepExpressionWhole(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 // PullRequestProvider resolves verified Git identities and observes matching PRs.

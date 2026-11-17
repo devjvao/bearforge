@@ -2,10 +2,10 @@
 package discovery
 
 import (
-	"bearforge/internal/bitbucket"
-	"bearforge/internal/domain"
-	"bearforge/internal/github"
 	"context"
+	"github.com/devjvao/bearforge/internal/bitbucket"
+	"github.com/devjvao/bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/github"
 )
 
 type Provider struct {

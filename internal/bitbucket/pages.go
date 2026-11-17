@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func lookupEndpoint(origin *url.URL, q domain.PullRequestQuery) *url.URL {

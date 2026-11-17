@@ -15,7 +15,7 @@ import (
 	"github.com/creack/pty"
 	"golang.org/x/sys/unix"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func TestUnixPTYHelper(t *testing.T) {

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/app"
 )
 
 func TestHelpDoesNotCreateRoot(t *testing.T) {

@@ -9,12 +9,12 @@ import (
 	"sync"
 	"testing"
 
-	"bearforge/internal/app"
-	"bearforge/internal/config"
-	"bearforge/internal/domain"
-	"bearforge/internal/gitcli"
-	"bearforge/internal/operation"
-	"bearforge/internal/tui"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/config"
+	"github.com/devjvao/bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/gitcli"
+	"github.com/devjvao/bearforge/internal/operation"
+	"github.com/devjvao/bearforge/internal/tui"
 )
 
 func dashboardAddFixture(t *testing.T) (dashboardService, *config.Store) {

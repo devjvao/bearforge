@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"bearforge/internal/app"
-	"bearforge/internal/auth"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/auth"
 )
 
 type authTestSecrets map[string]string

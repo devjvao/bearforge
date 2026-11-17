@@ -13,8 +13,8 @@ import (
 
 	"github.com/charmbracelet/colorprofile"
 
-	"bearforge/internal/app"
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func renderData(data any, p *colorprofile.Writer, widths ...int) error {

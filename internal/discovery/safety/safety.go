@@ -2,7 +2,7 @@
 package safety
 
 import (
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 	"net/http"
 	"net/url"
 	"regexp"

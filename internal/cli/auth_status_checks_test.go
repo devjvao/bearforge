@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"bearforge/internal/auth"
-	"bearforge/internal/config"
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/auth"
+	"github.com/devjvao/bearforge/internal/config"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func TestAuthStatusRejectsMismatchedExplicitSelectors(t *testing.T) {

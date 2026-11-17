@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"bearforge/internal/app"
-	"bearforge/internal/config"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/config"
 )
 
 func configureLookupFixture(t *testing.T, root, api, kind string) {

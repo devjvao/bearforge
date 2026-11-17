@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/app"
 )
 
 type planningGit struct {

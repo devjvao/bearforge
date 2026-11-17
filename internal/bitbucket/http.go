@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 var (

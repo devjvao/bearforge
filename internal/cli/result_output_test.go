@@ -9,8 +9,8 @@ import (
 
 	"github.com/charmbracelet/colorprofile"
 
-	"bearforge/internal/app"
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func TestResultsCoverCommands(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"bearforge/internal/cli"
+	"github.com/devjvao/bearforge/internal/cli"
 )
 
 func main() { os.Exit(run()) }

@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"bearforge/internal/app"
-	"bearforge/internal/auth"
-	"bearforge/internal/domain"
-	"bearforge/internal/gitcli"
-	"bearforge/internal/pullrequests"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/auth"
+	"github.com/devjvao/bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/gitcli"
+	"github.com/devjvao/bearforge/internal/pullrequests"
 )
 
 type authenticationStatusData struct {

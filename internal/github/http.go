@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 const maxResponseBytes = 8 * 1024 * 1024

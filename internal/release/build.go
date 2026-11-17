@@ -17,9 +17,9 @@ import (
 	"strings"
 	"time"
 
-	"bearforge/internal/domain"
-	"bearforge/internal/gitcli"
-	"bearforge/internal/process"
+	"github.com/devjvao/bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/gitcli"
+	"github.com/devjvao/bearforge/internal/process"
 )
 
 const ReleaseToolchain = "go1.27.4"
@@ -167,13 +167,9 @@ func Build(ctx context.Context, options Options) (Manifest, error) {
 	if _, err := runBuildTool(ctx, root, environment, []string{goPath, "mod", "verify"}); err != nil {
 		return manifest, err
 	}
-	documents := []File{}
-	for _, name := range []string{"LICENSE", "README.md", "docs/onboarding.md", "docs/releases.md"} {
-		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
-		if err != nil {
-			return manifest, err
-		}
-		documents = append(documents, File{Name: name, Data: data, Mode: 0644})
+	documents, err := readReleaseDocuments(root)
+	if err != nil {
+		return manifest, err
 	}
 	if err := os.MkdirAll(output, 0755); err != nil {
 		return manifest, err
@@ -240,6 +236,22 @@ func Build(ctx context.Context, options Options) (Manifest, error) {
 	return manifest, nil
 }
 
+func readReleaseDocuments(root string) ([]File, error) {
+	documents := []File{}
+	for _, name := range []string{
+		"LICENSE", "README.md", "docs/onboarding.md", "docs/releases.md",
+		"docs/dashboard.md", "docs/development/README.md", "docs/pr-reviews.md",
+		"docs/architecture/0001-bearforge-blueprint.md",
+	} {
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
+		if err != nil {
+			return nil, err
+		}
+		documents = append(documents, File{Name: name, Data: data, Mode: 0644})
+	}
+	return documents, nil
+}
+
 func verifyVersionTag(ctx context.Context, git *gitcli.Client, root, version, commit string) error {
 	tag, err := git.Run(ctx, root, "rev-parse", "--verify", "refs/tags/"+version+"^{commit}")
 	if err != nil || strings.TrimSpace(string(tag)) != commit {
@@ -258,7 +270,7 @@ func buildBinary(ctx context.Context, root, output, goPath, goos, arch string, m
 		return nil, nil, err
 	}
 	defer func() { _ = os.Remove(name) }()
-	flags := "-s -w -X bearforge/internal/buildinfo.Version=" + manifest.Version + " -X bearforge/internal/buildinfo.Commit=" + manifest.Commit + " -X bearforge/internal/buildinfo.Dirty=" + strconv.FormatBool(manifest.Dirty)
+	flags := "-s -w -X github.com/devjvao/bearforge/internal/buildinfo.Version=" + manifest.Version + " -X github.com/devjvao/bearforge/internal/buildinfo.Commit=" + manifest.Commit + " -X github.com/devjvao/bearforge/internal/buildinfo.Dirty=" + strconv.FormatBool(manifest.Dirty)
 	argv := []string{goPath, "build", "-mod=readonly", "-trimpath", "-buildvcs=false", "-ldflags=" + flags, "-o", name, "./cmd/bearforge"}
 	if _, err := runBuildTool(ctx, root, buildEnvironment(root, goos, arch), argv); err != nil {
 		return nil, nil, err

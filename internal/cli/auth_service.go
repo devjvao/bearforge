@@ -5,10 +5,10 @@ import (
 	"os"
 	"strings"
 
-	"bearforge/internal/app"
-	"bearforge/internal/auth"
-	"bearforge/internal/domain"
-	"bearforge/internal/gitcli"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/auth"
+	"github.com/devjvao/bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/gitcli"
 )
 
 // configureServiceAuthentication keeps selected credentials local to each

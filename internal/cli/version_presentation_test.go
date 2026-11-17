@@ -11,7 +11,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"bearforge/internal/buildinfo"
+	"github.com/devjvao/bearforge/internal/buildinfo"
 )
 
 func TestVersionTerminalShowsCompactMetadata(t *testing.T) {

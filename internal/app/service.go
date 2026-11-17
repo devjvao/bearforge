@@ -9,7 +9,7 @@ import (
 	"sort"
 	"time"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 type IntentStore interface {

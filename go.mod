@@ -1,4 +1,4 @@
-module bearforge
+module github.com/devjvao/bearforge
 
 go 1.27.4
 

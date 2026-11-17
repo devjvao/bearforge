@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 type serverRef struct {

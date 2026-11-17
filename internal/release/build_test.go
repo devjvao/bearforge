@@ -1,14 +1,18 @@
 package release
 
 import (
+	"archive/zip"
+	"bytes"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
-	"bearforge/internal/gitcli"
+	"github.com/devjvao/bearforge/internal/gitcli"
 )
 
 func TestRequestedVersionTagIsVerifiedEvenWithAnotherTagAtHead(t *testing.T) {
@@ -96,5 +100,49 @@ func TestDarwinReleaseRequiresNativeHostBeforeCreatingArtifacts(t *testing.T) {
 	}
 	if _, err := os.Stat(output); !os.IsNotExist(err) {
 		t.Fatal("unsupported cross-host build created output")
+	}
+}
+
+func TestReleaseArchiveIncludesReadmeDocuments(t *testing.T) {
+	root := t.TempDir()
+	names := []string{
+		"LICENSE", "README.md", "docs/onboarding.md", "docs/releases.md",
+		"docs/dashboard.md", "docs/development/README.md", "docs/pr-reviews.md",
+		"docs/architecture/0001-bearforge-blueprint.md",
+	}
+	for _, name := range names {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("release document "+name), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	documents, err := readReleaseDocuments(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var archive bytes.Buffer
+	if err := Archive(&archive, "zip", documents, time.Unix(0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := zip.NewReader(bytes.NewReader(archive.Bytes()), int64(archive.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		file, err := reader.Open(name)
+		if err != nil {
+			t.Fatalf("release archive is missing %s: %v", name, err)
+		}
+		data, readErr := io.ReadAll(file)
+		closeErr := file.Close()
+		if readErr != nil || closeErr != nil {
+			t.Fatalf("read release document %s: read %v, close %v", name, readErr, closeErr)
+		}
+		if string(data) != "release document "+name {
+			t.Errorf("release archive changed document %s: %q", name, data)
+		}
 	}
 }

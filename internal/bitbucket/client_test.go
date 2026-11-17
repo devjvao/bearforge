@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func testServer(t *testing.T, kind string, handler http.HandlerFunc) (*Client, domain.PullRequestQuery, *httptest.Server) {

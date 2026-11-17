@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func (c *Client) Inspect(ctx context.Context, path string) (domain.Status, error) {

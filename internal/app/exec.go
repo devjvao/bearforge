@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"slices"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 type ExecRequest struct {

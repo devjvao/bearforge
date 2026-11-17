@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func (c *Client) Worktrees(ctx context.Context, bare string) ([]domain.Worktree, error) {

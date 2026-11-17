@@ -3,8 +3,8 @@ package cli
 import (
 	"context"
 
-	"bearforge/internal/app"
-	"bearforge/internal/tui"
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/tui"
 )
 
 func (o *options) operationProgress(ctx context.Context, service *app.Service, work func(context.Context, *app.Service) (app.Result, error)) (app.Result, error) {

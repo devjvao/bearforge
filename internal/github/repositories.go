@@ -1,10 +1,10 @@
 package github
 
 import (
-	"bearforge/internal/discovery/safety"
-	"bearforge/internal/domain"
 	"context"
 	"encoding/json"
+	"github.com/devjvao/bearforge/internal/discovery/safety"
+	"github.com/devjvao/bearforge/internal/domain"
 	"net/url"
 	"strconv"
 	"strings"
