@@ -10,7 +10,11 @@ import (
 )
 
 func TestImportChoicesRecognizeBitbucketCloudSSHHostAlias(t *testing.T) {
-	store := config.New(filepath.Join(t.TempDir(), "code"))
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := config.New(filepath.Join(base, "code"))
 	catalog, revision, err := store.LoadCatalog()
 	if err != nil {
 		t.Fatal(err)

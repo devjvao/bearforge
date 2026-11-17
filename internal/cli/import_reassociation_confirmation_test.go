@@ -26,7 +26,7 @@ func importConfirmationFixture(t *testing.T) (*auth.Manager, *config.Store, *app
 		fmt.Fprint(w, `{"id":17,"login":"octocat"}`)
 	}))
 	t.Cleanup(server.Close)
-	base := t.TempDir()
+	base := cliFixtureDir(t)
 	manager := auth.NewManager(auth.Options{RegistryPath: filepath.Join(base, "auth.json"), Secrets: authTestSecrets{}, HTTPClient: server.Client()})
 	if _, err := authCommand(t, manager, "fixture-token\n", "--json", "--no-input", "auth", "login", "--provider", "github", "--host", server.URL, "--api-url", server.URL, "--connection", "work", "--token-stdin"); err != nil {
 		t.Fatal(err)

@@ -36,7 +36,7 @@ func TestDashboardImportConstructorIsOfflineAndUsesSharedAuth(t *testing.T) {
 	}
 }
 func TestDashboardImportAdapterKeepsPreviewObserverLocal(t *testing.T) {
-	store := config.New(filepath.Join(t.TempDir(), "root"))
+	store := config.New(filepath.Join(cliFixtureDir(t), "root"))
 	original := app.New(store, nil, operation.New(store))
 	original.Observe = func(app.Event) { t.Error("adapter used original observer") }
 	source := dashboardService{Service: original}

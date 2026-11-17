@@ -45,7 +45,7 @@ func authCommand(t *testing.T, manager *auth.Manager, input string, args ...stri
 }
 
 func TestAuthLocalStatusDoesNotCreateManagedRoot(t *testing.T) {
-	base := t.TempDir()
+	base := cliFixtureDir(t)
 	manager := auth.NewManager(auth.Options{RegistryPath: filepath.Join(base, "auth", "connections.json"), Secrets: authTestSecrets{}})
 	managed := filepath.Join(base, "missing-root")
 	output, err := authCommand(t, manager, "", "--root", managed, "auth", "status", "--local")
@@ -70,7 +70,7 @@ func TestAuthTokenLoginAndStatusNeverPrintSecret(t *testing.T) {
 		fmt.Fprint(w, `{"id":17,"login":"octocat"}`)
 	}))
 	t.Cleanup(server.Close)
-	base := t.TempDir()
+	base := cliFixtureDir(t)
 	manager := auth.NewManager(auth.Options{RegistryPath: filepath.Join(base, "auth", "connections.json"), Secrets: authTestSecrets{}, HTTPClient: server.Client()})
 	output, err := authCommand(t, manager, secret+"\n", "--root", filepath.Join(base, "missing"), "--json", "--no-input", "auth", "login", "--provider", "github", "--host", server.URL, "--api-url", server.URL, "--connection", "work", "--method", "token", "--token-stdin")
 	if err != nil {

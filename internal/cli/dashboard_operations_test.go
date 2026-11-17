@@ -48,7 +48,7 @@ func (*recoveryImportGit) Initialize(context.Context, string) error { return nil
 func TestDashboardServiceRecoveryPreservesImportsAndUnlocksMutations(t *testing.T) {
 	for _, action := range []string{"resume", "abandon"} {
 		t.Run(action, func(t *testing.T) {
-			base := t.TempDir()
+			base := cliFixtureDir(t)
 			store := config.New(filepath.Join(base, "root"))
 			client, err := gitcli.New()
 			if err != nil {

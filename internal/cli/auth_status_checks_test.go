@@ -26,7 +26,7 @@ func TestAuthStatusRejectsMismatchedExplicitSelectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := auth.NewManager(auth.Options{RegistryPath: registryPath, Secrets: authTestSecrets{}})
-	store := config.New(filepath.Join(t.TempDir(), "code"))
+	store := config.New(filepath.Join(cliFixtureDir(t), "code"))
 	for _, provider := range []map[string]string{{"connection": "first", "grant_id": "first-grant"}, {}, {"token_env": "STATUS_FIXTURE_TOKEN"}} {
 		catalog, revision, err := store.LoadCatalog()
 		if err != nil {
@@ -50,7 +50,7 @@ func TestAuthStatusUsesRegisteredRepositoryGitConfiguration(t *testing.T) {
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
 	t.Setenv("ALL_PROXY", "http://127.0.0.1:1")
 	t.Setenv("GIT_SSH_COMMAND", "git --version")
-	base := t.TempDir()
+	base := cliFixtureDir(t)
 	remote := filepath.Join(base, "remote")
 	dashboardGit(t, "init", "-b", "main", remote)
 	dashboardGit(t, "-C", remote, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "initial")

@@ -66,7 +66,7 @@ func TestImportResumeDryRunIncludesReplacementAccountAndRetainsOldGrant(t *testi
 		fmt.Fprint(w, `{"id":17,"login":"octocat"}`)
 	}))
 	defer server.Close()
-	base := t.TempDir()
+	base := cliFixtureDir(t)
 	manager := auth.NewManager(auth.Options{RegistryPath: filepath.Join(base, "auth.json"), Secrets: authTestSecrets{}, HTTPClient: server.Client()})
 	if _, err := authCommand(t, manager, "test-token\n", "--json", "--no-input", "auth", "login", "--provider", "github", "--host", server.URL, "--api-url", server.URL, "--connection", "work", "--method", "token", "--token-stdin"); err != nil {
 		t.Fatal(err)

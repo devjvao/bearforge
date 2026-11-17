@@ -237,7 +237,9 @@ func TestResumeRefMigrationPreservesRetainedState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = c.InitializeWithFormat(t.Context(), bare, "reftable")
+	// Migration itself must preserve the complete snapshot. Initialization also
+	// fetches and refreshes origin/HEAD, which can legitimately add reflog entries.
+	err = c.migrateRefs(t.Context(), bare)
 	if err != nil && !strings.Contains(err.Error(), "upgrade Git") {
 		t.Fatalf("non-actionable migration diagnostic: %v", err)
 	}
@@ -250,6 +252,56 @@ func TestResumeRefMigrationPreservesRetainedState(t *testing.T) {
 	}
 	if err != nil {
 		t.Logf("preservation-capability refusal: %v", err)
+	}
+}
+
+func TestInitializeWithFormatRetainsExistingRefsAndReflogs(t *testing.T) {
+	for _, format := range []string{"files", "reftable"} {
+		t.Run(format, func(t *testing.T) {
+			c, bare, root := fixture(t)
+			if format == "reftable" {
+				supported, err := c.probeReferenceFormat(t.Context(), root, format)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !supported {
+					t.Skip("installed Git does not support reftable")
+				}
+				bare = filepath.Join(root, "reftable.git")
+				if err := c.CloneWithFormat(t.Context(), filepath.Join(root, "remote"), bare, format); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, err := c.refSnapshot(t.Context(), bare)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.InitializeWithFormat(t.Context(), bare, format); err != nil {
+				t.Fatal(err)
+			}
+			after, err := c.refSnapshot(t.Context(), bare)
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeState, beforeLogs, _ := strings.Cut(before, "\nREFLOGS\n")
+			afterState, afterLogs, _ := strings.Cut(after, "\nREFLOGS\n")
+			if beforeState != afterState {
+				t.Fatal("initialization changed retained refs or HEAD")
+			}
+			if beforeLogs == "" {
+				t.Fatal("fixture has no retained reflogs")
+			}
+			retained := map[string]int{}
+			for _, entry := range strings.Split(strings.TrimSpace(afterLogs), "\n") {
+				retained[entry]++
+			}
+			for _, entry := range strings.Split(strings.TrimSpace(beforeLogs), "\n") {
+				if retained[entry] == 0 {
+					t.Errorf("initialization lost retained reflog entry %q", entry)
+				}
+				retained[entry]--
+			}
+		})
 	}
 }
 
