@@ -202,7 +202,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.WindowSizeMsg:
 			m.width, m.height = max(1, v.Width), max(1, v.Height)
 		case tea.KeyPressMsg:
-			if v.String() == "ctrl+c" {
+			if v.Keystroke() == "ctrl+c" {
 				m.exitErr = context.Canceled
 			}
 		case dashboardParentCancelledMsg:
@@ -299,7 +299,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyPressMsg:
 		key := v.String()
-		if key == "ctrl+c" {
+		if v.Keystroke() == "ctrl+c" {
 			return m.stop(context.Canceled)
 		}
 		if m.showOperations && m.operationsRun != nil {

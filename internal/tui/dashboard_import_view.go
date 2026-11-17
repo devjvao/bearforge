@@ -19,9 +19,12 @@ func (m dashboardModel) importView() tea.View {
 	help := "Esc back | PgUp/PgDn scroll | q quit | Ctrl-C cancel"
 	switch run.phase {
 	case importSource:
-		help = "Tab field | Ctrl-U clear | Enter Load | ^W Bitbucket workspaces | ^L login | Esc back"
+		help = "Tab/Up/Down field | Ctrl-U clear | Enter Load | Ctrl-L login | Esc back"
+		if run.source.Provider == "bitbucket" {
+			help = "Tab/Up/Down field | Ctrl-U clear | Enter Load | Ctrl-W workspaces | Ctrl-L login | Esc back"
+		}
 	case importLoginForm:
-		help = "Tab field | Space provider | Ctrl-U clear | Enter login | Esc cancel"
+		help = "Tab/Up/Down field | Space provider | Ctrl-U clear | Enter login | Esc cancel"
 	case importPicking:
 		help = "Space select | / filter | e ID | Enter review | r reload | l login | c source | Esc close"
 	case importReview:

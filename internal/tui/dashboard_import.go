@@ -394,14 +394,26 @@ func (m dashboardModel) closeImport() (tea.Model, tea.Cmd) {
 	m.showImport = false
 	return m, nil
 }
+func importKeyName(key tea.KeyPressMsg) string {
+	if key.Mod.Contains(tea.ModCtrl) {
+		return key.Keystroke()
+	}
+	return key.String()
+}
+
 func importEdit(value *string, key tea.KeyPressMsg, limit int) {
-	switch key.String() {
+	switch importKeyName(key) {
 	case "ctrl+u":
 		*value = ""
 	case "backspace":
 		_, size := utf8.DecodeLastRuneInString(*value)
 		*value = (*value)[:len(*value)-size]
 	default:
+		// Control chords may carry printable text. AltGr also uses Ctrl+Alt
+		// on Windows, so retain its text while ignoring unhandled Ctrl keys.
+		if key.Mod.Contains(tea.ModCtrl) && !key.Mod.Contains(tea.ModAlt) {
+			return
+		}
 		if len(*value)+len(key.Text) <= limit {
 			*value += displayText(key.Text)
 		}
@@ -450,7 +462,7 @@ func (m dashboardModel) importFormTarget() *string {
 }
 func (m dashboardModel) importKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	run := m.importRun
-	name := key.String()
+	name := importKeyName(key)
 	if name == "esc" && run.phase != importExecuting {
 		if run.editingID {
 			run.editingID = false
@@ -558,9 +570,9 @@ func (m dashboardModel) importKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if run.phase == importLoginForm {
 				m.importEnvironmentSource()
 			}
-		case "tab":
+		case "tab", "down":
 			run.field = (run.field + 1) % count
-		case "shift+tab":
+		case "shift+tab", "up":
 			run.field = (run.field + count - 1) % count
 		case "enter":
 			if run.phase == importLoginForm {

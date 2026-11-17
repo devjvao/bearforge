@@ -20,6 +20,109 @@ func importControl(m dashboardModel, code rune) (dashboardModel, tea.Cmd) {
 	return updated.(dashboardModel), cmd
 }
 
+func TestDashboardImportSourceShortcutsWithPrintableControlText(t *testing.T) {
+	for _, provider := range []string{"github", "bitbucket-cloud"} {
+		t.Run(provider, func(t *testing.T) {
+			workspaceCalls := 0
+			m := importDashboard(t, dashboardImportSource{
+				connections: func(context.Context) ([]auth.Connection, error) {
+					return []auth.Connection{{Name: "work", Provider: provider, Host: "https://example.invalid", APIURL: "https://example.invalid/api", GrantID: "grant"}}, nil
+				},
+				workspaces: func(context.Context, domain.RepositorySource) ([]domain.ProviderWorkspace, error) {
+					workspaceCalls++
+					return []domain.ProviderWorkspace{{Slug: "team"}}, nil
+				},
+			})
+			m, command := dashboardKey(m, 'i', "i")
+			updated, _ := m.Update(command())
+			m = updated.(dashboardModel)
+			m, _ = dashboardKey(m, tea.KeyEnter, "")
+			m.importRun.source.Scope = "keep"
+			updated, command = m.Update(tea.KeyPressMsg{Code: 'w', Mod: tea.ModCtrl, Text: "w"})
+			m = updated.(dashboardModel)
+			if m.importRun.source.Scope != "keep" {
+				t.Fatal("Ctrl-W inserted a letter into the source scope")
+			}
+			if provider == "bitbucket-cloud" {
+				if command == nil || m.importRun.phase != importLoading {
+					t.Fatal("Ctrl-W did not schedule Bitbucket workspace discovery")
+				}
+				updated, _ = m.Update(command())
+				m = updated.(dashboardModel)
+				if workspaceCalls != 1 || m.importRun.phase != importWorkspaces {
+					t.Fatal("workspace discovery did not finish in the workspace picker")
+				}
+				m, _ = dashboardKey(m, tea.KeyEsc, "")
+			} else if command != nil || workspaceCalls != 0 || m.importRun.phase != importSource {
+				t.Fatal("GitHub source offered Bitbucket workspace discovery")
+			}
+			updated, command = m.Update(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl, Text: "l"})
+			m = updated.(dashboardModel)
+			if command != nil || m.importRun.phase != importLoginForm || m.importRun.login.Name != "work" || m.importRun.source.Scope != "keep" {
+				t.Fatal("Ctrl-L did not open the selected connection's login form without editing the scope")
+			}
+		})
+	}
+}
+
+func TestDashboardImportSourceHelpNamesAvailableControlShortcuts(t *testing.T) {
+	m := importDashboard(t, dashboardImportSource{})
+	m, command := dashboardKey(m, 'i', "i")
+	updated, _ := m.Update(command())
+	m = updated.(dashboardModel)
+	m, _ = dashboardKey(m, tea.KeyEnter, "")
+	m.width = 160
+	for _, provider := range []string{"github", "bitbucket", "bitbucket-server"} {
+		m.importRun.source.Provider = provider
+		view := ansi.Strip(m.View().Content)
+		if !strings.Contains(view, "Ctrl-L login") || strings.Contains(view, "^L") || strings.Contains(view, "^W") {
+			t.Fatal("source help does not explicitly name the Control key")
+		}
+		if strings.Contains(view, "Ctrl-W") != (provider == "bitbucket") {
+			t.Fatalf("workspace shortcut help does not match provider %s", provider)
+		}
+	}
+}
+
+func TestDashboardImportControlTextDoesNotLeakIntoForms(t *testing.T) {
+	m := importDashboard(t, dashboardImportSource{})
+	m, command := dashboardKey(m, 'i', "i")
+	updated, _ := m.Update(command())
+	m = updated.(dashboardModel)
+	m, _ = dashboardKey(m, tea.KeyEnter, "")
+	m.importRun.source.Scope = "clear-me"
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl | tea.ModCapsLock, Text: "u"})
+	m = updated.(dashboardModel)
+	if m.importRun.source.Scope != "" {
+		t.Fatal("Ctrl-U did not clear the field when the event included text")
+	}
+	for _, text := range []string{"w", "l"} {
+		m, _ = dashboardKey(m, rune(text[0]), text)
+	}
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'b', Mod: tea.ModCtrl, Text: "b"})
+	m = updated.(dashboardModel)
+	if m.importRun.source.Scope != "wl" {
+		t.Fatal("ordinary letters were intercepted or an unsupported control chord inserted text")
+	}
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'q', Mod: tea.ModCtrl | tea.ModAlt, Text: "@"})
+	m = updated.(dashboardModel)
+	if m.importRun.source.Scope != "wl@" {
+		t.Fatal("AltGr text was lost")
+	}
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl, Text: "l"})
+	m = updated.(dashboardModel)
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl, Text: "e"})
+	m = updated.(dashboardModel)
+	if m.importRun.phase != importSource || m.importRun.source.Connection != "" {
+		t.Fatal("Ctrl-E did not switch from login to the environment/anonymous source")
+	}
+	updated, command = m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl, Text: "c"})
+	m = updated.(dashboardModel)
+	if !m.stopping || command == nil || !errors.Is(m.exitErr, context.Canceled) {
+		t.Fatal("Ctrl-C with printable text did not cancel the dashboard")
+	}
+}
+
 func TestDashboardImportLoginFormOffersGuidedTokensOnly(t *testing.T) {
 	for _, provider := range []string{"github", "bitbucket"} {
 		t.Run(provider, func(t *testing.T) {
@@ -464,10 +567,18 @@ func TestDashboardImportNarrowFormFollowsActiveField(t *testing.T) {
 	m = updated.(dashboardModel)
 	m, _ = dashboardKey(m, tea.KeyEnter, "")
 	for range 5 {
-		m, _ = dashboardKey(m, tea.KeyTab, "")
+		m, _ = dashboardKey(m, tea.KeyDown, "")
 	}
 	if !strings.Contains(m.View().Content, "> API base URL") {
 		t.Fatal("active API field became invisible in narrow terminal")
+	}
+	m, _ = dashboardKey(m, tea.KeyUp, "")
+	if !strings.Contains(m.View().Content, "> Host (hostname)") {
+		t.Fatal("Up did not move focus and viewport to the previous field")
+	}
+	m, _ = dashboardKey(m, tea.KeyTab, "")
+	if !strings.Contains(m.View().Content, "> API base URL") {
+		t.Fatal("Tab no longer advances after arrow navigation")
 	}
 }
 
