@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"errors"
 	"io"
 	"os"
 	"slices"
@@ -15,7 +14,6 @@ import (
 	"github.com/charmbracelet/colorprofile"
 
 	"github.com/devjvao/bearforge/internal/app"
-	"github.com/devjvao/bearforge/internal/domain"
 )
 
 // DashboardSource deliberately exposes no mutation or network operations.
@@ -78,6 +76,8 @@ type dashboardLoadedMsg struct {
 	requestID uint64
 	snapshot  app.DashboardSnapshot
 	err       error
+	partial   bool
+	updates   <-chan dashboardReadUpdate
 }
 
 type dashboardStoppedMsg struct{}
@@ -91,6 +91,7 @@ type dashboardModel struct {
 	workspace       string
 	data            app.DashboardSnapshot
 	loading         bool
+	loadProgress    bool
 	loadErr         error
 	exitErr         error
 	focus           int
@@ -160,24 +161,13 @@ func (m dashboardModel) stop(err error) (tea.Model, tea.Cmd) {
 }
 
 func (m dashboardModel) readCommand() tea.Cmd {
-	return func() tea.Msg {
-		snapshot, err := m.reader.read(m.requestCtx, m.workspace)
-		return dashboardLoadedMsg{requestID: m.requestID, snapshot: snapshot, err: err}
-	}
+	return m.dashboardReadCommand(false)
 }
 
 // Removal can delete the manifest before its final journal update fails. Keep
 // the current selection until a background observation proves it disappeared.
 func (m dashboardModel) readAfterWorkspaceRemovalCommand() tea.Cmd {
-	return func() tea.Msg {
-		snapshot, err := m.reader.read(m.requestCtx, m.workspace)
-		var missing *domain.Error
-		if m.workspace != "" && errors.As(err, &missing) && missing.Code == "not_found" &&
-			snapshot.Root == m.data.Root && snapshot.Workspace == "" && !slices.Contains(snapshot.Workspaces, m.workspace) {
-			snapshot, err = m.reader.read(m.requestCtx, "")
-		}
-		return dashboardLoadedMsg{requestID: m.requestID, snapshot: snapshot, err: err}
-	}
+	return m.dashboardReadCommand(true)
 }
 
 func (m dashboardModel) request(workspace string) (tea.Model, tea.Cmd) {
@@ -186,6 +176,7 @@ func (m dashboardModel) request(workspace string) (tea.Model, tea.Cmd) {
 	m.requestCtx, m.cancel = context.WithCancel(m.reader.ctx)
 	m.requestID++
 	m.loading = true
+	m.loadProgress = false
 	m.loadErr = nil
 	m.detailOffset = 0
 	if workspace != m.workspace {
@@ -295,7 +286,8 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if v.requestID != m.requestID {
 			return m, nil
 		}
-		m.loading = false
+		m.loading = v.partial
+		m.loadProgress = v.partial
 		m.loadErr = v.err
 		if v.err != nil {
 			return m, nil
@@ -312,6 +304,9 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.repoIndex = i
 				break
 			}
+		}
+		if v.partial {
+			return m, dashboardNextReadCommand(m.requestCtx, m.requestID, v.updates)
 		}
 	case tea.KeyPressMsg:
 		key := v.String()

@@ -206,6 +206,8 @@ The dashboard offers provider import, workspace creation, repository selection, 
 
 Sync fetches/prunes remote-tracking refs. It does not rebase, merge, reset, switch branches or push. Refresh/status/doctor use local observations and do not fetch.
 
+Local status inspection uses the catalog's `defaults.jobs` worker limit (default 4, range 1–64). The dashboard displays repository results as they finish, with a completed/total count. CLI status retains one final result in repository order, including readable repositories when another check fails. Set `defaults.jobs: 1` in `<root>/.bearforge/catalog.yaml` for sequential inspection.
+
 ## Look up pull requests
 
 ```sh
