@@ -117,7 +117,8 @@ func TestDashboardPRExplicitWorkspaceSelectionAndRefresh(t *testing.T) {
 	if calls != 0 {
 		t.Fatal("local loading contacted provider")
 	}
-	m.focus, m.repoFilter, m.repoIndex, m.detailOffset = 1, "api", 0, 2
+	m.focus, m.repoIndex, m.detailOffset = 1, 0, 2
+	m.setRepoFilter("api")
 	local := m.data.Items[0]
 	m, cmd = dashboardKey(m, 'p', "p")
 	if cmd == nil {

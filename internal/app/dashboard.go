@@ -33,7 +33,7 @@ type OperationSummary struct {
 // first registered workspace. Observation failures remain visible alongside any
 // usable results; cancellation and invalid selections are returned as errors.
 func (s *Service) Dashboard(ctx context.Context, workspace string) (DashboardSnapshot, error) {
-	return s.DashboardWithProgress(ctx, workspace, nil)
+	return s.DashboardWithUpdates(ctx, workspace, nil, nil)
 }
 
 // DashboardWithProgress publishes an initial snapshot with inspecting rows,
@@ -41,6 +41,37 @@ func (s *Service) Dashboard(ctx context.Context, workspace string) (DashboardSna
 // serially on the caller and must return promptly. The returned snapshot is the
 // final observation, including aggregate problems and its observation time.
 func (s *Service) DashboardWithProgress(ctx context.Context, workspace string, onProgress func(DashboardSnapshot)) (DashboardSnapshot, error) {
+	if onProgress == nil {
+		return s.Dashboard(ctx, workspace)
+	}
+	var current DashboardSnapshot
+	var indices map[string]int
+	publish := func() {
+		update := current
+		update.Items = slices.Clone(current.Items)
+		update.Workspaces = slices.Clone(current.Workspaces)
+		update.PendingOperations = slices.Clone(current.PendingOperations)
+		update.Problems = slices.Clone(current.Problems)
+		onProgress(update)
+	}
+	return s.DashboardWithUpdates(ctx, workspace, func(initial DashboardSnapshot) {
+		current = initial
+		indices = make(map[string]int, len(initial.Items))
+		for i, item := range initial.Items {
+			indices[item.Repository] = i
+		}
+		publish()
+	}, func(item Item) {
+		current.Items[indices[item.Repository]] = item
+		publish()
+	})
+}
+
+// DashboardWithUpdates gives onStart its own slices of metadata and inspecting
+// rows, then calls onItem serially as repositories finish. Item observations
+// are read-only. The return value includes all rows in workspace order, the
+// aggregate problems and the observation time. Either callback may be nil.
+func (s *Service) DashboardWithUpdates(ctx context.Context, workspace string, onStart func(DashboardSnapshot), onItem func(Item)) (DashboardSnapshot, error) {
 	snapshot := DashboardSnapshot{Root: s.Store.RootPath()}
 	if err := ctx.Err(); err != nil {
 		return snapshot, err
@@ -80,41 +111,25 @@ func (s *Service) DashboardWithProgress(ctx context.Context, workspace string, o
 	if err := ctx.Err(); err != nil {
 		return snapshot, err
 	}
-	publish := func() {
-		if onProgress == nil {
-			return
+	var start func([]Item)
+	if onStart != nil {
+		start = func(items []Item) {
+			initial := snapshot
+			initial.Items = items // status hands off an independent slice.
+			initial.Workspaces = slices.Clone(snapshot.Workspaces)
+			initial.PendingOperations = slices.Clone(snapshot.PendingOperations)
+			initial.Problems = slices.Clone(snapshot.Problems)
+			onStart(initial)
 		}
-		update := snapshot
-		update.Items = slices.Clone(snapshot.Items)
-		update.Workspaces = slices.Clone(snapshot.Workspaces)
-		update.PendingOperations = slices.Clone(snapshot.PendingOperations)
-		update.Problems = slices.Clone(snapshot.Problems)
-		onProgress(update)
 	}
 	if workspace != "" {
-		indices := map[string]int{}
-		var start func([]Item)
-		var completed func(Item)
-		if onProgress != nil {
-			start = func(items []Item) {
-				snapshot.Items = items
-				for i, item := range items {
-					indices[item.Repository] = i
-				}
-				publish()
-			}
-			completed = func(item Item) {
-				snapshot.Items[indices[item.Repository]] = item
-				publish()
-			}
-		}
-		result, err := s.status(ctx, workspace, start, completed)
+		result, err := s.status(ctx, workspace, start, onItem)
 		snapshot.Items = result.Items
 		if err != nil {
 			snapshot.Problems = append(snapshot.Problems, *ProblemFor(err))
 		}
-	} else {
-		publish()
+	} else if start != nil {
+		start(nil)
 	}
 	if err := ctx.Err(); err != nil {
 		return snapshot, err

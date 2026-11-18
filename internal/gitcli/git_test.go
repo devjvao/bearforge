@@ -6,7 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
+	"time"
 )
 
 func fixture(t *testing.T) (*Client, string, string) {
@@ -84,6 +87,88 @@ func TestBareCloneAndWorktrees(t *testing.T) {
 	}
 	if err := c.VerifyCommon(ctx, p, bare); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestVerifyCommonChecksBothIdentities(t *testing.T) {
+	c, bare, root := fixture(t)
+	ctx := t.Context()
+	tree := filepath.Join(root, "worktree with spaces")
+	if _, err := c.Run(ctx, bare, "worktree", "add", "--detach", tree, "main"); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(tree, "nested")
+	if err := os.Mkdir(nested, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.VerifyCommon(ctx, tree, bare); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ path, expected, message string }{
+		{tree, root, "belongs to another repository"},
+		{nested, bare, "not the worktree root"},
+		// In a bare directory, the combined query fails on --show-toplevel.
+		// The earlier common-dir mismatch should still be reported.
+		{bare, root, "belongs to another repository"},
+	} {
+		if err := c.VerifyCommon(ctx, tc.path, tc.expected); err == nil || !strings.Contains(err.Error(), tc.message) {
+			t.Fatalf("VerifyCommon(%q, %q) = %v, want %q", tc.path, tc.expected, err, tc.message)
+		}
+	}
+	if err := c.VerifyCommon(ctx, filepath.Join(root, "missing"), bare); err == nil {
+		t.Fatal("missing worktree accepted")
+	}
+}
+
+func TestVerifyCommonWorktreePathWithNewline(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows paths cannot contain a newline")
+	}
+	c, bare, root := fixture(t)
+	tree := filepath.Join(root, "line\nbreak")
+	if _, err := c.Run(t.Context(), bare, "worktree", "add", "--detach", tree, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.VerifyCommon(t.Context(), tree, bare); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestVerifyCommonHonorsCommandDeadlineWithoutRetry(t *testing.T) {
+	c, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	log := interceptFetchGit(t, c, dir, "", "block-worktree-probe")
+	c.Timeout = 2 * time.Second
+	if err := c.VerifyCommon(t.Context(), dir, dir); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("per-command deadline = %v", err)
+	}
+	if count := fetchCommandCounts(t, log)["rev-parse"]; count != 1 {
+		t.Fatalf("deadline triggered %d Git probes, want 1", count)
+	}
+}
+
+func TestRemoteURLsFallsBackWhenAggregateExceedsOutputLimit(t *testing.T) {
+	c, bare, root := fixture(t)
+	ctx := t.Context()
+	include := filepath.Join(root, "include.conf")
+	// A repository can contain other remotes than the catalog verifies.
+	// Their combined output must not break lookup of the requested keys.
+	settings := "[remote \"extra\"]\nurl = https://example.invalid/extra\n[remote \"unrelated\"]\nurl = "
+	if err := os.WriteFile(include, []byte(settings+strings.Repeat("x", 16<<20)+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Run(ctx, bare, "config", "include.path", filepath.ToSlash(include)); err != nil {
+		t.Fatal(err)
+	}
+	urls, err := c.RemoteURLs(ctx, bare, []string{"origin", "extra"})
+	if err != nil || urls["origin"] == "" || urls["extra"] != "https://example.invalid/extra" {
+		t.Fatalf("requested URL lookup failed: %v", err)
+	}
+	if urls, err := c.RemoteURLs(ctx, bare, []string{"extra", "unrelated"}); err == nil || urls != nil {
+		t.Fatal("oversized individual URL accepted")
 	}
 }
 

@@ -212,6 +212,46 @@ func (c *Client) Config(ctx context.Context, path, key string) (string, error) {
 	return strings.TrimSpace(string(b)), err
 }
 
+// RemoteURLs reads effective URLs with the same last-value semantics as Config.
+func (c *Client) RemoteURLs(ctx context.Context, path string, names []string) (map[string]string, error) {
+	urls := make(map[string]string, len(names))
+	if len(names) > 1 {
+		for _, name := range names {
+			urls[name] = ""
+		}
+		// Catalog remote names contain only these characters. Restricting the
+		// subsection also makes the key/value newline delimiter unambiguous.
+		out, err := c.Run(ctx, path, "config", "--null", "--get-regexp", `^remote\.[a-zA-Z0-9_-]+\.url$`)
+		if isExit(err, 1) {
+			return urls, nil // No matching keys.
+		}
+		if err == nil {
+			for record := range strings.SplitSeq(string(out), "\x00") {
+				key, value, _ := strings.Cut(record, "\n")
+				name := strings.TrimSuffix(strings.TrimPrefix(key, "remote."), ".url")
+				if _, wanted := urls[name]; wanted {
+					urls[name] = strings.TrimSpace(value)
+				}
+			}
+			return urls, nil
+		}
+		// Run reports a parsing limit as git_failed and execution errors as
+		// CommandError or a context error. The individual keys may still fit.
+		var limit *domain.Error
+		if !errors.As(err, &limit) || limit.Code != "git_failed" {
+			return nil, err
+		}
+	}
+	for _, name := range names {
+		v, err := c.Config(ctx, path, "remote."+name+".url")
+		if err != nil {
+			return nil, err
+		}
+		urls[name] = v
+	}
+	return urls, nil
+}
+
 func (c *Client) ValidateFetch(ctx context.Context, path string) error {
 	remotes, err := c.fetchRemotes(ctx, path)
 	if err != nil {

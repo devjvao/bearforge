@@ -341,3 +341,32 @@ func TestDashboardProgressKeepsSnapshotsIndependent(t *testing.T) {
 		t.Fatal("saved intermediate snapshot changed after callback")
 	}
 }
+
+func TestDashboardWithUpdatesHandsOffInitialRows(t *testing.T) {
+	s, g := statusFixture("d", "a")
+	s.Journal = statusJournal{}
+	for _, gate := range g.gates {
+		close(gate)
+	}
+	var initial app.DashboardSnapshot
+	seen := map[string]bool{}
+	final, err := s.DashboardWithUpdates(t.Context(), "feature", func(snapshot app.DashboardSnapshot) {
+		if !snapshot.ObservedAt.IsZero() || len(snapshot.Items) != 2 || snapshot.Items[0].Repository != "a" {
+			t.Fatalf("unexpected initial dashboard: %+v", snapshot)
+		}
+		initial = snapshot
+		// The model owns this slice and may update it before status has finished.
+		initial.Items[0].Branch = "model edit"
+		initial.Workspaces[0] = "model edit"
+	}, func(item app.Item) {
+		if initial.Items == nil || seen[item.Repository] || item.Outcome == "inspecting" {
+			t.Fatalf("unexpected completion: %+v", item)
+		}
+		seen[item.Repository] = true
+	})
+	if err != nil || !seen["a"] || !seen["d"] || len(seen) != 2 || final.Workspaces[0] != "feature" ||
+		final.Items[0].Branch != "feature" || final.Items[1].Outcome != "unreadable" ||
+		len(final.Problems) != 1 || final.ObservedAt.IsZero() || initial.Items[0].Outcome != "inspecting" {
+		t.Fatalf("unexpected final dashboard: %+v, %v (completed %v)", final, err, seen)
+	}
+}

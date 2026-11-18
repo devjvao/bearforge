@@ -67,6 +67,8 @@ In PowerShell, set `$env:BEARFORGE_SCALE_TEST = '1'` before running the same `go
 
 See [status performance measurements](status-performance.md) for repeatable 12- and 60-repository Git workspace benchmarks, including total observation time and delivery of the first inspected repository.
 
+The [Git inspection report](git-inspection-performance.md) counts child processes on up to 200 real repositories. The [dashboard refresh report](dashboard-refresh-performance.md) measures the first visible result and full refresh on the real 60-repository fixture and rendering costs through 1,000 rows.
+
 GitHub PRs use [OpenCodeReview with GPT-6.1 Sol at high effort](../pr-reviews.md), with automatic owner reviews and owner-approved contributor reviews through `/open-code-review`. That guide covers contributor CI approval, OpenAI settings and GitHub App credentials.
 
 ## Implementation boundaries

@@ -16,11 +16,19 @@ import (
 	"github.com/devjvao/bearforge/internal/operation"
 )
 
+func statusBenchmarkSizes() []int {
+	sizes := []int{12, 60, 200}
+	if os.Getenv("BEARFORGE_BENCH_1000") == "1" {
+		sizes = append(sizes, 1000)
+	}
+	return sizes
+}
+
 // BenchmarkStatusWorkspace exercises the full status workflow against real Git
 // worktrees. Fixture creation and catalog updates are excluded from the timer.
 // Run with -benchtime=1x -count=5 to compare repeated full-workspace scans.
 func BenchmarkStatusWorkspace(b *testing.B) {
-	for _, repositories := range []int{12, 60} {
+	for _, repositories := range statusBenchmarkSizes() {
 		b.Run(fmt.Sprintf("repos=%d", repositories), func(b *testing.B) {
 			s, store := statusBenchmarkFixture(b, repositories)
 			var want []app.Item
@@ -72,9 +80,51 @@ func BenchmarkStatusWorkspace(b *testing.B) {
 	}
 }
 
+// BenchmarkStatusGitLaunches counts real child processes on separate traced
+// scans. Trace2 creates a file per Git process, including failed -C lookups.
+func BenchmarkStatusGitLaunches(b *testing.B) {
+	for _, size := range statusBenchmarkSizes() {
+		b.Run(fmt.Sprintf("repos=%d", size), func(b *testing.B) {
+			s, _ := statusBenchmarkFixture(b, size)
+			trace := b.TempDir()
+			b.Setenv("GIT_TRACE2_EVENT", trace)
+			for b.Loop() {
+				r, err := s.Status(b.Context(), "feature-review")
+				if err == nil || r.Outcome != "partial" || len(r.Items) != size {
+					b.Fatalf("incomplete status: %d items, %v", len(r.Items), err)
+				}
+			}
+			entries, err := os.ReadDir(trace)
+			if err != nil || len(entries) == 0 {
+				b.Fatalf("missing Git process traces: %v", err)
+			}
+			for _, entry := range entries {
+				if entry.Name() == "git-trace2-discard" {
+					b.Fatal("incomplete process count: Git limited the number of trace files")
+				}
+			}
+			b.ReportMetric(float64(len(entries))/float64(b.N), "git-launches/op")
+		})
+	}
+}
+
 func statusBenchmarkFixture(b *testing.B, repositories int) (*app.Service, *config.Store) {
 	b.Helper()
-	base, err := filepath.EvalSymlinks(b.TempDir())
+	var directory string
+	if parent := os.Getenv("BEARFORGE_BENCH_FIXTURE_PARENT"); parent != "" {
+		parent, err := filepath.Abs(parent)
+		if err != nil {
+			b.Fatal(err)
+		}
+		directory, err = os.MkdirTemp(parent, fmt.Sprintf("bearforge-%d-", repositories))
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.Logf("retained benchmark root: %s", filepath.Join(directory, "code"))
+	} else {
+		directory = b.TempDir()
+	}
+	base, err := filepath.EvalSymlinks(directory)
 	if err != nil {
 		b.Fatal(err)
 	}

@@ -62,6 +62,18 @@ func TestControlledListKeepsSelectedRowVisible(t *testing.T) {
 	}
 }
 
+func TestPagedListFormatsOnlySelectedPage(t *testing.T) {
+	var formatted []int
+	lines := pagedListLines("Repositories", 1000, 996, 6, "empty", func(i int) string {
+		formatted = append(formatted, i)
+		return fmt.Sprintf("repository-%d", i)
+	})
+	if len(formatted) != 5 || formatted[0] != 995 || formatted[4] != 999 ||
+		!strings.Contains(lines[2], "repository-996") {
+		t.Fatalf("rows formatted %v, view %q", formatted, lines)
+	}
+}
+
 func TestAddAndSyncBarsOnlyDescribeActiveKnownWork(t *testing.T) {
 	m := dashboardModel{width: 80, height: 24}
 	m.addRun = &dashboardAdd{phase: addExecuting, request: app.AddRequest{Repositories: []string{"api", "web"}}, states: map[string]string{"api": "created", "web": "running"}}

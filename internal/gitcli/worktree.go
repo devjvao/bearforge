@@ -2,6 +2,7 @@ package gitcli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -48,11 +49,32 @@ func (c *Client) Worktrees(ctx context.Context, bare string) ([]domain.Worktree,
 }
 
 func (c *Client) VerifyCommon(ctx context.Context, path, bare string) error {
-	b, err := c.Run(ctx, path, "rev-parse", "--path-format=absolute", "--git-common-dir")
-	if err != nil {
+	b, err := c.Run(ctx, path, "rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel")
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
-	actual, err := os.Stat(strings.TrimSpace(string(b)))
+	common, top, both := strings.Cut(strings.TrimSuffix(string(b), "\n"), "\n")
+	if err != nil || !both || strings.Contains(top, "\n") {
+		// A pathname itself may contain newlines. A bare directory can also
+		// resolve the common dir but fail the top-level query. Read each
+		// independently in those cases, checking the common identity first.
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		// With no working directory both probes fail at Git's -C option.
+		if err != nil {
+			if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+				return err
+			}
+		}
+		b, err = c.Run(ctx, path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+		if err != nil {
+			return err
+		}
+		common = strings.TrimSuffix(string(b), "\n")
+		top = ""
+	}
+	actual, err := os.Stat(common)
 	if err != nil {
 		return err
 	}
@@ -63,11 +85,14 @@ func (c *Client) VerifyCommon(ctx context.Context, path, bare string) error {
 	if !os.SameFile(actual, expected) {
 		return domain.E("conflict", "worktree at %s belongs to another repository", path)
 	}
-	top, err := c.Run(ctx, path, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return err
+	if top == "" {
+		b, err = c.Run(ctx, path, "rev-parse", "--show-toplevel")
+		if err != nil {
+			return err
+		}
+		top = strings.TrimSuffix(string(b), "\n")
 	}
-	a, err := os.Stat(strings.TrimSpace(string(top)))
+	a, err := os.Stat(top)
 	if err != nil {
 		return err
 	}

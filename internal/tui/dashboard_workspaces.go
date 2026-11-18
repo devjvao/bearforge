@@ -86,11 +86,14 @@ func (m dashboardModel) openWorkspace(action workspaceAction) (tea.Model, tea.Cm
 	names := []string{}
 	switch action {
 	case workspaceRemoveRepo:
-		rows := m.repositoryRows()
-		if m.focus != 1 || m.repoIndex >= len(rows) || rows[m.repoIndex].Repository == "" {
+		if m.focus != 1 || m.repoIndex >= m.repositoryCount() {
 			return m, nil
 		}
-		names = append(names, rows[m.repoIndex].Repository)
+		name := m.repositoryAt(m.repoIndex).Repository
+		if name == "" {
+			return m, nil
+		}
+		names = append(names, name)
 	case workspaceRemoveAll:
 		for _, item := range m.data.Items {
 			if item.Repository != "" {

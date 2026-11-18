@@ -41,8 +41,8 @@ func (m dashboardModel) workspaceLines(height int) []string {
 	}
 	names := m.workspaceRows()
 	selected := slices.Index(names, m.workspace)
-	rows := make([]string, 0, len(names))
-	for i, name := range names {
+	rowAt := func(i int) string {
+		name := names[i]
 		prefix := "  "
 		if i == selected {
 			prefix = "> "
@@ -51,7 +51,7 @@ func (m dashboardModel) workspaceLines(height int) []string {
 		if i == selected {
 			line = m.selectedLine(line, m.workspaceContentWidth(), m.focus == 0)
 		}
-		rows = append(rows, line)
+		return line
 	}
 	empty := "No matching workspaces"
 	if len(m.data.Workspaces) == 0 {
@@ -60,7 +60,7 @@ func (m dashboardModel) workspaceLines(height int) []string {
 			empty = "Loading workspaces..."
 		}
 	}
-	return listLines(m.paneTitle(title, m.focus == 0), rows, selected, height, m.styles.muted.Render(empty))
+	return pagedListLines(m.paneTitle(title, m.focus == 0), len(names), selected, height, m.styles.muted.Render(empty), rowAt)
 }
 
 func (m dashboardModel) repositoryLines(height int) []string {
@@ -70,8 +70,8 @@ func (m dashboardModel) repositoryLines(height int) []string {
 	}
 	width := m.repositoryContentWidth()
 	repoWidth, branchWidth := m.repositoryColumns()
-	rows := []string{}
-	for i, item := range m.repositoryRows() {
+	rowAt := func(i int) string {
+		item := m.repositoryAt(i)
 		prefix := "  "
 		if i == m.repoIndex {
 			prefix = "> "
@@ -85,7 +85,7 @@ func (m dashboardModel) repositoryLines(height int) []string {
 		if i == m.repoIndex {
 			line = m.selectedLine(line, width, m.focus == 1)
 		}
-		rows = append(rows, line)
+		return line
 	}
 	empty := "No matching repositories"
 	if len(m.data.Items) == 0 {
@@ -98,10 +98,10 @@ func (m dashboardModel) repositoryLines(height int) []string {
 	empty = m.styles.muted.Render(empty)
 	if width >= 60 && height >= 4 {
 		columns := "  " + padded("Repository", repoWidth) + " " + padded("Branch", branchWidth) + " Health"
-		lines := listLines(title, rows, m.repoIndex, height-1, empty)
+		lines := pagedListLines(title, m.repositoryCount(), m.repoIndex, height-1, empty, rowAt)
 		return append([]string{lines[0], m.styles.muted.Render(columns)}, lines[1:]...)
 	}
-	return listLines(title, rows, m.repoIndex, height, empty)
+	return pagedListLines(title, m.repositoryCount(), m.repoIndex, height, empty, rowAt)
 }
 
 func (m dashboardModel) paneTitle(title string, active bool) string {
@@ -150,8 +150,7 @@ func (m dashboardModel) detailContent() []string {
 	if m.showSync && m.syncRun != nil {
 		return m.syncContent()
 	}
-	rows := m.repositoryRows()
-	if len(rows) == 0 {
+	if m.repositoryCount() == 0 {
 		if m.loading {
 			return m.appendNotices([]string{"Loading local status..."})
 		}
@@ -171,7 +170,7 @@ func (m dashboardModel) detailContent() []string {
 		}
 		return m.appendNotices([]string{"No repositories match the filter. Escape clears it."})
 	}
-	item := rows[min(m.repoIndex, len(rows)-1)]
+	item := m.repositoryAt(min(m.repoIndex, m.repositoryCount()-1))
 	lines := []string{
 		m.styles.title.Render("Details: "+displayText(item.Repository)) + "  " + m.styles.outcome(item.Outcome),
 		m.styles.muted.Render("Path: ") + displayText(item.Path),

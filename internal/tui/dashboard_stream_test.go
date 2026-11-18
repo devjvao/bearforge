@@ -15,6 +15,68 @@ type progressiveDashboardSource struct {
 	read func(context.Context, string, func(app.DashboardSnapshot)) (app.DashboardSnapshot, error)
 }
 
+type rowDashboardSource func(context.Context, string, func(app.DashboardSnapshot), func(app.Item)) (app.DashboardSnapshot, error)
+
+func (s rowDashboardSource) Dashboard(context.Context, string) (app.DashboardSnapshot, error) {
+	return app.DashboardSnapshot{}, errors.New("unexpected batch read")
+}
+
+func (s rowDashboardSource) DashboardWithProgress(context.Context, string, func(app.DashboardSnapshot)) (app.DashboardSnapshot, error) {
+	return app.DashboardSnapshot{}, errors.New("unexpected snapshot stream")
+}
+
+func (s rowDashboardSource) DashboardWithUpdates(ctx context.Context, workspace string, start func(app.DashboardSnapshot), item func(app.Item)) (app.DashboardSnapshot, error) {
+	return s(ctx, workspace, start, item)
+}
+
+func TestDashboardRowUpdatesKeepFilteredSelectionAndCounts(t *testing.T) {
+	finish := make(chan struct{})
+	web := app.Item{Repository: "web", Outcome: "changes", Branch: "feature"}
+	source := rowDashboardSource(func(ctx context.Context, workspace string, start func(app.DashboardSnapshot), item func(app.Item)) (app.DashboardSnapshot, error) {
+		start(app.DashboardSnapshot{Workspace: workspace, Items: []app.Item{
+			{Repository: "api", Outcome: "inspecting"}, {Repository: "web", Outcome: "inspecting"},
+		}})
+		item(web)
+		select {
+		case <-ctx.Done():
+			return app.DashboardSnapshot{}, ctx.Err()
+		case <-finish:
+		}
+		return app.DashboardSnapshot{Workspace: workspace, Items: []app.Item{web, {Repository: "api", Outcome: "unreadable"}},
+			Problems: []app.Problem{{Message: "api unavailable"}}}, nil
+	})
+	m := newDashboardModel(t.Context(), source, "alpha")
+	t.Cleanup(m.reader.close)
+	updated, next := m.Update(runDashboardCommand(t, m.Init()))
+	m = updated.(dashboardModel)
+	m, _ = dashboardKey(m, '/', "/")
+	m, _ = dashboardKey(m, 'w', "w")
+	m, _ = dashboardKey(m, tea.KeyEnter, "")
+	msg := runDashboardCommand(t, next).(dashboardLoadedMsg)
+	if msg.item == nil || msg.snapshot.Items != nil {
+		t.Fatal("a completion should carry only the changed row")
+	}
+	stale := msg
+	stale.requestID--
+	updated, _ = m.Update(stale)
+	m = updated.(dashboardModel)
+	if m.repositoryCount() != 1 || m.repositoryAt(0).Outcome != "inspecting" {
+		t.Fatal("stale row changed selection or content")
+	}
+	updated, next = m.Update(msg)
+	m = updated.(dashboardModel)
+	if view := m.View().Content; !strings.Contains(view, "1/2") || !strings.Contains(view, "feature") || !strings.Contains(view, "changes") {
+		t.Fatalf("filtered completion hidden while another inspection is blocked:\n%s", view)
+	}
+	close(finish)
+	updated, _ = m.Update(runDashboardCommand(t, next))
+	m = updated.(dashboardModel)
+	if m.loading || m.repositoryAt(m.repoIndex).Repository != "web" || m.repoCounts.changed != 1 ||
+		m.repoCounts.inspecting != 0 || len(m.data.Problems) != 1 {
+		t.Fatalf("final snapshot failed to reconcile: %+v", m.data)
+	}
+}
+
 func (s progressiveDashboardSource) Dashboard(ctx context.Context, workspace string) (app.DashboardSnapshot, error) {
 	return s.read(ctx, workspace, nil)
 }
@@ -56,7 +118,7 @@ func TestDashboardDisplaysCompletedRepositoryBeforeReadFinishes(t *testing.T) {
 	if !m.loading || m.data.Items[0].Outcome != "clean" || m.data.Items[1].Outcome != "inspecting" || next == nil {
 		t.Fatalf("completed repository hidden behind unfinished inspection: %+v", m.data)
 	}
-	if m.repositoryRows()[m.repoIndex].Repository != "web" {
+	if m.repositoryAt(m.repoIndex).Repository != "web" {
 		t.Fatal("progress moved repository selection")
 	}
 	if view := m.View().Content; !strings.Contains(view, "1/2") || !strings.Contains(view, "clean") || !strings.Contains(view, "inspecting") {
