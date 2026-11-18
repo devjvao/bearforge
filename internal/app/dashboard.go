@@ -29,6 +29,35 @@ type OperationSummary struct {
 	State     string
 }
 
+// PendingSummary describes an operation that can still require attention.
+func (op *Operation) PendingSummary() (OperationSummary, bool) {
+	if op.State == "complete" || op.State == "abandoned" {
+		return OperationSummary{}, false
+	}
+	return OperationSummary{ID: op.ID, Kind: op.Kind, Workspace: op.Workspace, State: op.State}, true
+}
+
+// A journal may return unfinished operations in ID order without loading the
+// entire history. As with List, readable records accompany any diagnostics.
+type pendingSummaryReader interface {
+	PendingSummaries(context.Context) ([]OperationSummary, error)
+}
+
+func (s *Service) pendingOperations(ctx context.Context) ([]OperationSummary, error) {
+	if journal, ok := s.Journal.(pendingSummaryReader); ok {
+		return journal.PendingSummaries(ctx)
+	}
+	ops, err := s.Journal.List()
+	var pending []OperationSummary
+	for i := range ops {
+		if summary, ok := ops[i].PendingSummary(); ok {
+			pending = append(pending, summary)
+		}
+	}
+	sort.Slice(pending, func(i, j int) bool { return pending[i].ID < pending[j].ID })
+	return pending, err
+}
+
 // Dashboard observes only the selected workspace. An empty selection chooses the
 // first registered workspace. Observation failures remain visible alongside any
 // usable results; cancellation and invalid selections are returned as errors.
@@ -94,20 +123,10 @@ func (s *Service) DashboardWithUpdates(ctx context.Context, workspace string, on
 		return snapshot, domain.E("not_found", "workspace %s is not registered", workspace)
 	}
 	snapshot.Workspace = workspace
-	ops, err := s.Journal.List()
+	snapshot.PendingOperations, err = s.pendingOperations(ctx)
 	if err != nil {
 		snapshot.Problems = append(snapshot.Problems, *ProblemFor(fmt.Errorf("read operations: %w", err)))
 	}
-	for _, op := range ops {
-		if op.State != "complete" && op.State != "abandoned" {
-			snapshot.PendingOperations = append(snapshot.PendingOperations, OperationSummary{
-				ID: op.ID, Kind: op.Kind, Workspace: op.Workspace, State: op.State,
-			})
-		}
-	}
-	sort.Slice(snapshot.PendingOperations, func(i, j int) bool {
-		return snapshot.PendingOperations[i].ID < snapshot.PendingOperations[j].ID
-	})
 	if err := ctx.Err(); err != nil {
 		return snapshot, err
 	}

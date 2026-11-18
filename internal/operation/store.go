@@ -10,6 +10,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -21,7 +22,10 @@ import (
 
 const maxDocument = 2 << 20
 
-type Store struct{ files *config.Store }
+type Store struct {
+	files    *config.Store
+	terminal atomic.Pointer[terminalIndex]
+}
 
 func New(files *config.Store) *Store { return &Store{files: files} }
 func (s *Store) Lock(ctx context.Context) (func() error, error) {
@@ -86,7 +90,7 @@ func journalDiagnostic(message string) string {
 	return strings.ToValidUTF8(message[:limit], "\uFFFD") + "\n[diagnostic truncated]"
 }
 
-func (s *Store) Load(id string) (*app.Operation, error) {
+func (s *Store) open(id string) (*os.File, error) {
 	if err := domain.ValidateID(id); err != nil {
 		return nil, err
 	}
@@ -94,12 +98,25 @@ func (s *Store) Load(id string) (*app.Operation, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.Open(p)
+	return os.Open(p)
+}
+
+func (s *Store) Load(id string) (*app.Operation, error) {
+	f, err := s.open(id)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	d := json.NewDecoder(io.LimitReader(f, maxDocument))
+	r := &io.LimitedReader{R: f, N: maxDocument + 1}
+	op, err := decodeOperation(id, s.files.Root, r)
+	if r.N == 0 {
+		return nil, domain.E("invalid", "operation exceeds 2 MiB")
+	}
+	return op, err
+}
+
+func decodeOperation(id, root string, r io.Reader) (*app.Operation, error) {
+	d := json.NewDecoder(r)
 	d.DisallowUnknownFields()
 	var op app.Operation
 	if err := d.Decode(&op); err != nil {
@@ -112,34 +129,47 @@ func (s *Store) Load(id string) (*app.Operation, error) {
 	if op.ID != id {
 		return nil, domain.E("invalid", "operation identity mismatch")
 	}
-	if err := valid(&op, s.files.Root); err != nil {
+	if err := valid(&op, root); err != nil {
 		return nil, err
 	}
 	return &op, nil
 }
-func (s *Store) List() ([]app.Operation, error) {
+
+func (s *Store) operationIDs() ([]string, error) {
 	p, err := s.files.SafePath(".bearforge", "state", "operations")
 	if err != nil {
 		return nil, err
 	}
 	entries, err := os.ReadDir(p)
 	if os.IsNotExist(err) {
-		return []app.Operation{}, nil
+		return nil, nil
 	}
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
+			ids = append(ids, strings.TrimSuffix(entry.Name(), ".json"))
+		}
+	}
+	return ids, nil
+}
+
+func (s *Store) List() ([]app.Operation, error) {
+	ids, err := s.operationIDs()
 	if err != nil {
 		return nil, err
 	}
 	ops := []app.Operation{}
 	var failures []error
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
-			op, err := s.Load(strings.TrimSuffix(entry.Name(), ".json"))
-			if err != nil {
-				failures = append(failures, fmt.Errorf("operation %s: %w", entry.Name(), err))
-				continue
-			}
-			ops = append(ops, *op)
+	for _, id := range ids {
+		op, err := s.Load(id)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("operation %s.json: %w", id, err))
+			continue
 		}
+		ops = append(ops, *op)
 	}
 	return ops, errors.Join(failures...)
 }

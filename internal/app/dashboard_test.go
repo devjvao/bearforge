@@ -132,6 +132,58 @@ func TestDashboardHonorsCancellation(t *testing.T) {
 	}
 }
 
+type listedDashboardJournal struct {
+	app.Journal
+	lists int
+}
+
+func (j *listedDashboardJournal) List() ([]app.Operation, error) {
+	j.lists++
+	return []app.Operation{
+		{ID: "a-1", Kind: "workspace.add", Workspace: "other", State: "partial"},
+		{ID: "finished", State: "complete"}, {ID: "old", State: "abandoned"},
+		{ID: "a", Kind: "repo.import", State: "running"},
+	}, errors.New("broken.json")
+}
+
+type summaryDashboardJournal struct {
+	*listedDashboardJournal
+	ctx context.Context
+}
+
+func (j *summaryDashboardJournal) PendingSummaries(ctx context.Context) ([]app.OperationSummary, error) {
+	j.ctx = ctx
+	return []app.OperationSummary{
+		{ID: "a", Kind: "repo.import", State: "running"},
+		{ID: "a-1", Kind: "workspace.add", Workspace: "other", State: "partial"},
+	}, errors.New("broken.json")
+}
+
+func TestDashboardPendingSummariesAndListFallback(t *testing.T) {
+	ctx := t.Context()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := config.New(root)
+	legacy := &listedDashboardJournal{}
+	fast := &summaryDashboardJournal{listedDashboardJournal: &listedDashboardJournal{}}
+	want := []app.OperationSummary{
+		{ID: "a", Kind: "repo.import", State: "running"},
+		{ID: "a-1", Kind: "workspace.add", Workspace: "other", State: "partial"},
+	}
+	for _, journal := range []app.Journal{legacy, fast} {
+		result, err := app.New(files, nil, journal).Dashboard(ctx, "")
+		if err != nil || !reflect.DeepEqual(result.PendingOperations, want) ||
+			len(result.Problems) != 1 || !strings.Contains(result.Problems[0].Message, "broken.json") {
+			t.Fatalf("%T lost pending rows or journal diagnostics: %+v, %v", journal, result, err)
+		}
+	}
+	if legacy.lists != 1 || fast.lists != 0 || fast.ctx != ctx {
+		t.Fatalf("journal routing: legacy lists=%d, optimized lists=%d, context forwarded=%t", legacy.lists, fast.lists, fast.ctx == ctx)
+	}
+}
+
 func dashboardFiles(t *testing.T, root string) map[string]string {
 	t.Helper()
 	files := map[string]string{}
