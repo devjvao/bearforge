@@ -75,6 +75,7 @@ func (r *dashboardReader) close() {
 type dashboardLoadedMsg struct {
 	requestID uint64
 	snapshot  app.DashboardSnapshot
+	item      *app.Item
 	err       error
 	partial   bool
 	updates   <-chan dashboardReadUpdate
@@ -97,6 +98,9 @@ type dashboardModel struct {
 	focus           int
 	workspaceFilter string
 	repoFilter      string
+	filteredRepos   []int
+	repoPositions   map[string]int
+	repoCounts      repositoryCounts
 	editing         bool
 	repoIndex       int
 	detailOffset    int
@@ -183,6 +187,9 @@ func (m dashboardModel) request(workspace string) (tea.Model, tea.Cmd) {
 		m.repoFilter = ""
 		m.repoIndex = 0
 		m.data.Items = nil
+		m.filteredRepos = nil
+		m.repoPositions = nil
+		m.repoCounts = repositoryCounts{}
 		m.data.Problems = nil
 		m.data.ObservedAt = time.Time{}
 	}
@@ -292,18 +299,10 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if v.err != nil {
 			return m, nil
 		}
-		selected := ""
-		if rows := m.repositoryRows(); m.repoIndex < len(rows) {
-			selected = rows[m.repoIndex].Repository
-		}
-		m.data = v.snapshot
-		m.workspace = v.snapshot.Workspace
-		m.repoIndex = 0
-		for i, row := range m.repositoryRows() {
-			if row.Repository == selected {
-				m.repoIndex = i
-				break
-			}
+		if v.item != nil {
+			m.applyRepository(*v.item)
+		} else {
+			m.applySnapshot(v.snapshot)
 		}
 		if v.partial {
 			return m, dashboardNextReadCommand(m.requestCtx, m.requestID, v.updates)
@@ -384,7 +383,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.focus == 0 {
 				m.workspaceFilter = ""
 			} else {
-				m.repoFilter = ""
+				m.setRepoFilter("")
 				m.repoIndex = 0
 			}
 		case "r":
@@ -404,7 +403,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			} else {
-				m.repoIndex = max(0, min(len(m.repositoryRows())-1, m.repoIndex+delta))
+				m.repoIndex = max(0, min(m.repositoryCount()-1, m.repoIndex+delta))
 				m.detailOffset = 0
 			}
 		case "pgdown":
@@ -419,24 +418,29 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m dashboardModel) editFilter(key tea.KeyPressMsg) dashboardModel {
-	filter := &m.repoFilter
+	filter := m.repoFilter
 	if m.focus == 0 {
-		filter = &m.workspaceFilter
+		filter = m.workspaceFilter
 	}
 	switch key.String() {
 	case "enter":
 		m.editing = false
 	case "esc":
-		*filter = ""
+		filter = ""
 		m.editing = false
 	case "backspace":
-		_, size := utf8.DecodeLastRuneInString(*filter)
-		*filter = (*filter)[:len(*filter)-size]
+		_, size := utf8.DecodeLastRuneInString(filter)
+		filter = filter[:len(filter)-size]
 	default:
 		// Bound filter memory even when receiving unusually large input events.
-		if len(*filter)+len(key.Text) <= 256 {
-			*filter += displayText(key.Text)
+		if len(filter)+len(key.Text) <= 256 {
+			filter += displayText(key.Text)
 		}
+	}
+	if m.focus == 0 {
+		m.workspaceFilter = filter
+	} else if filter != m.repoFilter {
+		m.setRepoFilter(filter)
 	}
 	m.repoIndex = 0
 	m.detailOffset = 0
@@ -444,20 +448,14 @@ func (m dashboardModel) editFilter(key tea.KeyPressMsg) dashboardModel {
 }
 
 func (m dashboardModel) workspaceRows() []string {
+	if m.workspaceFilter == "" {
+		return m.data.Workspaces
+	}
+	needle := strings.ToLower(m.workspaceFilter)
 	rows := make([]string, 0, len(m.data.Workspaces))
 	for _, name := range m.data.Workspaces {
-		if strings.Contains(strings.ToLower(name), strings.ToLower(m.workspaceFilter)) {
+		if strings.Contains(strings.ToLower(name), needle) {
 			rows = append(rows, name)
-		}
-	}
-	return rows
-}
-
-func (m dashboardModel) repositoryRows() []app.Item {
-	rows := make([]app.Item, 0, len(m.data.Items))
-	for _, item := range m.data.Items {
-		if strings.Contains(strings.ToLower(item.Repository), strings.ToLower(m.repoFilter)) {
-			rows = append(rows, item)
 		}
 	}
 	return rows

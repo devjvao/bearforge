@@ -25,6 +25,12 @@ func (listRowDelegate) Render(out io.Writer, _ list.Model, _ int, item list.Item
 }
 
 func listLines(title string, rows []string, selected, height int, empty string) []string {
+	return pagedListLines(title, len(rows), selected, height, empty, func(i int) string { return rows[i] })
+}
+
+// A one-line delegate with the list chrome disabled fits exactly height-1
+// items below the title. Keep only the selected Bubbles page in memory.
+func pagedListLines(title string, count, selected, height int, empty string, rowAt func(int) string) []string {
 	if height <= 0 {
 		return nil
 	}
@@ -33,13 +39,17 @@ func listLines(title string, rows []string, selected, height int, empty string) 
 	if height == 1 {
 		return lines
 	}
-	if len(rows) == 0 {
+	if count == 0 {
 		lines[1] = empty
 		return lines
 	}
-	items := make([]list.Item, len(rows))
+	selected = min(max(0, selected), count-1)
+	perPage := height - 1
+	start := selected / perPage * perPage
+	items := make([]list.Item, min(perPage, count-start))
 	width := 1
-	for index, row := range rows {
+	for index := range items {
+		row := rowAt(start + index)
 		items[index] = listRow(row)
 		width = max(width, ansi.StringWidth(row))
 	}
@@ -52,7 +62,7 @@ func listLines(title string, rows []string, selected, height int, empty string) 
 	component.SetShowPagination(false)
 	component.SetShowHelp(false)
 	component.SetSize(width, height-1)
-	component.Select(min(max(0, selected), len(rows)-1))
+	component.Select(selected - start)
 	copy(lines[1:], strings.Split(component.View(), "\n"))
 	return lines
 }

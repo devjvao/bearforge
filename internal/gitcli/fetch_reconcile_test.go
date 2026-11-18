@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The wrapper keeps native Git transfer/configuration semantics while placing
@@ -39,6 +40,10 @@ func runFetchTestGit(realGit string) int {
 	fmt.Fprintln(log, command)
 	log.Close()
 	mode := os.Getenv("BEARFORGE_TEST_GIT_MODE")
+	if command == "rev-parse" && mode == "block-worktree-probe" {
+		time.Sleep(time.Minute) // The client command deadline kills this helper.
+		return 99
+	}
 	remote := os.Getenv("BEARFORGE_TEST_GIT_REMOTE")
 	mutate := func(delete bool) bool {
 		mutation := []string{"-C", remote, "update-ref"}

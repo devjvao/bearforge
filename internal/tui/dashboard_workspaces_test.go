@@ -143,7 +143,7 @@ func TestDashboardRemovalCapturesSelectedOrWholeScope(t *testing.T) {
 				r.Items = r.Items[:len(r.Items)-1]
 				return r, nil
 			}})
-			m.repoFilter = "web"
+			m.setRepoFilter("web")
 			key := 'd'
 			if whole {
 				key = 'D'

@@ -89,7 +89,7 @@ func TestDashboardSyncIsExplicitAndIncludesFilteredRepositories(t *testing.T) {
 	if called {
 		t.Fatal("local refresh initiated sync")
 	}
-	m.repoFilter = "api"
+	m.setRepoFilter("api")
 	m.data.Items = append(m.data.Items, m.data.Items[0])
 	m, cmd := dashboardKey(m, 's', "s")
 	if cmd == nil {

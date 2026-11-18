@@ -61,15 +61,15 @@ func TestDashboardNavigationAndFiltering(t *testing.T) {
 	m, _ = dashboardKey(m, tea.KeyTab, "")
 	m, _ = dashboardKey(m, '/', "/")
 	m, _ = dashboardKey(m, 'w', "w")
-	if got := m.repositoryRows(); len(got) != 1 || got[0].Repository != "web" {
-		t.Fatalf("filter not applied: %+v", got)
+	if m.repositoryCount() != 1 || m.repositoryAt(0).Repository != "web" {
+		t.Fatal("filter did not select web")
 	}
 	m, _ = dashboardKey(m, 'q', "q")
 	if !m.editing || m.repoFilter != "wq" {
 		t.Fatal("q quit while entering a filter")
 	}
 	m, _ = dashboardKey(m, tea.KeyEsc, "")
-	if m.editing || len(m.repositoryRows()) != 2 {
+	if m.editing || m.repositoryCount() != 2 {
 		t.Fatal("escape did not clear filtering")
 	}
 	m, _ = dashboardKey(m, tea.KeyDown, "")
@@ -108,7 +108,7 @@ func TestDashboardRefreshPreservesRepositorySelection(t *testing.T) {
 	}
 	updated, _ := m.Update(cmd())
 	m = updated.(dashboardModel)
-	if rows := m.repositoryRows(); rows[m.repoIndex].Repository != "web" {
+	if m.repositoryAt(m.repoIndex).Repository != "web" {
 		t.Fatal("refresh lost repository selection")
 	}
 }

@@ -86,17 +86,8 @@ func (m dashboardModel) layout() ([]string, int, int) {
 }
 
 func (m dashboardModel) headerLines() []string {
-	clean, changed, attention := 0, 0, 0
-	for _, item := range m.data.Items {
-		switch item.Outcome {
-		case "clean":
-			clean++
-		case "changes":
-			changed++
-		default:
-			attention++
-		}
-	}
+	clean, changed := m.repoCounts.clean, m.repoCounts.changed
+	attention := len(m.data.Items) - clean - changed
 	summary := fmt.Sprintf("%d repositories | %d clean | %d changed", len(m.data.Items), clean, changed)
 	if m.width < 70 {
 		summary = fmt.Sprintf("%d repos | %d clean | %d changed", len(m.data.Items), clean, changed)
@@ -107,12 +98,7 @@ func (m dashboardModel) headerLines() []string {
 	if m.loading {
 		summary = "Reading local repository status..."
 		if m.loadProgress && len(m.data.Items) > 0 {
-			completed := 0
-			for _, item := range m.data.Items {
-				if item.Outcome != "inspecting" {
-					completed++
-				}
-			}
+			completed := len(m.data.Items) - m.repoCounts.inspecting
 			summary = fmt.Sprintf("Reading local repository status... %d/%d", completed, len(m.data.Items))
 		}
 	}

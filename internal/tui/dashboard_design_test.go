@@ -98,7 +98,8 @@ func TestDashboardMonochromeFilteredPanesKeepFocusVisible(t *testing.T) {
 	for _, width := range []int{90, 120} {
 		m := loadedDashboard(t).withColor("never", "")
 		m.width, m.height, m.focus = width, 24, 0
-		m.workspaceFilter, m.repoFilter = "a", "a"
+		m.workspaceFilter = "a"
+		m.setRepoFilter("a")
 		before := m.View().Content
 		m, cmd := dashboardKey(m, tea.KeyTab, "")
 		if cmd != nil {

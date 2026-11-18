@@ -6,6 +6,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"maps"
+	"slices"
 	"sort"
 	"time"
 
@@ -48,6 +50,11 @@ type Git interface {
 	PreserveHistory(context.Context, string, string, string, string) error
 	Remove(context.Context, string, string) error
 	Fingerprint(context.Context, string) (string, error)
+}
+
+// A Git adapter may support reading multiple effective remote URLs in one call.
+type remoteURLReader interface {
+	RemoteURLs(context.Context, string, []string) (map[string]string, error)
 }
 
 // ClonePlanner is an optional Git capability. Planning probes the destination
@@ -270,10 +277,22 @@ func (s *Service) verifyRepositoryAt(ctx context.Context, r domain.Repository, p
 	if err := s.Git.VerifyBare(ctx, p); err != nil {
 		return err
 	}
-	for name, want := range r.Remotes {
-		got, err := s.Git.Config(ctx, p, "remote."+name+".url")
+	var urls map[string]string
+	if reader, ok := s.Git.(remoteURLReader); ok && len(r.Remotes) > 1 {
+		var err error
+		urls, err = reader.RemoteURLs(ctx, p, slices.Collect(maps.Keys(r.Remotes)))
 		if err != nil {
 			return err
+		}
+	}
+	for name, want := range r.Remotes {
+		got := urls[name]
+		if urls == nil {
+			var err error
+			got, err = s.Git.Config(ctx, p, "remote."+name+".url")
+			if err != nil {
+				return err
+			}
 		}
 		if got != want {
 			return domain.E("conflict", "remote %s for %s differs from the catalog", name, r.ID)
