@@ -89,16 +89,19 @@ func journalHistoryFixture(b *testing.B, terminal int) *config.Store {
 	b.Helper()
 	// Set a dedicated parent to compare independent binaries against the exact
 	// same files. An existing fixture is only opened; it is never rewritten.
-	var root string
-	if parent := os.Getenv("BEARFORGE_BENCH_JOURNAL_PARENT"); parent != "" {
-		root = filepath.Join(parent, fmt.Sprintf("history-%d", terminal))
-		if err := os.Mkdir(root, 0700); os.IsExist(err) {
-			return config.New(root)
-		} else if err != nil {
-			b.Fatal(err)
-		}
-	} else {
-		root = b.TempDir()
+	parent := os.Getenv("BEARFORGE_BENCH_JOURNAL_PARENT")
+	if parent == "" {
+		parent = b.TempDir()
+	}
+	parent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		b.Fatal(err)
+	}
+	root := filepath.Join(parent, fmt.Sprintf("history-%d", terminal))
+	if err := os.Mkdir(root, 0700); os.IsExist(err) {
+		return config.New(root)
+	} else if err != nil {
+		b.Fatal(err)
 	}
 	files := config.New(root)
 	w := domain.Workspace{Name: "feature", DefaultBranch: "feature", Repositories: map[string]domain.Mapping{"api": {Branch: "feature"}}}

@@ -161,7 +161,11 @@ func (j *summaryDashboardJournal) PendingSummaries(ctx context.Context) ([]app.O
 
 func TestDashboardPendingSummariesAndListFallback(t *testing.T) {
 	ctx := t.Context()
-	files := config.New(t.TempDir())
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := config.New(root)
 	legacy := &listedDashboardJournal{}
 	fast := &summaryDashboardJournal{listedDashboardJournal: &listedDashboardJournal{}}
 	want := []app.OperationSummary{
