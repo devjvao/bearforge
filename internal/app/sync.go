@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 
 	"github.com/devjvao/bearforge/internal/domain"
 )
@@ -33,54 +34,80 @@ func (s *Service) Sync(ctx context.Context, names []string, jobs int, dry bool) 
 		}
 	}
 	names = unique(names)
-	paths := make([]string, len(names))
-	for i, id := range names {
+	items := make([]Item, len(names))
+	failures := make([]error, len(names))
+	runSyncJobs(len(names), jobs, func(i int) bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		id := names[i]
 		repo, ok := c.Repositories[id]
 		if !ok {
-			return r, domain.E("not_found", "unknown repository %s", id)
+			failures[i] = domain.E("not_found", "unknown repository %s", id)
+			return false
 		}
-		paths[i], err = s.checkRepository(ctx, repo)
+		path, err := s.checkRepository(ctx, repo)
+		if err != nil {
+			failures[i] = err
+			return false
+		}
+		items[i] = Item{Repository: id, Path: path, Outcome: "planned"}
+		return true
+	})
+	for _, err := range failures {
 		if err != nil {
 			return r, err
 		}
 	}
-	r.Items = make([]Item, len(names))
-	failures := make([]error, len(names))
-	var wg sync.WaitGroup
-	queue := make(chan int)
-	for range min(jobs, len(names)) {
-		wg.Go(func() {
-			for i := range queue {
-				item := Item{Repository: names[i], Path: paths[i], Outcome: "planned"}
-				if !dry {
-					if err := ctx.Err(); err != nil {
-						failures[i] = err
-					} else {
-						s.event(names[i], "running")
-						failures[i] = s.Git.Fetch(ctx, paths[i])
-					}
-					item.Outcome = "synced"
-					if failures[i] != nil {
-						item.Outcome = "failed"
-						item.Problem = ProblemFor(failures[i])
-					}
-					s.event(names[i], item.Outcome)
-				}
-				r.Items[i] = item
-			}
-		})
+	if err := ctx.Err(); err != nil {
+		return r, err
 	}
-	for i := range names {
-		queue <- i
+	r.Items = items
+	if dry {
+		r.Outcome = "planned"
+		return r, nil
 	}
-	close(queue)
-	wg.Wait()
+	runSyncJobs(len(items), jobs, func(i int) bool {
+		item := &items[i]
+		if err := ctx.Err(); err != nil {
+			failures[i] = err
+		} else {
+			s.event(item.Repository, "running")
+			failures[i] = s.Git.Fetch(ctx, item.Path)
+		}
+		item.Outcome = "synced"
+		if failures[i] != nil {
+			item.Outcome = "failed"
+			item.Problem = ProblemFor(failures[i])
+		}
+		s.event(item.Repository, item.Outcome)
+		return true
+	})
 	err = errors.Join(failures...)
 	if err != nil {
 		r.Outcome = "partial"
 	}
-	if dry {
-		r.Outcome = "planned"
-	}
 	return r, err
+}
+
+// runSyncJobs claims indices in order. Returning false stops new work while
+// letting all previously claimed indices finish, including any earlier failure.
+func runSyncJobs(count, jobs int, work func(int) bool) {
+	var next atomic.Int64
+	var workers sync.WaitGroup
+	for range min(count, jobs) {
+		workers.Go(func() {
+			for {
+				i := int(next.Add(1) - 1)
+				if i >= count {
+					return
+				}
+				if !work(i) {
+					next.Store(int64(count))
+					return
+				}
+			}
+		})
+	}
+	workers.Wait()
 }

@@ -71,6 +71,8 @@ The [Git inspection report](git-inspection-performance.md) counts child processe
 
 The [journal history benchmark](journal-performance.md) measures time to the dashboard's initial rows on a first and repeat refresh with up to 1,000 completed or abandoned operations.
 
+The [sync benchmark](sync-performance.md) measures time to the first fetch and total sync time with 12, 60 and 200 local repositories.
+
 GitHub PRs use [OpenCodeReview with GPT-6.1 Sol at high effort](../pr-reviews.md), with automatic owner reviews and owner-approved contributor reviews through `/open-code-review`. That guide covers contributor CI approval, OpenAI settings and GitHub App credentials.
 
 ## Implementation boundaries
