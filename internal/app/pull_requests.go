@@ -57,96 +57,182 @@ func (s *Service) PullRequests(ctx context.Context, req PRRequest) (Result, erro
 		}
 	}
 	names = unique(names)
-	for _, id := range names {
-		if _, ok := w.Repositories[id]; !ok {
+	items := make([]Item, len(names))
+	for i, id := range names {
+		mapping, ok := w.Repositories[id]
+		if !ok {
 			return r, domain.E("invalid", "repository %s is not a workspace member", id)
 		}
-	}
-	var failures []error
-	for _, id := range names {
-		mapping := w.Repositories[id]
 		item := Item{Repository: id, Workspace: req.Workspace, ExpectedBranch: mapping.Branch, Base: mapping.PRTarget}
 		if req.Base != "" {
 			item.Base = req.Base
 		}
-		err := ctx.Err()
-		if err == nil {
-			err = s.observePullRequests(ctx, req, c, &item)
-		}
-		if err != nil {
-			// Some Git validation adapters wrap command cancellation as invalid.
-			// Keep cancellation discoverable for callers and CLI exit status 130.
-			err = errors.Join(err, ctx.Err())
-			item.Outcome = "failed"
-			item.Problem = ProblemFor(err)
-			failures = append(failures, err)
-		}
-		r.Items = append(r.Items, item)
+		items[i] = item
 	}
+	if c.Jobs < 1 || c.Jobs > 64 {
+		return r, domain.E("invalid", "jobs must be between 1 and 64")
+	}
+	r.Items = items
+	err = s.observePullRequests(ctx, req, c, r.Items)
 	if req.DryRun {
 		r.Outcome = "planned"
 	}
-	if len(failures) > 0 {
+	if err != nil {
 		r.Outcome = "partial"
 	}
-	return r, errors.Join(failures...)
+	return r, err
 }
 
-func (s *Service) observePullRequests(ctx context.Context, req PRRequest, c domain.Catalog, item *Item) error {
+// observePullRequests shares the catalog's job budget between local checks and
+// provider calls. Only the coordinator owns the host queues. Waiting queries
+// consume neither a worker nor any of the provider's per-lookup timeout.
+func (s *Service) observePullRequests(ctx context.Context, req PRRequest, c domain.Catalog, items []Item) error {
+	if len(items) == 0 {
+		return nil
+	}
+	type prepared struct {
+		index int
+		query *domain.PullRequestQuery
+	}
+	preparations := make(chan prepared)
+	lookups := make(chan string)
+	failures := make([]error, len(items))
+	recordError := func(i int, err error) {
+		if err != nil {
+			// A Git adapter may report an interrupted validation as invalid.
+			failures[i] = errors.Join(err, ctx.Err())
+		}
+	}
+	active := 0
+	startLookup := func(p prepared, group string) {
+		active++
+		go func() {
+			err := s.lookupPullRequests(ctx, *p.query, req.Refresh, &items[p.index])
+			recordError(p.index, err)
+			lookups <- group
+		}()
+	}
+	// A group is present from its first lookup's admission to its last completion.
+	waiting := make(map[string][]prepared)
+	next := 0
+	for {
+		for active < c.Jobs && next < len(items) && ctx.Err() == nil {
+			i := next
+			next++
+			active++
+			go func() {
+				q, err := s.preparePullRequest(ctx, req, c, &items[i])
+				recordError(i, err)
+				preparations <- prepared{i, q}
+			}()
+		}
+		if active == 0 {
+			break
+		}
+		select {
+		case p := <-preparations:
+			active--
+			if p.query == nil || ctx.Err() != nil {
+				continue
+			}
+			group := p.query.LookupGroup()
+			if queue, busy := waiting[group]; busy {
+				waiting[group] = append(queue, p)
+			} else {
+				waiting[group] = nil
+				startLookup(p, group)
+			}
+		case group := <-lookups:
+			active--
+			queue := waiting[group]
+			if len(queue) > 0 && ctx.Err() == nil {
+				waiting[group] = queue[1:]
+				startLookup(queue[0], group)
+			} else {
+				delete(waiting, group)
+			}
+		}
+	}
+	for i := range items {
+		if items[i].Outcome == "" && failures[i] == nil {
+			failures[i] = ctx.Err() // Never admitted, or prepared and still queued.
+		}
+		if err := failures[i]; err != nil {
+			items[i].Outcome, items[i].Problem = "failed", ProblemFor(err)
+		}
+	}
+	err := errors.Join(failures...)
+	if cancelled := ctx.Err(); cancelled != nil && !errors.Is(err, cancelled) {
+		err = errors.Join(err, cancelled)
+	}
+	return err
+}
+
+func (s *Service) preparePullRequest(ctx context.Context, req PRRequest, c domain.Catalog, item *Item) (*domain.PullRequestQuery, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	repo, ok := c.Repositories[item.Repository]
 	if !ok {
-		return domain.E("conflict", "repository is no longer registered")
+		return nil, domain.E("conflict", "repository is no longer registered")
 	}
 	bare, err := s.checkRepository(ctx, repo)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	item.Path, err = s.treePath(req.Workspace, item.Repository)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := s.Git.VerifyCommon(ctx, item.Path, bare); err != nil {
-		return err
+		return nil, err
 	}
 	status, err := s.Git.Inspect(ctx, item.Path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	item.Status, item.Branch = &status, status.Branch
 	if status.Detached {
 		item.Outcome = "detached"
-		return nil
+		return nil, nil
 	}
 	if status.Unborn {
 		item.Outcome = "unborn"
-		return nil
+		return nil, nil
 	}
 	if item.Base != "" {
 		if err := s.Git.ValidateBranch(ctx, item.Base); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	remote, err := s.Git.Config(ctx, item.Path, "remote."+c.Remote+".url")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if remote == "" {
-		return domain.E("conflict", "default remote %s is not configured in the worktree", c.Remote)
+		return nil, domain.E("conflict", "default remote %s is not configured in the worktree", c.Remote)
 	}
 	if s.PRs == nil {
-		return domain.E("unavailable", "pull-request provider is unavailable")
+		return nil, domain.E("unavailable", "pull-request provider is unavailable")
 	}
 	q, err := s.PRs.Resolve(repo, remote, item.Branch)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	q.Base, q.State = item.Base, req.State
 	if req.DryRun {
 		item.Outcome = "planned"
 		item.PullRequests = &domain.PullRequestObservation{Query: q, PullRequests: []domain.PullRequest{}}
-		return nil
+		return nil, nil
 	}
-	observation, err := s.PRs.Lookup(ctx, q, req.Refresh)
+	return &q, nil
+}
+
+func (s *Service) lookupPullRequests(ctx context.Context, q domain.PullRequestQuery, refresh bool, item *Item) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	observation, err := s.PRs.Lookup(ctx, q, refresh)
 	if err != nil {
 		return err
 	}

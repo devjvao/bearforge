@@ -1,6 +1,11 @@
 package domain
 
-import "time"
+import (
+	"net"
+	"net/url"
+	"strings"
+	"time"
+)
 
 // PullRequestQuery identifies the target repository and the actual head identity.
 type PullRequestQuery struct {
@@ -15,6 +20,33 @@ type PullRequestQuery struct {
 	TokenEnv         string `json:"token_env"`
 	Connection       string `json:"connection,omitempty"`
 	GrantID          string `json:"grant_id,omitempty"`
+}
+
+// LookupGroup identifies queries that share a provider client's per-host gate.
+func (q PullRequestQuery) LookupGroup() string {
+	client := q.Provider
+	switch client {
+	case "":
+		client = "github" // Legacy queries dispatch to the GitHub client.
+	case "bitbucket-server":
+		client = "bitbucket" // Cloud and Server share one client.
+	}
+	u, err := url.Parse(q.APIURL)
+	if err != nil || u.Hostname() == "" {
+		// Leave validation to the provider and serialize unaddressed queries.
+		return client
+	}
+	return client + "/" + HTTPSAuthority(u)
+}
+
+// HTTPSAuthority returns the lowercase hostname and effective port used by
+// provider request gates and same-origin checks.
+func HTTPSAuthority(u *url.URL) string {
+	port := u.Port()
+	if port == "" {
+		port = "443"
+	}
+	return net.JoinHostPort(strings.ToLower(u.Hostname()), port)
 }
 
 // PullRequest is provider-independent metadata for a verified matching PR.

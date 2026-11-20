@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,11 +33,11 @@ func TestDashboardServiceSharesInjectedPullRequestProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	dashboardGit(t, "-C", filepath.Join(store.Root, "repos", "api.git"), "config", "remote.origin.url", "https://github.com/fork/api.git")
-	calls := 0
+	var calls atomic.Int32
 	provider := &cliPRProvider{lookup: func(_ context.Context, q domain.PullRequestQuery, refresh bool) (domain.PullRequestObservation, error) {
-		calls++
-		if q.Branch != "review" || q.Repository != "org/api" || refresh != (calls == 2) {
-			t.Fatalf("wrong shared service query: %+v refresh=%t", q, refresh)
+		n := calls.Add(1)
+		if q.Branch != "review" || q.Repository != "org/api" || refresh != (n == 2) {
+			t.Errorf("wrong shared service query: %+v refresh=%t", q, refresh)
 		}
 		return domain.PullRequestObservation{Query: q, ObservedAt: time.Now(), PullRequests: []domain.PullRequest{}}, nil
 	}}
@@ -51,7 +52,7 @@ func TestDashboardServiceSharesInjectedPullRequestProvider(t *testing.T) {
 			t.Fatal("lookup recreated provider/cache")
 		}
 	}
-	if calls != 2 || dashboard.jobs != 3 {
+	if calls.Load() != 2 || dashboard.jobs != 3 {
 		t.Fatal("dashboard composition lost options")
 	}
 	defaultSource := newDashboardService(source.Service, &options{})
@@ -65,9 +66,9 @@ func TestDashboardServiceSharesInjectedPullRequestProvider(t *testing.T) {
 	// HTTP adapter, with only the transport redirected to an isolated TLS server.
 	t.Setenv("GH_TOKEN", "")
 	t.Setenv("GITHUB_TOKEN", "")
-	requests := 0
+	var requests atomic.Int32
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		requests++
+		requests.Add(1)
 		if req.Method != "GET" || req.URL.Path != "/repos/org/api/pulls" || req.URL.Query().Get("head") != "fork:review" || req.Header.Get("Authorization") != "" {
 			t.Errorf("unexpected production request: %s %s", req.Method, req.URL.Path)
 		}
@@ -96,7 +97,7 @@ func TestDashboardServiceSharesInjectedPullRequestProvider(t *testing.T) {
 			t.Fatalf("cache not shared at request %d: %+v", i, result.Items[0].PullRequests)
 		}
 	}
-	if requests != 2 {
-		t.Fatalf("shared provider sent %d requests; want lookup + refresh", requests)
+	if requests.Load() != 2 {
+		t.Fatalf("shared provider sent %d requests; want lookup + refresh", requests.Load())
 	}
 }

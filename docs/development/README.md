@@ -73,6 +73,8 @@ The [journal history benchmark](journal-performance.md) measures time to the das
 
 The [sync benchmark](sync-performance.md) measures time to the first fetch and total sync time with 12, 60 and 200 local repositories.
 
+The [workspace PR lookup benchmark](pr-lookup-performance.md) measures local preparation, time to the first lookup, HTTP requests and total time with one or four API hosts.
+
 GitHub PRs use [OpenCodeReview with GPT-6.1 Sol at high effort](../pr-reviews.md), with automatic owner reviews and owner-approved contributor reviews through `/open-code-review`. That guide covers contributor CI approval, OpenAI settings and GitHub App credentials.
 
 ## Implementation boundaries

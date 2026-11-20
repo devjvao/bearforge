@@ -51,7 +51,7 @@ func (c *Client) ListRepositories(ctx context.Context, source domain.RepositoryS
 	if anonymous && s.Scope == "" {
 		return nil, domain.E("unauthenticated", "anonymous GitHub discovery requires an owner or organization scope; select a connection to list accessible repositories")
 	}
-	host := c.host(apiHost(origin))
+	host := c.host(domain.HTTPSAuthority(origin))
 	select {
 	case host.gate <- struct{}{}:
 	case <-ctx.Done():
