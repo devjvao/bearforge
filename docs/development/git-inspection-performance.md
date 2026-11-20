@@ -1,8 +1,78 @@
 # Git launches during workspace status
 
-At the default four jobs, the 200-repository fixture completed in 7.359 s after combining the worktree identity queries, down from 8.882 s (17.1%). Git launched 767 times for the same 200 observations, down from 934. The 60-repository fixture took 1.881 s, down from 2.105 s (10.7%).
+At 200 repositories, the final build completed status in **634.3 ms with one job** and **192.9 ms with four jobs**, down from 724.6 ms and 221.2 ms on the same Linux fixtures. Five paired samples at each job count measured the first observation in a fresh process. At four jobs, the first successful callback moved from 11.00 to 10.29 ms. Both builds returned the same 167 readable worktrees and 33 missing-worktree diagnostics.
 
-## Timings
+## Final-build comparisons
+
+Two series compare the original baseline (`9fa2c94`) with the merged inspection change (`ac81695`, its immediate child) and with the final integrated build (`9a1f331`). Each candidate has its own five paired baseline samples for every fixture and job count. Both candidates include the cancellation fix. The integrated build also includes later changes to catalog loading.
+
+Each cell gives median milliseconds with minimum–maximum in parentheses. The first clock ends on the first callback with a Git observation. The full clock ends when `StatusWithProgress` returns all ordered items. Setup, client initialization, result validation and tracing are outside the timed interval.
+
+| Candidate | Repos | Jobs | First callback before | First callback after | Full status before | Full status after |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Merged inspection | 12 | 1 | 6.33 (5.75–6.85) | 6.84 (5.29–7.14) | 47.26 (45.50–56.70) | 41.63 (40.99–44.92) |
+| Merged inspection | 12 | 4 | 6.91 (6.27–8.05) | 6.19 (5.51–13.23) | 16.19 (14.78–17.55) | 14.38 (13.57–20.63) |
+| Merged inspection | 60 | 1 | 6.78 (6.52–7.27) | 6.41 (6.11–7.17) | 217.3 (216.5–241.9) | 189.1 (186.6–195.6) |
+| Merged inspection | 60 | 4 | 7.42 (6.80–25.52) | 6.65 (6.42–6.98) | 67.75 (65.34–85.06) | 60.54 (56.24–61.53) |
+| Merged inspection | 200 | 1 | 9.13 (8.94–10.72) | 8.70 (8.02–9.41) | 728.9 (722.5–736.8) | 631.4 (619.5–641.0) |
+| Merged inspection | 200 | 4 | 9.88 (9.35–16.69) | 9.76 (9.13–16.77) | 217.2 (216.4–223.8) | 186.8 (184.2–193.1) |
+| Final integrated | 12 | 1 | 5.92 (5.47–6.65) | 5.57 (5.27–5.94) | 45.55 (44.47–46.73) | 39.16 (38.62–39.89) |
+| Final integrated | 12 | 4 | 6.57 (5.75–6.91) | 5.80 (5.66–6.13) | 15.48 (14.13–16.31) | 13.47 (12.45–13.73) |
+| Final integrated | 60 | 1 | 6.49 (6.20–7.31) | 6.41 (5.89–7.97) | 220.9 (217.1–227.4) | 187.3 (185.8–190.1) |
+| Final integrated | 60 | 4 | 7.73 (7.27–8.35) | 7.35 (6.90–8.40) | 68.68 (67.28–75.14) | 59.21 (57.97–65.32) |
+| Final integrated | 200 | 1 | 9.34 (8.85–9.87) | 8.71 (8.20–13.25) | 724.6 (719.7–786.3) | 634.3 (618.2–657.3) |
+| Final integrated | 200 | 4 | 11.00 (10.60–11.25) | 10.29 (9.71–10.79) | 221.2 (216.5–243.4) | 192.9 (191.3–208.2) |
+
+The first-callback ranges overlap at 200 repositories. Full-status times were more consistent. On the final build the slowest 200-repository run at each job count was faster than the fastest corresponding baseline. At four jobs, median Go allocations fell from 76.3 to 63.5 MB per full status call. Separate Git Trace2 runs on all three revisions confirmed the process counts in the table below. [All 120 samples, allocations and result digests](git-inspection-samples.csv)
+
+On November 20, 2026, the three linux/amd64 test binaries ran on Ubuntu 24.04 under WSL2 (kernel 6.6.114.1), native ext4, Intel Core i5-14600K, 20 logical CPUs, Go 1.27.4 and Git 2.43.0. Each archive used the same benchmark source (Git blob `a503c31`). Both series reused the same three mixed-state fixtures. The OS file cache was warm from preparation and previous processes. No timed process ran a warm-up scan. Each sample used a fresh service and catalog store, with the worker limit set on disk before the process started.
+
+The benchmark checked ordering, callback count, partial outcome and the expected state for every row. Outside the timer it hashed the full result and aggregate error, including all per-row diagnostics. Every sample for a given absolute fixture root produced the same SHA-256 digest across all three revisions and both job counts. [Benchmark source](../../internal/app/status_benchmark_test.go)
+
+## Reproduce the paired first-use runs
+
+Run from the checkout containing the benchmark harness on Linux. The preparation filter builds the fixtures without running a status scan. Each odd pair runs the baseline first and each even pair reverses the order.
+
+```sh
+set -eu
+benchdir=$(mktemp -d)
+export BEARFORGE_BENCH_FIXTURE_PARENT="$benchdir/fixtures"
+mkdir "$BEARFORGE_BENCH_FIXTURE_PARENT"
+for rev in 9fa2c94 ac81695 9a1f331; do
+    mkdir "$benchdir/$rev"
+    git archive "$rev" | tar -x -C "$benchdir/$rev"
+    cp internal/app/status_benchmark_test.go "$benchdir/$rev/internal/app/"
+    (cd "$benchdir/$rev" && CGO_ENABLED=0 go test -c -o "$benchdir/$rev.test" ./internal/app)
+done
+"$benchdir/9a1f331.test" '-test.run=^$' \
+    '-test.bench=^BenchmarkStatusWorkspace$/^repos=(12|60|200)$/^prepare_only$' \
+    -test.benchtime=1x -test.v
+
+for candidate in 9a1f331 ac81695; do
+    for n in 12 60 200; do
+        for root in "$BEARFORGE_BENCH_FIXTURE_PARENT"/bearforge-"$n"-*/code; do
+            export BEARFORGE_BENCH_ROOT="$root"
+            for jobs in 1 4; do
+                catalog="$root/.bearforge/catalog.yaml"
+                sed -i -E "s/^  jobs: [0-9]+$/  jobs: $jobs/" "$catalog"
+                grep -qx "  jobs: $jobs" "$catalog"
+                for pair in 1 2 3 4 5; do
+                    case $pair in 1|3|5) order="9fa2c94 $candidate" ;; *) order="$candidate 9fa2c94" ;; esac
+                    for rev in $order; do
+                        echo "candidate=$candidate n=$n jobs=$jobs pair=$pair build=$rev"
+                        "$benchdir/$rev.test" '-test.run=^$' '-test.bench=^BenchmarkStatusFirstUse$' \
+                            -test.benchtime=1x -test.benchmem -test.v
+                    done
+                done
+            done
+        done
+    done
+done
+```
+
+To count processes separately, set `GIT_TRACE2_EVENT` to a new absolute trace file and run a single invocation of `BenchmarkStatusFirstUse` against each prepared fixture. Count Trace2 `start` events for `rev-parse`, `config` and `status`. The client's one `--version` probe precedes the measurement.
+
+## Historical Windows timings
 
 The numbers below are median milliseconds from five alternating before/after pairs. First is the first successful Git observation delivered to the status callback. Total ends when the application returns all ordered results, including failures. Terminal rendering is measured separately.
 
