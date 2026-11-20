@@ -1,6 +1,8 @@
 package app_test
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -78,6 +80,63 @@ func BenchmarkStatusWorkspace(b *testing.B) {
 			}
 		})
 	}
+}
+
+// BenchmarkStatusFirstUse opens a prepared mixed-state workspace with a fresh
+// service and catalog store for every observation. Use a fresh process per
+// sample to measure first use with the operating system's file cache warm.
+func BenchmarkStatusFirstUse(b *testing.B) {
+	b.StopTimer()
+	root := os.Getenv("BEARFORGE_BENCH_ROOT")
+	if root == "" {
+		b.Skip("set BEARFORGE_BENCH_ROOT to a prepared status fixture")
+	}
+	client, err := gitcli.New()
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	var firstTotal, elapsedTotal time.Duration
+	for range b.N {
+		store := config.New(root)
+		service := app.New(store, client, operation.New(store))
+		var first time.Duration
+		var callbacks int
+		b.StartTimer()
+		started := time.Now()
+		result, err := service.StatusWithProgress(b.Context(), "feature-review", func(item app.Item) {
+			callbacks++
+			if first == 0 && item.Status != nil {
+				first = time.Since(started)
+			}
+		})
+		elapsedTotal += time.Since(started)
+		b.StopTimer()
+		firstTotal += first
+		if err == nil || result.Outcome != "partial" || first == 0 {
+			b.Fatalf("expected a partial observation, got %s, first=%s, error=%v", result.Outcome, first, err)
+		}
+		catalog, _, loadErr := store.LoadCatalog()
+		if loadErr != nil || callbacks != len(catalog.Repositories) || len(result.Items) != callbacks {
+			b.Fatalf("incomplete observation: %d callbacks, %d items, %d repositories, %v", callbacks, len(result.Items), len(catalog.Repositories), loadErr)
+		}
+		outcomes := [...]string{"clean", "changes", "changes", "changes", "mapping_drift", "unreadable"}
+		for i, item := range result.Items {
+			if item.Repository != fmt.Sprintf("service-%03d", i) || item.Outcome != outcomes[i%len(outcomes)] {
+				b.Fatalf("unexpected row %d: %+v", i, item)
+			}
+		}
+		encoded, marshalErr := json.Marshal(struct {
+			Result app.Result
+			Error  string
+		}{result, err.Error()})
+		if marshalErr != nil {
+			b.Fatal(marshalErr)
+		}
+		b.Logf("repos=%d jobs=%d result=%x", callbacks, catalog.Jobs, sha256.Sum256(encoded))
+	}
+	b.ReportMetric(float64(firstTotal)/float64(b.N)/float64(time.Millisecond), "first-repo-ms")
+	b.ReportMetric(float64(elapsedTotal)/float64(b.N)/float64(time.Millisecond), "total-ms")
 }
 
 // BenchmarkStatusGitLaunches counts real child processes on separate traced
