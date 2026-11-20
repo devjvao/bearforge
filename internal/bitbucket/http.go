@@ -21,16 +21,8 @@ var (
 	errLimitedRedirect = errors.New("rate-limited Bitbucket redirect")
 )
 
-func apiHost(u *url.URL) string {
-	port := u.Port()
-	if port == "" {
-		port = "443"
-	}
-	return net.JoinHostPort(strings.ToLower(u.Hostname()), port)
-}
-
 func safeEndpoint(origin, target *url.URL, path string) bool {
-	return target.Scheme == "https" && target.User == nil && target.Fragment == "" && apiHost(origin) == apiHost(target) && target.Path == path && safePath(target) && !strings.ContainsFunc(target.String(), unicode.IsControl)
+	return target.Scheme == "https" && target.User == nil && target.Fragment == "" && domain.HTTPSAuthority(origin) == domain.HTTPSAuthority(target) && target.Path == path && safePath(target) && !strings.ContainsFunc(target.String(), unicode.IsControl)
 }
 
 func (c *Client) get(ctx context.Context, origin, endpoint *url.URL, path string, token requestCredential, host *hostState) ([]byte, *url.URL, error) {

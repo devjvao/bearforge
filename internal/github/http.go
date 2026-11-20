@@ -105,16 +105,7 @@ func sameOrigin(origin, target *url.URL) bool {
 	if target.Scheme != "https" || target.User != nil || target.Fragment != "" {
 		return false
 	}
-	return apiHost(origin) == apiHost(target)
-}
-
-// apiHost gives HTTPS origin checks and request state one authority identity.
-func apiHost(u *url.URL) string {
-	port := u.Port()
-	if port == "" {
-		port = "443"
-	}
-	return net.JoinHostPort(strings.ToLower(u.Hostname()), port)
+	return domain.HTTPSAuthority(origin) == domain.HTTPSAuthority(target)
 }
 
 func nextPage(header http.Header, current, origin *url.URL) (*url.URL, error) {

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -108,7 +109,7 @@ func TestPullRequestsUsesVerifiedActualBranchRemoteAndTarget(t *testing.T) {
 	}
 	s.PRs = prProvider{lookup: func(ctx context.Context, q domain.PullRequestQuery, refresh bool) (domain.PullRequestObservation, error) {
 		if q.Branch != "actual" || q.SourceRepository != "fork/api" || q.Base != "release" || q.State != "open" || refresh {
-			t.Fatalf("wrong query: %+v refresh=%v", q, refresh)
+			t.Errorf("wrong query: %+v refresh=%v", q, refresh)
 		}
 		return domain.PullRequestObservation{Query: q, ObservedAt: time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC), PullRequests: []domain.PullRequest{{Number: 7, Title: "ship", URL: "https://github.com/fork/api/pull/7"}}}, nil
 	}}
@@ -127,7 +128,7 @@ func TestPullRequestsUsesVerifiedActualBranchRemoteAndTarget(t *testing.T) {
 	// Overrides apply to the query without changing the workspace mapping.
 	s.PRs = prProvider{lookup: func(ctx context.Context, q domain.PullRequestQuery, refresh bool) (domain.PullRequestObservation, error) {
 		if q.Base != "main" || q.State != "all" || !refresh {
-			t.Fatalf("wrong override: %+v refresh=%v", q, refresh)
+			t.Errorf("wrong override: %+v refresh=%v", q, refresh)
 		}
 		return domain.PullRequestObservation{Query: q}, nil
 	}}
@@ -140,8 +141,8 @@ func TestPullRequestsUsesVerifiedActualBranchRemoteAndTarget(t *testing.T) {
 func TestPullRequestsRejectsSelectorsBeforeProviderAndPlansWithoutLookup(t *testing.T) {
 	s, _ := prFixture(t, "api")
 	s.PRs = prProvider{lookup: func(context.Context, domain.PullRequestQuery, bool) (domain.PullRequestObservation, error) {
-		t.Fatal("unexpected network lookup")
-		return domain.PullRequestObservation{}, nil
+		t.Error("unexpected network lookup")
+		return domain.PullRequestObservation{}, errors.New("unexpected lookup")
 	}}
 	for _, req := range []app.PRRequest{{Workspace: "feature", Repositories: []string{"missing"}}, {Workspace: "feature", State: "merged"}, {Workspace: "feature", Base: "bad\nbase"}} {
 		if _, err := s.PullRequests(t.Context(), req); err == nil {
@@ -166,7 +167,7 @@ func TestPullRequestsPreservesMixedResultsAndSkippedHeads(t *testing.T) {
 			return domain.PullRequestObservation{}, domain.E("rate_limited", "retry later")
 		}
 		if q.Repository != "fork/api" {
-			t.Fatalf("queried skipped member: %+v", q)
+			t.Errorf("queried skipped member: %+v", q)
 		}
 		return domain.PullRequestObservation{Query: q, ObservedAt: time.Now()}, nil
 	}}
@@ -186,15 +187,15 @@ func TestPullRequestsCancellationIncludesUnstartedMembers(t *testing.T) {
 	s, _ := prFixture(t, "api", "worker")
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	calls := 0
+	var calls atomic.Int32
 	s.PRs = prProvider{lookup: func(ctx context.Context, q domain.PullRequestQuery, _ bool) (domain.PullRequestObservation, error) {
-		calls++
+		calls.Add(1)
 		cancel()
 		return domain.PullRequestObservation{}, ctx.Err()
 	}}
 	r, err := s.PullRequests(ctx, app.PRRequest{Workspace: "feature"})
-	if !errors.Is(err, context.Canceled) || len(r.Items) != 2 || calls != 1 || r.Outcome != "partial" {
-		t.Fatalf("cancel: %+v %v calls=%d", r, err, calls)
+	if !errors.Is(err, context.Canceled) || len(r.Items) != 2 || calls.Load() != 1 || r.Outcome != "partial" {
+		t.Fatalf("cancel: %+v %v calls=%d", r, err, calls.Load())
 	}
 	for _, item := range r.Items {
 		if item.Outcome != "failed" || item.Problem.Code != "cancelled" {
@@ -221,7 +222,7 @@ func TestPullRequestsRefusesForeignWorktreesAndContinuesAfterConfigurationFailur
 	prGit(t, filepath.Join(store.Root, "feature", "unsupported"), "config", "--worktree", "remote.origin.url", "https://example.invalid/team/repo.git")
 	s.PRs = prProvider{lookup: func(_ context.Context, q domain.PullRequestQuery, _ bool) (domain.PullRequestObservation, error) {
 		if q.Repository != "fork/api" {
-			t.Fatalf("unverified or unsupported member reached network: %+v", q)
+			t.Errorf("unverified or unsupported member reached network: %+v", q)
 		}
 		return domain.PullRequestObservation{Query: q, PullRequests: []domain.PullRequest{{Number: 1}}}, nil
 	}}

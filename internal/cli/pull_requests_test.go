@@ -62,7 +62,7 @@ func TestPRListOutputsAndSelection(t *testing.T) {
 			var out, errOut bytes.Buffer
 			o := &options{in: strings.NewReader(""), out: &out, errOut: &errOut, pullRequestProvider: cliPRProvider{lookup: func(_ context.Context, q domain.PullRequestQuery, refresh bool) (domain.PullRequestObservation, error) {
 				if q.Repository != "org/web" || q.Base != "main" || q.State != "closed" || !refresh {
-					t.Fatalf("wrong CLI query: %+v refresh=%v", q, refresh)
+					t.Errorf("wrong CLI query: %+v refresh=%v", q, refresh)
 				}
 				return domain.PullRequestObservation{Query: q, ObservedAt: time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC), Cached: true, PullRequests: []domain.PullRequest{{Number: 42, Title: "safe\x1b[2J title", URL: "https://github.com/org/web/pull/42", State: "merged", Draft: true, SourceRepository: "fork/web", TargetRepository: "org/web", SourceBranch: "review", TargetBranch: "main", UpdatedAt: time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)}}}, nil
 			}}}

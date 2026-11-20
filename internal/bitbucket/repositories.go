@@ -170,7 +170,7 @@ func (c *Client) repositoryPages(ctx context.Context, s domain.RepositorySource,
 	if err != nil {
 		return err
 	}
-	host := c.host(apiHost(origin))
+	host := c.host(domain.HTTPSAuthority(origin))
 	select {
 	case host.gate <- struct{}{}:
 	case <-ctx.Done():

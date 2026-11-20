@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/devjvao/bearforge/internal/app"
@@ -74,8 +75,11 @@ func lookupFixtureResponse(t *testing.T, w http.ResponseWriter, r *http.Request)
 
 func TestPRListProductionDispatchMixedProviders(t *testing.T) {
 	root := cliExecRoot(t)
-	requests := 0
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests++; lookupFixtureResponse(t, w, r) }))
+	var requests atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		lookupFixtureResponse(t, w, r)
+	}))
 	t.Cleanup(server.Close)
 	original := http.DefaultTransport
 	http.DefaultTransport = server.Client().Transport
@@ -124,11 +128,11 @@ func TestPRListProductionDispatchMixedProviders(t *testing.T) {
 				}
 			})
 		}
-		before := requests
+		before := requests.Load()
 		var out, errOut bytes.Buffer
 		code := Run(t.Context(), []string{"--root", root, "--json", "--dry-run", "pr", "list", "review"}, strings.NewReader(""), &out, &errOut)
-		if code != 0 || requests != before || !strings.Contains(out.String(), `"provider":"`+kind+`"`) {
-			t.Fatalf("dry-run contacted API or lost route: %d %d %s %s", before, requests, out.String(), errOut.String())
+		if after := requests.Load(); code != 0 || after != before || !strings.Contains(out.String(), `"provider":"`+kind+`"`) {
+			t.Fatalf("dry-run contacted API or lost route: %d %d %s %s", before, after, out.String(), errOut.String())
 		}
 	}
 }
@@ -138,8 +142,11 @@ func TestDashboardProductionBitbucketCache(t *testing.T) {
 	if _, err := source.AddRepositories(t.Context(), app.AddRequest{Workspace: "review", Repositories: []string{"web"}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	requests := 0
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests++; lookupFixtureResponse(t, w, r) }))
+	var requests atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		lookupFixtureResponse(t, w, r)
+	}))
 	t.Cleanup(server.Close)
 	original := http.DefaultTransport
 	http.DefaultTransport = server.Client().Transport
@@ -147,7 +154,7 @@ func TestDashboardProductionBitbucketCache(t *testing.T) {
 	for _, kind := range []string{"bitbucket", "bitbucket-server"} {
 		configureLookupFixture(t, store.Root, server.URL, kind)
 		dashboard := newDashboardService(source.Service, &options{})
-		before := requests
+		before := requests.Load()
 		for i, refresh := range []bool{false, false, true} {
 			result, err := dashboard.PullRequests(t.Context(), app.PRRequest{Workspace: "review", Refresh: refresh})
 			if err != nil || len(result.Items) != 1 || result.Items[0].Outcome != "found" {
@@ -158,8 +165,8 @@ func TestDashboardProductionBitbucketCache(t *testing.T) {
 				t.Fatalf("provider/cache lost: %+v", observation)
 			}
 		}
-		if requests-before != 2 {
-			t.Fatalf("dashboard cache recreated: %d requests", requests-before)
+		if got := requests.Load() - before; got != 2 {
+			t.Fatalf("dashboard cache recreated: %d requests", got)
 		}
 	}
 }

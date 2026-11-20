@@ -74,7 +74,7 @@ func (c *Client) Lookup(ctx context.Context, q domain.PullRequestQuery, refresh 
 			return obs, nil
 		}
 	}
-	host := c.host(apiHost(u))
+	host := c.host(domain.HTTPSAuthority(u))
 	select {
 	case host.gate <- struct{}{}:
 	case <-ctx.Done():
