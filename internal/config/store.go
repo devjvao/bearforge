@@ -7,10 +7,13 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"go.yaml.in/yaml/v3"
 
@@ -22,7 +25,20 @@ const (
 	catalogSchemaVersion = 2
 )
 
-type Store struct{ Root string }
+type Store struct {
+	Root string
+
+	catalog   atomic.Pointer[catalogSnapshot]
+	replaceMu sync.Mutex // Serializes revision checks and replacements by this store.
+}
+
+// A snapshot is immutable once published. Its revision identifies the bytes
+// that passed both strict YAML decoding and catalog validation.
+type catalogSnapshot struct {
+	revision string
+	catalog  domain.Catalog
+	document *yaml.Node
+}
 
 func (s *Store) RootPath() string { return s.Root }
 func (s *Store) CreateDir(parts ...string) error {
@@ -160,23 +176,28 @@ func read(path string) ([]byte, string, error) {
 }
 
 func decode(b []byte, target any) error {
+	_, err := decodeNode(b, target)
+	return err
+}
+
+func decodeNode(b []byte, target any) (*yaml.Node, error) {
 	var node yaml.Node
 	if err := yaml.Unmarshal(b, &node); err != nil {
-		return domain.E("invalid", "invalid YAML: %v", err)
+		return nil, domain.E("invalid", "invalid YAML: %v", err)
 	}
 	if err := validateNode(&node, 0); err != nil {
-		return err
+		return nil, err
 	}
 	d := yaml.NewDecoder(bytes.NewReader(b))
 	d.KnownFields(true)
 	if err := d.Decode(target); err != nil {
-		return domain.E("invalid", "invalid configuration: %v", err)
+		return nil, domain.E("invalid", "invalid configuration: %v", err)
 	}
 	var extra any
 	if err := d.Decode(&extra); err != io.EOF {
-		return domain.E("invalid", "configuration must contain exactly one YAML document")
+		return nil, domain.E("invalid", "configuration must contain exactly one YAML document")
 	}
-	return nil
+	return &node, nil
 }
 
 func validateNode(n *yaml.Node, depth int) error {
@@ -204,23 +225,65 @@ func validateNode(n *yaml.Node, depth int) error {
 	return nil
 }
 
+func emptyCatalog() domain.Catalog {
+	return domain.Catalog{Repositories: map[string]domain.Repository{}, Retired: map[string]domain.RetiredRepository{}, Remote: "origin", Jobs: 4}
+}
+
 func (s *Store) LoadCatalog() (domain.Catalog, string, error) {
-	c := domain.Catalog{Repositories: map[string]domain.Repository{}, Retired: map[string]domain.RetiredRepository{}, Remote: "origin", Jobs: 4}
 	p, err := s.SafePath(".bearforge", "catalog.yaml")
 	if err != nil {
-		return c, "", err
+		return emptyCatalog(), "", err
 	}
+	snapshot, err := s.readCatalog(p, s.catalog.Load())
+	if err != nil || snapshot.revision == "" {
+		return snapshot.catalog, snapshot.revision, err
+	}
+	// Callers edit the returned catalog before saving it. Keep their maps
+	// independent of all other readers and of the validated snapshot.
+	c := snapshot.catalog
+	c.Repositories = maps.Clone(c.Repositories)
+	for id, r := range c.Repositories {
+		c.Repositories[id] = cloneCatalogRepository(r)
+	}
+	c.Retired = maps.Clone(c.Retired)
+	for id, r := range c.Retired {
+		r.Repository = cloneCatalogRepository(r.Repository)
+		c.Retired[id] = r
+	}
+	return c, snapshot.revision, nil
+}
+
+func cloneCatalogRepository(r domain.Repository) domain.Repository {
+	r.Remotes = maps.Clone(r.Remotes)
+	r.Provider = maps.Clone(r.Provider)
+	return r
+}
+
+func (s *Store) readCatalog(p string, known *catalogSnapshot) (*catalogSnapshot, error) {
 	b, rev, err := read(p)
-	if err != nil || rev == "" {
-		return c, rev, err
+	if err == nil && known != nil && known.revision == rev {
+		return known, nil
 	}
+	snapshot := &catalogSnapshot{revision: rev, catalog: emptyCatalog()}
+	if err == nil && rev != "" {
+		err = snapshot.decode(b)
+		if err == nil {
+			s.catalog.Store(snapshot)
+		}
+	}
+	return snapshot, err
+}
+
+func (s *catalogSnapshot) decode(b []byte) error {
 	var dto catalogDTO
-	if err := decode(b, &dto); err != nil {
-		return c, rev, err
+	document, err := decodeNode(b, &dto)
+	if err != nil {
+		return err
 	}
 	if dto.Version != catalogSchemaVersion {
-		return c, rev, domain.E("invalid", "unsupported catalog schema %d; expected %d", dto.Version, catalogSchemaVersion)
+		return domain.E("invalid", "unsupported catalog schema %d; expected %d", dto.Version, catalogSchemaVersion)
 	}
+	c := &s.catalog
 	if dto.Defaults.Remote != "" {
 		c.Remote = dto.Defaults.Remote
 	}
@@ -228,41 +291,69 @@ func (s *Store) LoadCatalog() (domain.Catalog, string, error) {
 		c.Jobs = dto.Defaults.Jobs
 	}
 	if err := domain.ValidateRemoteName(c.Remote); err != nil {
-		return c, rev, err
+		return err
 	}
 	if c.Jobs < 1 || c.Jobs > 64 {
-		return c, rev, domain.E("invalid", "jobs must be between 1 and 64")
+		return domain.E("invalid", "jobs must be between 1 and 64")
 	}
 	for id, r := range dto.Repositories {
 		repository, err := decodeRepository(id, r)
 		if err != nil {
-			return c, rev, err
+			return err
 		}
 		c.Repositories[id] = repository
 	}
 	for id, r := range dto.Retired {
 		if _, ok := c.Repositories[id]; ok {
-			return c, rev, domain.E("invalid", "repository %s is both active and retired", id)
+			return domain.E("invalid", "repository %s is both active and retired", id)
 		}
 		repository, err := decodeRepository(id, r.Repository)
 		if err != nil {
-			return c, rev, err
+			return err
 		}
 		if err := domain.ValidateID(r.Operation); err != nil {
-			return c, rev, err
+			return err
 		}
 		if !validFingerprint(r.Fingerprint) {
-			return c, rev, domain.E("invalid", "invalid retired repository fingerprint")
+			return domain.E("invalid", "invalid retired repository fingerprint")
 		}
 		c.Retired[id] = domain.RetiredRepository{Repository: repository, Operation: r.Operation, Fingerprint: r.Fingerprint}
 	}
-	return c, rev, nil
+	s.document = document
+	return nil
 }
 
 func (s *Store) SaveCatalog(c domain.Catalog, rev string) error {
+	parts := []string{".bearforge", "catalog.yaml"}
+	var previous *yaml.Node
+	check := func(path string) error { return checkRevision(path, rev) }
 	if rev != "" {
-		if _, _, err := s.LoadCatalog(); err != nil {
-			return err
+		snapshot := s.catalog.Load()
+		if snapshot == nil || snapshot.revision != rev {
+			p, err := s.SafePath(parts...)
+			if err != nil {
+				return err
+			}
+			snapshot, err = s.readCatalog(p, snapshot)
+			if err != nil {
+				return err
+			}
+			if snapshot.revision != rev {
+				return revisionConflict()
+			}
+		}
+		previous = snapshot.document
+		check = func(path string) error {
+			// Keep this save's validated tree even if another reader has
+			// replaced the store's cached revision during serialization.
+			current, err := s.readCatalog(path, snapshot)
+			if err != nil {
+				return err
+			}
+			if current.revision != rev {
+				return revisionConflict()
+			}
+			return nil
 		}
 	}
 	d := catalogDTO{Version: catalogSchemaVersion, Defaults: defaultsDTO{Remote: c.Remote, Jobs: c.Jobs}, Repositories: map[string]repoDTO{}, Retired: map[string]retiredDTO{}}
@@ -272,7 +363,7 @@ func (s *Store) SaveCatalog(c domain.Catalog, rev string) error {
 	for id, r := range c.Retired {
 		d.Retired[id] = retiredDTO{Repository: repoDTO{Remotes: r.Repository.Remotes, Base: r.Repository.Base, Provider: r.Repository.Provider}, Operation: r.Operation, Fingerprint: r.Fingerprint}
 	}
-	return s.save([]string{".bearforge", "catalog.yaml"}, d, rev)
+	return s.save(parts, d, previous, check)
 }
 
 func validFingerprint(value string) bool {
@@ -351,7 +442,26 @@ func (s *Store) SaveWorkspace(w domain.Workspace, rev string) error {
 	for id, m := range w.Repositories {
 		d.Repositories[id] = mappingDTO{Branch: m.Branch, Base: m.Base, Tracking: m.Tracking, PRTarget: m.PRTarget}
 	}
-	return s.save([]string{".bearforge", "workspaces", w.Name + ".yaml"}, d, rev)
+	parts := []string{".bearforge", "workspaces", w.Name + ".yaml"}
+	var previous *yaml.Node
+	if rev != "" {
+		p, err := s.SafePath(parts...)
+		if err != nil {
+			return err
+		}
+		b, current, err := read(p)
+		if err != nil {
+			return err
+		}
+		if current != rev {
+			return revisionConflict()
+		}
+		previous = new(yaml.Node)
+		if err := yaml.Unmarshal(b, previous); err != nil {
+			return err
+		}
+	}
+	return s.save(parts, d, previous, func(path string) error { return checkRevision(path, rev) })
 }
 
 func (s *Store) ListWorkspaces() ([]string, error) {
@@ -398,28 +508,28 @@ func (s *Store) DeleteWorkspace(name, rev string) error {
 	return os.Remove(p)
 }
 
-func (s *Store) save(parts []string, value any, rev string) error {
-	p, err := s.SafePath(parts...)
-	if err != nil {
-		return err
-	}
-	old, current, err := read(p)
+func revisionConflict() error {
+	return domain.E("conflict", "configuration changed; reload and retry")
+}
+
+func checkRevision(path, rev string) error {
+	_, current, err := read(path)
 	if err != nil {
 		return err
 	}
 	if current != rev {
-		return domain.E("conflict", "configuration changed; reload and retry")
+		return revisionConflict()
 	}
+	return nil
+}
+
+func (s *Store) save(parts []string, value any, previous *yaml.Node, check func(string) error) error {
 	var next yaml.Node
 	if err := next.Encode(value); err != nil {
 		return err
 	}
-	if len(old) > 0 {
-		var previous yaml.Node
-		if err := yaml.Unmarshal(old, &previous); err != nil {
-			return err
-		}
-		mergeComments(&next, &previous)
+	if previous != nil {
+		mergeComments(&next, previous)
 	}
 	var b bytes.Buffer
 	enc := yaml.NewEncoder(&b)
@@ -430,7 +540,10 @@ func (s *Store) save(parts []string, value any, rev string) error {
 	if err := enc.Close(); err != nil {
 		return err
 	}
-	return s.Write(parts, b.Bytes())
+	if b.Len() > maxDocument {
+		return domain.E("invalid", "configuration exceeds 2 MiB")
+	}
+	return s.write(parts, b.Bytes(), check)
 }
 
 func mergeComments(next, previous *yaml.Node) {
@@ -444,18 +557,17 @@ func mergeComments(next, previous *yaml.Node) {
 	next.LineComment = previous.LineComment
 	next.FootComment = previous.FootComment
 	if next.Kind == yaml.MappingNode && previous.Kind == yaml.MappingNode {
+		indices := make(map[string]int, len(next.Content)/2)
+		for j := 0; j < len(next.Content); j += 2 {
+			indices[next.Content[j].Value] = j
+		}
 		for i := 0; i < len(previous.Content); i += 2 {
 			key, val := previous.Content[i], previous.Content[i+1]
-			found := false
-			for j := 0; j < len(next.Content); j += 2 {
-				if next.Content[j].Value == key.Value {
-					mergeComments(next.Content[j], key)
-					mergeComments(next.Content[j+1], val)
-					found = true
-					break
-				}
-			}
-			if !found && key.Value == "extensions" {
+			if j, ok := indices[key.Value]; ok {
+				mergeComments(next.Content[j], key)
+				mergeComments(next.Content[j+1], val)
+			} else if key.Value == "extensions" {
+				indices[key.Value] = len(next.Content)
 				next.Content = append(next.Content, key, val)
 			}
 		}
@@ -466,6 +578,10 @@ func mergeComments(next, previous *yaml.Node) {
 
 // Write durably replaces a Bearforge-owned file, never a Git file.
 func (s *Store) Write(parts []string, b []byte) error {
+	return s.write(parts, b, nil)
+}
+
+func (s *Store) write(parts []string, b []byte, check func(string) error) error {
 	p, err := s.SafePath(parts...)
 	if err != nil {
 		return err
@@ -496,6 +612,18 @@ func (s *Store) Write(parts []string, b []byte) error {
 	}
 	if err := f.Close(); err != nil {
 		return err
+	}
+	if check != nil {
+		// Serialization and syncing the temporary file can take long enough
+		// for an editor or another save to change the destination.
+		s.replaceMu.Lock()
+		defer s.replaceMu.Unlock()
+		if _, err := s.SafePath(parts...); err != nil {
+			return err
+		}
+		if err := check(p); err != nil {
+			return err
+		}
 	}
 	if err := replaceFile(tmp, p); err != nil {
 		return fmt.Errorf("replace configuration: %w", err)

@@ -71,6 +71,8 @@ The [Git inspection report](git-inspection-performance.md) counts child processe
 
 The [journal history benchmark](journal-performance.md) measures time to the dashboard's initial rows on a first and repeat refresh with up to 1,000 completed or abandoned operations.
 
+The [catalog save benchmark](catalog-save-performance.md) measures a single registration in catalogs with up to 1,000 entries. The [import batch benchmark](import-registration-performance.md) measures total import time and the delay from clone completion to the success event.
+
 The [sync benchmark](sync-performance.md) measures time to the first fetch and total sync time with 12, 60 and 200 local repositories.
 
 The [workspace PR lookup benchmark](pr-lookup-performance.md) measures local preparation, time to the first lookup, HTTP requests and total time with one or four API hosts.
