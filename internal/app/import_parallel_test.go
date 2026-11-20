@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/config"
 	"github.com/devjvao/bearforge/internal/domain"
 )
 
@@ -471,6 +472,142 @@ func TestImportParallelCatalogFailureStopsAdmissionAndCanResumeOwnedClones(t *te
 	catalog, _, err := s.Store.LoadCatalog()
 	if err != nil || len(catalog.Repositories) != 3 {
 		t.Fatalf("resume lost catalog changes: %+v, %v", catalog.Repositories, err)
+	}
+}
+
+func TestImportRechecksExternalCatalogChangesDuringTransfer(t *testing.T) {
+	for _, tc := range []struct {
+		name, affected string
+		retired        bool
+	}{
+		{"registration before completion", "a", false},
+		{"retirement before completion", "a", true},
+		{"registration before next admission", "b", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, git, req := parallelImportSetup(t, 1, "a", "b")
+			req = confirmParallelImport(t, s, req)
+			var succeeded []string
+			s.Observe = func(event app.Event) {
+				if event.State == "succeeded" {
+					succeeded = append(succeeded, event.Repository)
+				}
+			}
+			_, done := startParallelImport(t, s, req)
+			if id := nextImportName(t, git.started); id != "a" {
+				t.Fatalf("first clone = %q", id)
+			}
+			// Another editor claims the same remote under a different ID.
+			external := config.New(s.Store.RootPath())
+			c, rev, err := external.LoadCatalog()
+			if err != nil {
+				t.Fatal(err)
+			}
+			repo := domain.Repository{ID: "other", Remotes: map[string]string{"origin": importSelection(tc.affected).Repository.HTTPSURL}}
+			if tc.retired {
+				c.Retired[repo.ID] = domain.RetiredRepository{Repository: repo, Operation: "retired", Fingerprint: strings.Repeat("a", 64)}
+			} else {
+				c.Repositories[repo.ID] = repo
+			}
+			if err := external.SaveCatalog(c, rev); err != nil {
+				t.Fatal(err)
+			}
+			close(git.gates["a"])
+			close(git.gates["b"])
+			result := nextImportResult(t, done)
+			var conflict *domain.Error
+			if !errors.As(result.err, &conflict) || conflict.Code != "conflict" || result.result.Outcome != "partial" {
+				t.Fatalf("external change accepted: %+v, %v", result.result, result.err)
+			}
+			if clones, _ := git.counts("b"); clones != 0 {
+				t.Fatalf("admitted b after external conflict: %d clones", clones)
+			}
+			c, _, err = external.LoadCatalog()
+			if err != nil || c.Repositories[tc.affected].ID != "" {
+				t.Fatalf("overwrote conflicting identity: %+v, %v", c, err)
+			}
+			kept := c.Repositories[repo.ID]
+			if tc.retired {
+				kept = c.Retired[repo.ID].Repository
+			}
+			if !reflect.DeepEqual(kept, repo) {
+				t.Fatalf("lost external registration: %+v", kept)
+			}
+			var want []string
+			if tc.affected == "b" {
+				want = []string{"a"}
+				if c.Repositories["a"].ID != "a" {
+					t.Fatal("lost successful registration of a")
+				}
+			}
+			if !reflect.DeepEqual(succeeded, want) {
+				t.Fatalf("succeeded = %v, want %v", succeeded, want)
+			}
+		})
+	}
+}
+
+type importRegistrationJournal struct {
+	*importCheckpointJournal
+	store *config.Store
+	bound map[string]bool
+}
+
+func (j *importRegistrationJournal) Save(op *app.Operation) error {
+	for _, step := range op.Steps {
+		if step.State != "succeeded" {
+			continue
+		}
+		c, _, err := j.store.LoadCatalog()
+		if err != nil {
+			return err
+		}
+		if !j.bound[step.Repository] || step.ImportedRepository == nil || !reflect.DeepEqual(c.Repositories[step.Repository], *step.ImportedRepository) {
+			return errors.New("succeeded checkpoint preceded durable registration of " + step.Repository)
+		}
+	}
+	return j.importCheckpointJournal.Save(op)
+}
+
+func TestConcurrentCloneCompletionsPreserveRegistrationOrder(t *testing.T) {
+	s, git, req := parallelImportSetup(t, 2, "a", "b")
+	git.gates["b"] = git.gates["a"]
+	independent := config.New(s.Store.RootPath())
+	journal := &importRegistrationJournal{&importCheckpointJournal{Journal: s.Journal}, independent, make(map[string]bool)}
+	s.Journal = journal
+	s.Credentials = &importResolver{grant: "grant"}
+	for i := range req.Repositories {
+		req.Repositories[i].Source.Connection = "work"
+		req.Repositories[i].Source.GrantID = "grant"
+	}
+	s.BindConnection = func(_ context.Context, path string, _ domain.CredentialRequest) error {
+		id := strings.TrimSuffix(filepath.Base(path), ".git")
+		c, _, err := independent.LoadCatalog()
+		if err != nil {
+			return err
+		}
+		if _, registered := c.Repositories[id]; registered {
+			return errors.New("catalog registration preceded credential binding for " + id)
+		}
+		journal.bound[id] = true
+		return nil
+	}
+	succeeded := map[string]int{}
+	s.Observe = func(event app.Event) {
+		if event.State == "succeeded" {
+			if state, _ := journal.checkpoint(event.Repository); state != "succeeded" {
+				t.Errorf("success event preceded journal checkpoint for %s", event.Repository)
+			}
+			succeeded[event.Repository]++
+		}
+	}
+	req = confirmParallelImport(t, s, req)
+	_, done := startParallelImport(t, s, req)
+	assertInitialImportPair(t, git.started)
+	close(git.gates["a"])
+	result := nextImportResult(t, done)
+	if result.err != nil || result.result.Outcome != "success" || !reflect.DeepEqual(succeeded, map[string]int{"a": 1, "b": 1}) {
+		t.Fatalf("completions: %v, result %+v, error %v", succeeded, result.result, result.err)
 	}
 }
 

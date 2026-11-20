@@ -2,7 +2,7 @@
 
 **Goal.** Shorten the wait for a usable dashboard, a completed import, the first fetch, and workspace PR results. Keep repository identity checks, recoverable operations, and deterministic results.
 
-**Starting point.** At `9fa2c94`, status and cloning already use bounded workers, and the dashboard already shows completed inspections. The [status benchmark](../../development/status-performance.md) recorded 2.940 seconds total and 203 ms to the first successful callback for 60 members with four jobs. Those historical measurements exclude terminal rendering. The five changes below are proposals. Their speedups have yet to be measured.
+**Starting point.** At `9fa2c94`, status and cloning already used bounded workers, and the dashboard showed completed inspections. The [status benchmark](../../development/status-performance.md) recorded 2.940 seconds total and 203 ms to the first successful callback for 60 members with four jobs. Those historical measurements exclude terminal rendering. Each section below links to the measurements for that change.
 
 **Delivery order.** Establish a baseline before each change. Start with 1 and 2, which can proceed independently and have an existing workload. Apply 3 after 2 so journal and rendering costs can be measured separately. Task 4 can proceed independently. Apply 5 after 1 so the effect of concurrency can be distinguished from fewer Git launches. Sync and PR inspection have different failure contracts and can ship separately.
 
@@ -50,12 +50,14 @@ Results and reproduction commands are in the [journal history report](../../deve
 
 ## 4. Reduce catalog work per completed import
 
+Results and reproduction commands are in the [catalog save report](../../development/catalog-save-performance.md) and the [import batch report](../../development/import-registration-performance.md).
+
 **Where.** `internal/config/store.go` (`LoadCatalog`, `SaveCatalog`, `save`, `mergeComments`), `internal/app/import_execute.go` (admission and registration). Use `internal/config/store_test.go`, `internal/app/import_parallel_test.go` and `internal/app/import_execute_test.go`.
 
-- [ ] Time a single catalog save at 60, 200 and 1,000 entries with retired identities, comments and extensions. Time a batch of small local imports separately. Count catalog reads, YAML decodes, durable writes, and the delay from clone completion to the success event.
-- [ ] Index each new YAML mapping by key once in `mergeComments`, then walk the old mapping in order. Preserve key and value comments, entry order and the existing treatment of extensions. Assert these properties for catalog and workspace saves, which share the merge helper.
-- [ ] Reuse the strict validation result and parsed YAML node for the exact bytes of a catalog revision. Keep a fresh revision comparison close to durable replacement and recheck after any intervening expensive serialization. Preserve invalid-schema and stale-revision errors, document-size limits and atomic file replacement. Test an external edit between reading and saving.
-- [ ] Keep admission and completion checks on current state and retain the per-repository sequence of credential binding, catalog persistence, succeeded journal checkpoint and progress event. Test simultaneous clone completions, external registration or retirement during transfer, failing saves and resume from retained clones. Accept fewer redundant parses and lower registration time with the same durable completion boundaries.
+- [x] Time a single catalog save at 60, 200 and 1,000 entries with retired identities, comments and extensions. Time a batch of small local imports separately. Count catalog reads, YAML decodes, durable writes, and the delay from clone completion to the success event.
+- [x] Index each new YAML mapping by key once in `mergeComments`, then walk the old mapping in order. Preserve key and value comments, entry order and the existing treatment of extensions. Assert these properties for catalog and workspace saves, which share the merge helper.
+- [x] Reuse the strict validation result and parsed YAML node for the exact bytes of a catalog revision. Keep a fresh revision comparison close to durable replacement and recheck after any intervening expensive serialization. Preserve invalid-schema and stale-revision errors, document-size limits and atomic file replacement. Test an external edit between reading and saving.
+- [x] Keep admission and completion checks on current state and retain the per-repository sequence of credential binding, catalog persistence, succeeded journal checkpoint and progress event. Test simultaneous clone completions, external registration or retirement during transfer, failing saves and resume from retained clones. Accept fewer redundant parses and lower registration time with the same durable completion boundaries.
 
 ## 5. Bound sync preflight and PR inspection
 
