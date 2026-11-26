@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/config"
 	"github.com/devjvao/bearforge/internal/domain"
 )
 
@@ -216,5 +218,110 @@ func TestRemovalRetainsPreexistingParentMarker(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(store.Root, "review", tc.parent, tc.marker)); err != nil {
 			t.Fatalf("user-owned marker removed: %v", err)
 		}
+	}
+}
+
+// Fail only the outer reclone publication. The native clone and its receipt
+// must already be durable so resume can preserve exactly the reviewed stage.
+type interruptNestedReclone struct {
+	*config.Store
+	destination  string
+	interruption error
+}
+
+func (s *interruptNestedReclone) MoveDirectory(source, target []string) error {
+	if filepath.Join(target...) == s.destination && s.interruption != nil {
+		return s.interruption
+	}
+	return s.Store.MoveDirectory(source, target)
+}
+
+func TestNestedRemoteBranchRemovalAndRecloneRecovery(t *testing.T) {
+	service, store, origin := fixture(t)
+	ctx := t.Context()
+	const id = "test-service"
+	const branch = "feature/late"
+	prGit(t, origin, "branch", "unused")
+	if _, err := service.AddRepositoryAt(ctx, id, origin, "auto", "test/service", false); err != nil {
+		t.Fatal(err)
+	}
+	prGit(t, origin, "switch", "-c", branch)
+	prGit(t, origin, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "remote feature")
+	tip, err := service.Git.Resolve(ctx, origin, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prGit(t, origin, "switch", "main")
+	if _, err := service.CreateWorkspace(ctx, "review", branch, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.AddRepositories(ctx, app.AddRequest{Workspace: "review", Repositories: []string{id}}); err != nil {
+		t.Fatal(err)
+	}
+	checkout := filepath.Join(store.Root, "review", "test", "service")
+	status, err := service.Git.Inspect(ctx, checkout)
+	if err != nil || status.Head != tip || status.Branch != branch || status.Upstream != "origin/"+branch {
+		t.Fatalf("wrong nested checkout: %+v %v", status, err)
+	}
+	if err := os.WriteFile(filepath.Join(checkout, "notes.txt"), []byte("untracked notes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(checkout, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	remove := app.RemoveRequest{Workspace: "review", Repositories: []string{id}, DryRun: true, MoveUnverified: true}
+	plan, err := service.RemoveRepositories(ctx, remove)
+	if err != nil || len(plan.Items) != 1 || plan.Items[0].Path != checkout || plan.Items[0].RemovalMode != "preserve_files" {
+		t.Fatalf("damaged checkout plan: %+v %v", plan, err)
+	}
+	remove.DryRun, remove.ExpectedPlan = false, plan.PlanDigest
+	removed, err := service.RemoveRepositories(ctx, remove)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(removed.Items[0].RetainedPath, "notes.txt"))
+	if err != nil || string(data) != "untracked notes" {
+		t.Fatalf("retained notes: %q, %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Dir(checkout)); !os.IsNotExist(err) {
+		t.Fatalf("empty checkout parent retained: %v", err)
+	}
+
+	bare := filepath.Join(store.Root, "repos", "test", "service.git")
+	// Lose the complete shared project directory, including its original parent.
+	if err := os.Rename(filepath.Dir(bare), filepath.Join(t.TempDir(), "original")); err != nil {
+		t.Fatal(err)
+	}
+	locked := &interruptNestedReclone{Store: store, destination: filepath.Join("repos", "test", "service.git"), interruption: errors.New("publication interrupted")}
+	service.Store = locked
+	plan, err = service.RecloneRepository(ctx, id, true, "")
+	if err != nil || len(plan.Items) != 1 || plan.Items[0].Path != bare {
+		t.Fatalf("missing store plan: %+v %v", plan, err)
+	}
+	result, err := service.RecloneRepository(ctx, id, false, plan.PlanDigest)
+	if !errors.Is(err, locked.interruption) {
+		t.Fatalf("expected interruption after transfer: %+v %v", result, err)
+	}
+	op, err := service.Journal.Load(result.OperationID)
+	if err != nil || len(op.Steps) != 1 || op.Steps[0].CloneStage == "" || !op.Steps[0].OnDemandBranches || op.Steps[0].State != "publishing" {
+		t.Fatalf("missing durable native stage: %+v %v", op, err)
+	}
+	locked.interruption = nil
+	if _, err := service.Resume(ctx, result.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(bare, "HEAD")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(store.Root, "repos", id+".git")); !os.IsNotExist(err) {
+		t.Fatalf("unexpected flat clone: %v", err)
+	}
+	heads, err := exec.CommandContext(ctx, "git", "-C", bare, "for-each-ref", "--format=%(refname)", "refs/heads").Output()
+	if err != nil || strings.TrimSpace(string(heads)) != "refs/heads/main" {
+		t.Fatalf("reclone local heads: %q %v", heads, err)
+	}
+	restored, err := service.Git.Resolve(ctx, bare, "refs/remotes/origin/"+branch)
+	if err != nil || restored != tip {
+		t.Fatalf("reclone remote tip = %s %v", restored, err)
 	}
 }

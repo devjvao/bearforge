@@ -108,6 +108,8 @@ type Step struct {
 	ImportBindingHistory       []domain.Repository    `json:"import_binding_history,omitempty"`
 	RefFormat                  string                 `json:"ref_format,omitempty"`
 	RequestedRefFormat         string                 `json:"requested_ref_format,omitempty"`
+	CloneStage                 string                 `json:"clone_stage,omitempty"`
+	OnDemandBranches           bool                   `json:"on_demand_branches,omitempty"`
 	Repository                 string                 `json:"repository"`
 	Branch                     string                 `json:"branch,omitempty"`
 	Base                       string                 `json:"base,omitempty"`

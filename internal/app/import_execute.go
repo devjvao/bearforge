@@ -267,7 +267,7 @@ func (s *Service) runImportTask(ctx context.Context, task importTask, checkpoint
 		return result
 	}
 	if task.exists {
-		if err := scoped.verifyInterruptedClone(ctx, task.path, repo.Remotes["origin"]); err != nil {
+		if err := scoped.verifyPublishedClone(ctx, task.path, repo.Remotes["origin"], task.step); err != nil {
 			result.err, result.fatal = err, true
 			return result
 		}

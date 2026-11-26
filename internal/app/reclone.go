@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"path/filepath"
 
 	"github.com/devjvao/bearforge/internal/domain"
 )
@@ -63,7 +64,7 @@ func (s *Service) RecloneRepository(ctx context.Context, id string, dry bool, ex
 	}
 	op := newOperation(s.Store.RootPath(), r.Command, "")
 	op.Repository = &repo
-	op.Steps = []Step{{Repository: id, Folder: repo.Folder, State: "planned"}}
+	op.Steps = []Step{{Repository: id, Folder: repo.Folder, State: "planned", OnDemandBranches: true}}
 	if err := s.Journal.Save(op); err != nil {
 		return r, err
 	}
@@ -115,6 +116,11 @@ func (s *Service) applyReclone(ctx context.Context, op *Operation) (Result, erro
 		if exists || (step.State != "publishing" && step.State != "succeeded") {
 			return finish(domain.E("conflict", "reclone destination appeared before publication"))
 		}
+		if step.CloneStage != "" {
+			if err := s.checkCloneMarker(filepath.Join(target...), step.CloneStage); err != nil {
+				return finish(err)
+			}
+		}
 		marker, err := s.Git.Config(ctx, destination, "bearforge.recloneOperation")
 		if err != nil {
 			return finish(err)
@@ -131,6 +137,11 @@ func (s *Service) applyReclone(ctx context.Context, op *Operation) (Result, erro
 		}
 		if step.State != "publishing" {
 			if err := s.stageReclone(ctx, op, step, repo, stage, exists); err != nil {
+				return finish(err)
+			}
+		}
+		if step.CloneStage != "" {
+			if err := s.checkCloneMarker(filepath.Join(staged...), step.CloneStage); err != nil {
 				return finish(err)
 			}
 		}
@@ -183,7 +194,7 @@ func (s *Service) stageReclone(ctx context.Context, op *Operation, step *Step, r
 		return domain.E("unavailable", "Git cannot restore the registered remotes")
 	}
 	if exists {
-		if err := scoped.verifyInterruptedClone(ctx, stage, repo.Remotes["origin"]); err != nil {
+		if err := scoped.verifyPublishedClone(ctx, stage, repo.Remotes["origin"], *step); err != nil {
 			return err
 		}
 		// Older journals recorded a single started phase. A matching marker

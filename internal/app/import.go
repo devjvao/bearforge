@@ -249,7 +249,7 @@ func (s *Service) ImportRepositories(ctx context.Context, req ImportRequest) (Re
 		if err := s.validateImportCredentials(ctx, repo, false); err != nil {
 			return r, err
 		}
-		steps = append(steps, Step{Repository: repo.ID, ImportedRepository: &repo, State: "planned", RequestedRefFormat: req.RefFormat})
+		steps = append(steps, Step{Repository: repo.ID, ImportedRepository: &repo, State: "planned", RequestedRefFormat: req.RefFormat, OnDemandBranches: true})
 	}
 	sort.Slice(steps, func(i, j int) bool { return steps[i].Repository < steps[j].Repository })
 	sort.Slice(selection, func(i, j int) bool { return selection[i].ID < selection[j].ID })
@@ -643,7 +643,7 @@ func (s *Service) transferClone(ctx context.Context, step *Step, remote, path st
 		return err
 	}
 	planner, canPlan := s.Git.(ClonePlanner)
-	if step.RefFormat == "" || (exists && canPlan && step.RefFormat == "files" && step.RequestedRefFormat != "files") {
+	if step.RefFormat == "" || (exists && step.CloneStage == "" && canPlan && step.RefFormat == "files" && step.RequestedRefFormat != "files") {
 		if canPlan {
 			format, err := planner.PlanClone(ctx, remote, path, step.RequestedRefFormat)
 			if err != nil {
@@ -667,13 +667,20 @@ func (s *Service) transferClone(ctx context.Context, step *Step, remote, path st
 		return err
 	}
 	if exists {
+		// A verified, published stage has already finished initialization.
+		if step.CloneStage != "" {
+			return nil
+		}
+		if init, ok := planner.(stagedClonePlanner); ok && step.OnDemandBranches {
+			return init.InitializeOnDemandWithFormat(ctx, path, step.RefFormat)
+		}
 		if canPlan {
 			return planner.InitializeWithFormat(ctx, path, step.RefFormat)
 		}
 		return s.Git.Initialize(ctx, path)
 	}
 	if canPlan {
-		return planner.CloneWithFormat(ctx, remote, path, step.RefFormat)
+		return s.clonePlanned(ctx, planner, remote, path, step, checkpoint)
 	}
 	return s.Git.Clone(ctx, remote, path)
 }
