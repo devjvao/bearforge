@@ -31,25 +31,30 @@ const (
 	addResults
 )
 
+const maxAddFolderBytes = 129
+
 type dashboardAdd struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	workspace string
-	root      string
-	phase     addPhase
-	choices   app.RepositoryChoices
-	selected  map[string]bool
-	index     int
-	filter    string
-	editing   bool
-	offline   bool
-	offset    int
-	request   app.AddRequest
-	preview   app.Result
-	result    app.Result
-	err       error
-	states    map[string]string
-	progress  *dashboardProgress
+	offline              bool
+	flat                 bool
+	folders              map[string]string
+	folderID, editFolder string
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	workspace            string
+	root                 string
+	phase                addPhase
+	choices              app.RepositoryChoices
+	selected             map[string]bool
+	index                int
+	filter               string
+	editing              bool
+	offset               int
+	request              app.AddRequest
+	preview              app.Result
+	result               app.Result
+	err                  error
+	states               map[string]string
+	progress             *dashboardProgress
 }
 
 type dashboardChoicesMsg struct {
@@ -110,7 +115,13 @@ func (m dashboardModel) previewAdd() (tea.Model, tea.Cmd) {
 		m.addRun.err = errors.New("select at least one repository with Space")
 		return m, nil
 	}
-	req := app.AddRequest{Workspace: m.addRun.workspace, Repositories: names, Offline: m.addRun.offline, DryRun: true}
+	folders := make(map[string]string)
+	for _, name := range names {
+		if folder, ok := m.addRun.folders[name]; ok {
+			folders[name] = folder
+		}
+	}
+	req := app.AddRequest{Workspace: m.addRun.workspace, Repositories: names, Offline: m.addRun.offline, DryRun: true, Flat: m.addRun.flat, Folders: folders}
 	m.addRun.request = req
 	m.addRun.phase, m.addRun.err, m.addRun.offset = addPlanning, nil, 0
 	m.addRun.preview = app.Result{}
@@ -131,6 +142,7 @@ func (m dashboardModel) previewAdd() (tea.Model, tea.Cmd) {
 func copyAddRequest(req app.AddRequest) app.AddRequest {
 	req.Repositories = slices.Clone(req.Repositories)
 	req.BranchMap = maps.Clone(req.BranchMap)
+	req.Folders = maps.Clone(req.Folders)
 	return req
 }
 
@@ -277,9 +289,45 @@ func (m dashboardModel) closeAdd() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (r *dashboardAdd) addFolder(c app.RepositoryChoice) string {
+	if folder := r.folders[c.Repository]; folder != "" {
+		return folder
+	}
+	folder := c.Folder
+	if folder == "" {
+		return c.Repository
+	}
+	if r.flat {
+		_, leaf, ok := strings.Cut(folder, "/")
+		if ok {
+			return leaf
+		}
+	}
+	return folder
+}
+
 func (m dashboardModel) addKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	run := m.addRun
 	name := key.String()
+	if run.folderID != "" {
+		switch name {
+		case "esc":
+			run.folderID = ""
+		case "enter":
+			if run.folders == nil {
+				run.folders = map[string]string{}
+			}
+			if run.editFolder == "" {
+				delete(run.folders, run.folderID)
+			} else {
+				run.folders[run.folderID] = run.editFolder
+			}
+			run.folderID = ""
+		default:
+			importEdit(&run.editFolder, key, maxAddFolderBytes)
+		}
+		return m, nil
+	}
 	if run.editing {
 		switch name {
 		case "enter":
@@ -340,6 +388,15 @@ func (m dashboardModel) addKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				id := items[run.index].Repository
 				run.selected[id] = !run.selected[id]
 				run.err = nil
+			}
+		case "p":
+			run.flat = !run.flat
+		case "d":
+			choices := m.addChoices()
+			if run.index < len(choices) && !choices[run.index].InWorkspace {
+				c := choices[run.index]
+				run.folderID = c.Repository
+				run.editFolder = run.addFolder(c)
 			}
 		case "o":
 			run.offline = !run.offline

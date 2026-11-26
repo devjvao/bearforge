@@ -97,6 +97,7 @@ type Operation struct {
 }
 
 type Step struct {
+	Folder                     string                 `json:"folder,omitempty"`
 	RemovalMode                string                 `json:"removal_mode,omitempty"`
 	WorktreeID                 string                 `json:"worktree_id,omitempty"`
 	MissingHistoryPreserved    bool                   `json:"missing_history_preserved,omitempty"`
@@ -109,6 +110,7 @@ type Step struct {
 	RefFormat                  string                 `json:"ref_format,omitempty"`
 	RequestedRefFormat         string                 `json:"requested_ref_format,omitempty"`
 	CloneStage                 string                 `json:"clone_stage,omitempty"`
+	CompactCloneStage          bool                   `json:"compact_clone_stage,omitempty"`
 	OnDemandBranches           bool                   `json:"on_demand_branches,omitempty"`
 	Repository                 string                 `json:"repository"`
 	Branch                     string                 `json:"branch,omitempty"`
@@ -263,23 +265,8 @@ func unique(names []string) []string {
 	sort.Strings(out)
 	return out
 }
-func (s *Service) repoPath(id string) (string, error) {
-	if err := domain.ValidateID(id); err != nil {
-		return "", err
-	}
-	return s.Store.SafePath("repos", id+".git")
-}
-func (s *Service) treePath(workspace, id string) (string, error) {
-	if err := domain.ValidateID(workspace); err != nil {
-		return "", err
-	}
-	if err := domain.ValidateID(id); err != nil {
-		return "", err
-	}
-	return s.Store.SafePath(workspace, id)
-}
 func (s *Service) checkRepository(ctx context.Context, r domain.Repository) (string, error) {
-	p, err := s.repoPath(r.ID)
+	p, err := s.RepositoryPath(r)
 	if err != nil {
 		return "", err
 	}

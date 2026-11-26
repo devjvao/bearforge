@@ -190,6 +190,11 @@ func valid(op *app.Operation, root string) error {
 			return err
 		}
 	}
+	if op.Repository != nil {
+		if err := domain.ValidateFolder(op.Repository.ID, op.Repository.Folder); err != nil {
+			return err
+		}
+	}
 	if op.Remote != "" {
 		if err := domain.ValidateURL(op.Remote); err != nil {
 			return err
@@ -212,11 +217,6 @@ func valid(op *app.Operation, root string) error {
 			}
 			importIDs[step.Repository] = true
 		}
-		if step.CloneStage != "" {
-			if !step.OnDemandBranches || (op.Kind != "repo.add" && op.Kind != "repo.import") || len(step.CloneStage) != 26 || strings.Trim(step.CloneStage, "abcdefghijklmnopqrstuvwxyz234567") != "" {
-				return domain.E("invalid", "invalid clone staging token")
-			}
-		}
 		if pin := step.RemoteBranch; pin != nil {
 			if op.Kind != "workspace.add" || step.Branch == "" || domain.ValidateRemoteName(pin.Remote) != nil || domain.ValidateURL(pin.URL) != nil {
 				return domain.E("invalid", "invalid remote identity in workspace branch plan")
@@ -234,13 +234,21 @@ func valid(op *app.Operation, root string) error {
 				return domain.E("invalid", "invalid upstream in workspace branch plan")
 			}
 		}
+		if step.CompactCloneStage && step.CloneStage == "" {
+			return domain.E("invalid", "compact clone staging requires an ownership token")
+		}
+		if step.CloneStage != "" {
+			if !step.OnDemandBranches || (op.Kind != "repo.add" && op.Kind != "repo.import" && op.Kind != "repo.reclone") || len(step.CloneStage) != 26 || strings.Trim(step.CloneStage, "abcdefghijklmnopqrstuvwxyz234567") != "" {
+				return domain.E("invalid", "invalid clone staging token")
+			}
+		}
 		if step.RefFormat != "" && step.RefFormat != "files" && step.RefFormat != "reftable" {
 			return domain.E("invalid", "invalid selected ref format")
 		}
 		if err := app.ValidateRefFormat(step.RequestedRefFormat); err != nil {
 			return err
 		}
-		if err := domain.ValidateID(step.Repository); err != nil {
+		if err := domain.ValidateFolder(step.Repository, step.Folder); err != nil {
 			return err
 		}
 		if step.Branch != "" {

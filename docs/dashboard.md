@@ -97,3 +97,9 @@ The palette adapts to light/dark backgrounds. Cyan indicates focus, green health
 `tui` requires terminal stdin/stdout/stderr, `--ui=auto`, human output and interactive input. It refuses JSON/JSONL, quiet/no-input/dry-run, CI and `TERM=dumb`. For automation, set the command's working directory to the managed root and use `bearforge status WORKSPACE --json`.
 
 Empty roots/workspaces have explicit empty states, and browsing creates no directories, locks or journals. `q` exits successfully; Ctrl-C cancels. Both display a stopping state while cancelling and draining active reads, provider requests and mutations, then restore the alternate screen and terminal.
+
+### Project folders
+
+In the import picker, **p** toggles grouping for the highlighted repository. Bitbucket Server and Data Center start with project grouping enabled. GitHub offers the owner folder. Bitbucket Cloud offers the project folder when the API supplies a project key, or the workspace folder otherwise. **e** edits the catalog ID and **d** edits the clone folder independently.
+
+When adding workspace repositories, **p** toggles **Use parent folder** for the selection. **d** overrides the highlighted worktree's destination with a leaf or `parent/leaf`. The preview shows the resulting path for each worktree before confirmation.

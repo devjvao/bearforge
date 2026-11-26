@@ -672,3 +672,32 @@ func TestImportRejectsInvalidJobsBeforeCreatingJournalOrClone(t *testing.T) {
 		t.Fatal("invalid jobs started clone")
 	}
 }
+
+func TestImportFolderRecheckedBeforeCredentialBinding(t *testing.T) {
+	s, git, req := parallelImportSetup(t, 1, "a")
+	req.Repositories[0].Folder = "team/a"
+	req.Repositories[0].Source.Connection = "work"
+	req.Repositories[0].Source.GrantID = "grant"
+	s.Credentials = &importResolver{grant: "grant"}
+	var bound bool
+	s.BindConnection = func(context.Context, string, domain.CredentialRequest) error { bound = true; return nil }
+	req = confirmParallelImport(t, s, req)
+	_, done := startParallelImport(t, s, req)
+	if name := nextImportName(t, git.started); name != "a" {
+		t.Fatal(name)
+	}
+	external := config.New(s.Store.RootPath())
+	catalog, rev, err := external.LoadCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog.Repositories["other"] = domain.Repository{ID: "other", Folder: "team/a", Remotes: map[string]string{"origin": "https://example.com/other.git"}}
+	if err := external.SaveCatalog(catalog, rev); err != nil {
+		t.Fatal(err)
+	}
+	close(git.gates["a"])
+	result := nextImportResult(t, done)
+	if result.err == nil || bound {
+		t.Fatalf("folder conflict must precede credential binding: bound=%v error=%v", bound, result.err)
+	}
+}

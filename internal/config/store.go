@@ -82,6 +82,7 @@ type defaultsDTO struct {
 	Jobs   int    `yaml:"jobs"`
 }
 type repoDTO struct {
+	Folder   string            `yaml:"folder,omitempty"`
 	Remotes  map[string]string `yaml:"remotes"`
 	Base     string            `yaml:"base,omitempty"`
 	Provider map[string]string `yaml:"provider,omitempty"`
@@ -100,6 +101,7 @@ type retiredDTO struct {
 	Fingerprint string  `yaml:"fingerprint"`
 }
 type mappingDTO struct {
+	Folder     string `yaml:"folder,omitempty"`
 	CheckoutID string `yaml:"checkout_id,omitempty"`
 	Branch     string `yaml:"branch"`
 	Base       string `yaml:"base,omitempty"`
@@ -297,7 +299,11 @@ func (s *catalogSnapshot) decode(b []byte) error {
 	if c.Jobs < 1 || c.Jobs > 64 {
 		return domain.E("invalid", "jobs must be between 1 and 64")
 	}
+	folders := folderClaims{}
 	for id, r := range dto.Repositories {
+		if err := folders.reserve(id, r.Folder, ".git"); err != nil {
+			return err
+		}
 		repository, err := decodeRepository(id, r)
 		if err != nil {
 			return err
@@ -305,6 +311,9 @@ func (s *catalogSnapshot) decode(b []byte) error {
 		c.Repositories[id] = repository
 	}
 	for id, r := range dto.Retired {
+		if err := folders.reserve(id, r.Repository.Folder, ".git"); err != nil {
+			return err
+		}
 		if _, ok := c.Repositories[id]; ok {
 			return domain.E("invalid", "repository %s is both active and retired", id)
 		}
@@ -358,11 +367,18 @@ func (s *Store) SaveCatalog(c domain.Catalog, rev string) error {
 		}
 	}
 	d := catalogDTO{Version: catalogSchemaVersion, Defaults: defaultsDTO{Remote: c.Remote, Jobs: c.Jobs}, Repositories: map[string]repoDTO{}, Retired: map[string]retiredDTO{}}
+	folders := folderClaims{}
 	for id, r := range c.Repositories {
-		d.Repositories[id] = repoDTO{Remotes: r.Remotes, Base: r.Base, Provider: r.Provider}
+		if err := folders.reserve(id, r.Folder, ".git"); err != nil {
+			return err
+		}
+		d.Repositories[id] = repoDTO{Folder: r.Folder, Remotes: r.Remotes, Base: r.Base, Provider: r.Provider}
 	}
 	for id, r := range c.Retired {
-		d.Retired[id] = retiredDTO{Repository: repoDTO{Remotes: r.Repository.Remotes, Base: r.Repository.Base, Provider: r.Repository.Provider}, Operation: r.Operation, Fingerprint: r.Fingerprint}
+		if err := folders.reserve(id, r.Repository.Folder, ".git"); err != nil {
+			return err
+		}
+		d.Retired[id] = retiredDTO{Repository: repoDTO{Folder: r.Repository.Folder, Remotes: r.Repository.Remotes, Base: r.Repository.Base, Provider: r.Repository.Provider}, Operation: r.Operation, Fingerprint: r.Fingerprint}
 	}
 	return s.save(parts, d, previous, check)
 }
@@ -375,10 +391,30 @@ func validFingerprint(value string) bool {
 	return err == nil
 }
 
-func decodeRepository(id string, r repoDTO) (domain.Repository, error) {
-	if err := domain.ValidateID(id); err != nil {
-		return domain.Repository{}, err
+// Keys ending in / reserve the parent as a shared directory.
+type folderClaims map[string]string
+
+func (claims folderClaims) reserve(id, folder, suffix string) error {
+	if err := domain.ValidateFolder(id, folder); err != nil {
+		return err
 	}
+	path := domain.FolderName(id, folder) + suffix
+	for _, key := range []string{path, path + "/"} {
+		if other := claims[key]; other != "" {
+			return domain.E("conflict", "folder %s overlaps the folder for %s", path, other)
+		}
+	}
+	if parent, _, ok := strings.Cut(path, "/"); ok {
+		if other := claims[parent]; other != "" {
+			return domain.E("conflict", "parent %s is occupied by %s", parent, other)
+		}
+		claims[parent+"/"] = id
+	}
+	claims[path] = id
+	return nil
+}
+
+func decodeRepository(id string, r repoDTO) (domain.Repository, error) {
 	if len(r.Remotes) == 0 {
 		return domain.Repository{}, domain.E("invalid", "repository %s has no remotes", id)
 	}
@@ -390,7 +426,7 @@ func decodeRepository(id string, r repoDTO) (domain.Repository, error) {
 			return domain.Repository{}, err
 		}
 	}
-	return domain.Repository{ID: id, Remotes: r.Remotes, Base: r.Base, Provider: r.Provider}, nil
+	return domain.Repository{ID: id, Folder: r.Folder, Remotes: r.Remotes, Base: r.Base, Provider: r.Provider}, nil
 }
 
 func (s *Store) LoadWorkspace(name string) (domain.Workspace, string, error) {
@@ -420,8 +456,9 @@ func (s *Store) LoadWorkspace(name string) (domain.Workspace, string, error) {
 		return w, rev, err
 	}
 	w.DefaultBranch = d.DefaultBranch
+	folders := folderClaims{}
 	for id, m := range d.Repositories {
-		if err := domain.ValidateID(id); err != nil {
+		if err := folders.reserve(id, m.Folder, ""); err != nil {
 			return w, rev, err
 		}
 		if err := domain.ValidateBranch(m.Branch); err != nil {
@@ -430,7 +467,7 @@ func (s *Store) LoadWorkspace(name string) (domain.Workspace, string, error) {
 		if m.Tracking != "" && m.Tracking != "none" && m.Tracking != "same-name" && m.Tracking != "preserve" {
 			return w, rev, domain.E("invalid", "invalid tracking policy")
 		}
-		w.Repositories[id] = domain.Mapping{Branch: m.Branch, Base: m.Base, Tracking: m.Tracking, PRTarget: m.PRTarget, CheckoutID: m.CheckoutID}
+		w.Repositories[id] = domain.Mapping{Folder: m.Folder, Branch: m.Branch, Base: m.Base, Tracking: m.Tracking, PRTarget: m.PRTarget, CheckoutID: m.CheckoutID}
 	}
 	return w, rev, nil
 }
@@ -440,8 +477,12 @@ func (s *Store) SaveWorkspace(w domain.Workspace, rev string) error {
 		return err
 	}
 	d := workspaceDTO{Version: 1, Name: w.Name, DefaultBranch: w.DefaultBranch, Repositories: map[string]mappingDTO{}}
+	folders := folderClaims{}
 	for id, m := range w.Repositories {
-		d.Repositories[id] = mappingDTO{Branch: m.Branch, Base: m.Base, Tracking: m.Tracking, PRTarget: m.PRTarget, CheckoutID: m.CheckoutID}
+		if err := folders.reserve(id, m.Folder, ""); err != nil {
+			return err
+		}
+		d.Repositories[id] = mappingDTO{Folder: m.Folder, Branch: m.Branch, Base: m.Base, Tracking: m.Tracking, PRTarget: m.PRTarget, CheckoutID: m.CheckoutID}
 	}
 	parts := []string{".bearforge", "workspaces", w.Name + ".yaml"}
 	var previous *yaml.Node

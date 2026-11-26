@@ -51,14 +51,18 @@ func (s *Service) ReviewRemovalRecovery(ctx context.Context, id, digest string) 
 		if !ok {
 			return r, domain.E("conflict", "repository registration missing")
 		}
-		if _, ok := w.Repositories[prior.Repository]; !ok {
+		mapping, mapped := w.Repositories[prior.Repository]
+		if !mapped {
 			continue
 		}
-		path, err := s.treePath(op.Workspace, prior.Repository)
+		if domain.FolderName(prior.Repository, mapping.Folder) != domain.FolderName(prior.Repository, prior.Folder) {
+			return r, domain.E("conflict", "workspace mapping destination changed")
+		}
+		path, err := s.treePath(op.Workspace, prior.Repository, prior.Folder)
 		if err != nil {
 			return r, err
 		}
-		exists, err := s.Store.Exists(op.Workspace, prior.Repository)
+		exists, err := s.Store.Exists(folderParts(op.Workspace, prior.Repository, prior.Folder, "")...)
 		if err != nil {
 			return r, err
 		}
@@ -76,7 +80,7 @@ func (s *Service) ReviewRemovalRecovery(ctx context.Context, id, digest string) 
 		if residualMode(updated.RemovalMode) {
 			checkoutID := prior.RemovalDirectory
 			if !strongDirectoryIdentity(checkoutID) {
-				checkoutID = w.Repositories[prior.Repository].CheckoutID
+				checkoutID = mapping.CheckoutID
 			}
 			if err := selectResidualMode(&updated, checkoutID, path, false); err != nil {
 				return r, err

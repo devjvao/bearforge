@@ -116,3 +116,22 @@ func TestHelpVersionAndCompletionSkipRootDiscovery(t *testing.T) {
 		}
 	}
 }
+
+func TestManualRepositoryAndWorkspaceFolders(t *testing.T) {
+	root := cliFixtureDir(t)
+	t.Chdir(root)
+	remote := filepath.Join(root, "source")
+	dashboardGit(t, "init", "-b", "main", remote)
+	dashboardGit(t, "-C", remote, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "initial")
+	runCLIHere(t, "repo", "add", "svc", remote, "--folder", "test/service1")
+	runCLIHere(t, "repo", "inspect", "svc")
+	runCLIHere(t, "workspace", "create", "review")
+	out := runCLIHere(t, "workspace", "add", "review", "svc", "--folder-map", "svc=ops/alias", "--dry-run")
+	if !strings.Contains(filepath.ToSlash(out), "review/ops/alias") {
+		t.Fatalf("missing reviewed folder: %s", out)
+	}
+	runCLIHere(t, "workspace", "add", "review", "svc", "--folder-map", "svc=ops/alias")
+	if _, err := os.Stat(filepath.Join(root, "review", "ops", "alias", ".git")); err != nil {
+		t.Fatal(err)
+	}
+}

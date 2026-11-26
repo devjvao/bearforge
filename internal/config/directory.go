@@ -55,10 +55,18 @@ func (s *Store) ReadDirectory(parts ...string) ([]domain.DirectoryEntry, error) 
 	if err != nil {
 		return nil, err
 	}
+	return inspectDirectoryEntries(entries)
+}
+
+func inspectDirectoryEntries(entries []os.DirEntry) ([]domain.DirectoryEntry, error) {
 	result := make([]domain.DirectoryEntry, 0, len(entries))
 	var failures []error
 	for _, entry := range entries {
 		info, err := entry.Info()
+		// A concurrent clone may remove its temporary directory after ReadDir.
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
 		if err != nil {
 			failures = append(failures, err)
 			continue

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 
 	"github.com/devjvao/bearforge/internal/domain"
@@ -37,11 +38,15 @@ func (s *Service) RecloneRepository(ctx context.Context, id string, dry bool, ex
 	if _, err := s.unreferencedRepository(id); err != nil {
 		return r, err
 	}
-	path, err := s.repoPath(id)
+	path, err := s.RepositoryPath(repo)
 	if err != nil {
 		return r, err
 	}
-	exists, err := s.Store.Exists("repos", id+".git")
+	target := folderParts("repos", id, repo.Folder, ".git")
+	if err := s.checkFolderEntries(target); err != nil {
+		return r, err
+	}
+	exists, err := s.Store.Exists(target...)
 	if err != nil {
 		return r, err
 	}
@@ -50,7 +55,7 @@ func (s *Service) RecloneRepository(ctx context.Context, id string, dry bool, ex
 	}
 	r.Items = []Item{{Repository: id, Path: path, Outcome: "planned"}}
 	r.Data = RecloneNotice
-	r.PlanDigest = (workspacePlan{Kind: r.Command, Root: s.Store.RootPath(), CatalogRevision: revision, Steps: []Step{{Repository: id}}}).digest()
+	r.PlanDigest = (workspacePlan{Kind: r.Command, Root: s.Store.RootPath(), CatalogRevision: revision, Steps: []Step{{Repository: id, Folder: repo.Folder}}}).digest()
 	if dry {
 		r.Outcome = "planned"
 		return r, nil
@@ -60,7 +65,7 @@ func (s *Service) RecloneRepository(ctx context.Context, id string, dry bool, ex
 	}
 	op := newOperation(s.Store.RootPath(), r.Command, "")
 	op.Repository = &repo
-	op.Steps = []Step{{Repository: id, State: "planned"}}
+	op.Steps = []Step{{Repository: id, Folder: repo.Folder, State: "planned", OnDemandBranches: true}}
 	if err := s.Journal.Save(op); err != nil {
 		return r, err
 	}
@@ -84,7 +89,13 @@ func (s *Service) applyReclone(ctx context.Context, op *Operation) (Result, erro
 	if _, err := s.unreferencedRepository(repo.ID); err != nil {
 		return finish(err)
 	}
-	target := []string{"repos", repo.ID + ".git"}
+	if domain.FolderName(repo.ID, repo.Folder) != domain.FolderName(step.Repository, step.Folder) {
+		return finish(domain.E("conflict", "reclone destination differs from the reviewed registration"))
+	}
+	target := folderParts("repos", repo.ID, repo.Folder, ".git")
+	if err := s.checkFolderEntries(target); err != nil {
+		return finish(err)
+	}
 	staged := []string{".bearforge", "staging", op.ID + ".git"}
 	destination, err := s.Store.SafePath(target...)
 	if err != nil {
@@ -106,6 +117,11 @@ func (s *Service) applyReclone(ctx context.Context, op *Operation) (Result, erro
 		if exists || (step.State != "publishing" && step.State != "succeeded") {
 			return finish(domain.E("conflict", "reclone destination appeared before publication"))
 		}
+		if step.CloneStage != "" {
+			if err := s.checkCloneMarker(filepath.Join(target...), step.CloneStage); err != nil {
+				return finish(err)
+			}
+		}
 		marker, err := s.Git.Config(ctx, destination, "bearforge.recloneOperation")
 		if err != nil {
 			return finish(err)
@@ -125,6 +141,11 @@ func (s *Service) applyReclone(ctx context.Context, op *Operation) (Result, erro
 				return finish(err)
 			}
 		}
+		if step.CloneStage != "" {
+			if err := s.checkCloneMarker(filepath.Join(staged...), step.CloneStage); err != nil {
+				return finish(err)
+			}
+		}
 		marker, err := s.Git.Config(ctx, stage, "bearforge.recloneOperation")
 		if err != nil {
 			return finish(err)
@@ -140,6 +161,9 @@ func (s *Service) applyReclone(ctx context.Context, op *Operation) (Result, erro
 			return finish(domain.E("unavailable", "exclusive repository publication unavailable"))
 		}
 		if err := ctx.Err(); err != nil {
+			return finish(err)
+		}
+		if err := s.ensureFolderParent(target); err != nil {
 			return finish(err)
 		}
 		if err := mover.MoveDirectory(staged, target); err != nil {
@@ -174,6 +198,11 @@ func (s *Service) stageReclone(ctx context.Context, op *Operation, step *Step, r
 		return domain.E("unavailable", "Git cannot restore the registered remotes")
 	}
 	if exists {
+		if step.CloneStage != "" {
+			if err := s.checkCloneMarker(filepath.Join(".bearforge", "staging", op.ID+".git"), step.CloneStage); err != nil {
+				return err
+			}
+		}
 		if err := s.verifyInterruptedClone(ctx, stage, repo.Remotes["origin"]); err != nil {
 			return err
 		}
@@ -204,6 +233,11 @@ func (s *Service) stageReclone(ctx context.Context, op *Operation, step *Step, r
 		}
 		scoped := *s
 		scoped.Git = git
+		if exists && step.OnDemandBranches && step.CloneStage == "" {
+			if err := scoped.verifyPublishedClone(ctx, stage, repo.Remotes["origin"], *step); err != nil {
+				return err
+			}
+		}
 		if err := s.Store.EnsureDir(".bearforge", "staging"); err != nil {
 			return err
 		}

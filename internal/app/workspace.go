@@ -10,6 +10,9 @@ import (
 )
 
 type AddRequest struct {
+	Flat         bool
+	Parent       string
+	Folders      map[string]string
 	Workspace    string
 	Repositories []string
 	Branch       string
@@ -177,7 +180,7 @@ func (s *Service) AddRepositories(ctx context.Context, req AddRequest) (Result, 
 		} else {
 			allDone = false
 		}
-		p, _ := s.treePath(req.Workspace, step.Repository)
+		p, _ := s.treePath(req.Workspace, step.Repository, step.Folder)
 		r.Items = append(r.Items, Item{Repository: step.Repository, Workspace: req.Workspace, Path: p, Branch: step.Branch,
 			Base: step.Base, Start: step.Start, AdvanceFrom: step.advanceFrom(), Tracking: step.Tracking, CreateBranch: step.Create, Outcome: outcome})
 	}
@@ -205,6 +208,23 @@ func (s *Service) planAdd(ctx context.Context, req AddRequest, w domain.Workspac
 		if !selected[id] {
 			return nil, domain.E("invalid", "branch override %s is not selected", id)
 		}
+	}
+	for id := range req.Folders {
+		if !selected[id] {
+			return nil, domain.E("invalid", "folder override %s is not selected", id)
+		}
+	}
+	if req.Flat && req.Parent != "" {
+		return nil, domain.E("invalid", "choose either flat folders or a parent")
+	}
+	if req.Parent != "" {
+		if err := domain.ValidateID(req.Parent); err != nil {
+			return nil, err
+		}
+	}
+	folders := make(map[string]string, len(w.Repositories))
+	for id, m := range w.Repositories {
+		folders[id] = domain.FolderName(id, m.Folder)
 	}
 	steps := []Step{}
 	for _, id := range unique(req.Repositories) {
@@ -236,11 +256,29 @@ func (s *Service) planAdd(ctx context.Context, req AddRequest, w domain.Workspac
 		if mapped && previous.Branch != branch {
 			return nil, domain.E("conflict", "repository %s already maps to branch %s", id, previous.Branch)
 		}
-		p, err := s.treePath(w.Name, id)
+		folder, err := req.worktreeFolder(id, repo.Folder, previous.Folder, mapped)
 		if err != nil {
 			return nil, err
 		}
-		exists, err := s.Store.Exists(w.Name, id)
+		destination := domain.FolderName(id, folder)
+		if mapped && domain.FolderName(id, previous.Folder) != destination {
+			return nil, domain.E("conflict", "%s already maps to a different folder", id)
+		}
+		for other, path := range folders {
+			if other != id && folderConflict(destination, path) {
+				return nil, domain.E("conflict", "workspace folder %s overlaps the folder for %s; choose another folder", destination, other)
+			}
+		}
+		folders[id] = destination
+		p, err := s.treePath(w.Name, id, folder)
+		if err != nil {
+			return nil, err
+		}
+		parts := folderParts(w.Name, id, folder, "")
+		if err := s.checkFolderEntries(parts); err != nil {
+			return nil, err
+		}
+		exists, err := s.Store.Exists(parts...)
 		if err != nil {
 			return nil, err
 		}
@@ -264,7 +302,7 @@ func (s *Service) planAdd(ctx context.Context, req AddRequest, w domain.Workspac
 			if err := s.checkTracking(ctx, bare, branch, c.Remote, req.Tracking); err != nil {
 				return nil, err
 			}
-			steps = append(steps, Step{Repository: id, Branch: branch, Base: previous.Base, Tracking: previous.Tracking, Start: status.Head, State: "succeeded"})
+			steps = append(steps, Step{Repository: id, Folder: folder, Branch: branch, Base: previous.Base, Tracking: previous.Tracking, Start: status.Head, State: "succeeded"})
 			continue
 		}
 		trees, err := s.Git.Worktrees(ctx, bare)
@@ -287,7 +325,7 @@ func (s *Service) planAdd(ctx context.Context, req AddRequest, w domain.Workspac
 		if tag {
 			return nil, domain.E("conflict", "branch name %s conflicts with a tag", branch)
 		}
-		step := Step{Repository: id, Branch: branch, State: "planned", Create: !local}
+		step := Step{Repository: id, Folder: folder, Branch: branch, State: "planned", Create: !local}
 		if err := s.planWorkspaceBranch(ctx, bare, c.Remote, repo, req, &step); err != nil {
 			return nil, err
 		}
@@ -344,7 +382,7 @@ func (s *Service) applyAdd(ctx context.Context, op *Operation) (Result, error) {
 		err := s.applyAddStep(ctx, op, step, wasStarted)
 		item := Item{Repository: step.Repository, Workspace: op.Workspace, Branch: step.Branch, Outcome: "created",
 			Base: step.Base, Start: step.Start, AdvanceFrom: step.advanceFrom(), Tracking: step.Tracking, CreateBranch: step.Create}
-		item.Path, _ = s.treePath(op.Workspace, step.Repository)
+		item.Path, _ = s.treePath(op.Workspace, step.Repository, step.Folder)
 		if err != nil {
 			step.Error = err.Error()
 			item.Outcome = "failed"
@@ -384,11 +422,26 @@ func (s *Service) applyAddStep(ctx context.Context, op *Operation, step *Step, w
 	if err != nil {
 		return err
 	}
-	p, err := s.treePath(op.Workspace, step.Repository)
+	p, err := s.treePath(op.Workspace, step.Repository, step.Folder)
 	if err != nil {
 		return err
 	}
-	exists, err := s.Store.Exists(op.Workspace, step.Repository)
+	parts := folderParts(op.Workspace, step.Repository, step.Folder, "")
+	destination := domain.FolderName(step.Repository, step.Folder)
+	for id, m := range w.Repositories {
+		existing := domain.FolderName(id, m.Folder)
+		if id == step.Repository {
+			if existing != destination {
+				return domain.E("conflict", "%s already maps to a different folder", id)
+			}
+		} else if folderConflict(destination, existing) {
+			return domain.E("conflict", "workspace folder %s overlaps the folder for %s", destination, id)
+		}
+	}
+	if err := s.checkFolderEntries(parts); err != nil {
+		return err
+	}
+	exists, err := s.Store.Exists(parts...)
 	if err != nil {
 		return err
 	}
@@ -451,6 +504,11 @@ func (s *Service) applyAddStep(ctx context.Context, op *Operation, step *Step, w
 		} else if !step.Create {
 			return domain.E("conflict", "existing branch disappeared")
 		}
+		if len(parts) > 2 {
+			if err := s.ensureFolderParent(parts); err != nil {
+				return err
+			}
+		}
 		if err := s.Git.Add(ctx, bare, p, step.Branch, step.Start, create); err != nil {
 			return err
 		}
@@ -467,7 +525,7 @@ func (s *Service) applyAddStep(ctx context.Context, op *Operation, step *Step, w
 			return err
 		}
 	}
-	mapping := domain.Mapping{Branch: step.Branch, Base: step.Base, Tracking: step.Tracking}
+	mapping := domain.Mapping{Folder: step.Folder, Branch: step.Branch, Base: step.Base, Tracking: step.Tracking}
 	if _, ok := s.Store.(removalDirectoryStore); ok {
 		mapping.CheckoutID, err = s.removalDirectory(p)
 		if err != nil {

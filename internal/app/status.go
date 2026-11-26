@@ -76,7 +76,7 @@ func (s *Service) status(ctx context.Context, name string, onStart func([]Item),
 				if ctx.Err() != nil {
 					return
 				}
-				item, err := s.inspectStatus(ctx, inputs[i], c)
+				item, err := s.inspectStatus(ctx, inputs[i], c, w.Repositories[inputs[i].Repository].Folder)
 				select {
 				case completed <- completion{i, item, err}:
 				case <-ctx.Done():
@@ -113,8 +113,8 @@ func finalizeStatus(r Result, failures []error, ctxErr error) (Result, error) {
 	return r, err
 }
 
-func (s *Service) inspectStatus(ctx context.Context, item Item, catalog domain.Catalog) (Item, error) {
-	p, err := s.treePath(item.Workspace, item.Repository)
+func (s *Service) inspectStatus(ctx context.Context, item Item, catalog domain.Catalog, folder string) (Item, error) {
+	p, err := s.treePath(item.Workspace, item.Repository, folder)
 	item.Path = p
 	if err == nil {
 		repo, ok := catalog.Repositories[item.Repository]

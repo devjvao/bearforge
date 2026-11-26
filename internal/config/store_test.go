@@ -149,3 +149,14 @@ func TestUnsafePath(t *testing.T) {
 		t.Fatal("followed symlink")
 	}
 }
+
+func TestWorkspaceRejectsOverlappingFolderMappings(t *testing.T) {
+	store := New(fixtureRoot(t))
+	yaml := "schema_version: 1\nname: review\ndefault_branch: main\nrepositories:\n  first: {branch: main, folder: service}\n  second: {branch: main, folder: service/api}\n"
+	if err := store.Write([]string{".bearforge", "workspaces", "review.yaml"}, []byte(yaml)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.LoadWorkspace("review"); err == nil {
+		t.Fatal("accepted nested worktrees in overlapping mappings")
+	}
+}

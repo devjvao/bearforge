@@ -157,7 +157,7 @@ func (s *Service) verifyRebindRepository(ctx context.Context, repo domain.Reposi
 	if s.Git == nil {
 		return "", domain.E("unavailable", "Git verification is unavailable")
 	}
-	path, err := s.repoPath(repo.ID)
+	path, err := s.RepositoryPath(repo)
 	if err != nil {
 		return "", err
 	}
@@ -238,7 +238,7 @@ func (s *Service) applyRepositoryRebind(ctx context.Context, op *Operation) (Res
 			return r, domain.E("invalid", "repository rebind journal contains duplicate repositories")
 		}
 		seen[step.Repository] = true
-		path, err := s.repoPath(step.Repository)
+		path, err := s.RepositoryPath(*step.RepositoryBefore)
 		if err != nil {
 			return r, err
 		}

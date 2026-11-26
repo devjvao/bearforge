@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -109,5 +110,38 @@ func linkTestDirectory(t *testing.T, target, link string) {
 	}
 	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type unavailableEntry struct {
+	os.DirEntry
+	err error
+}
+
+func (entry unavailableEntry) Info() (os.FileInfo, error) {
+	return nil, &os.PathError{Op: "lstat", Path: entry.Name(), Err: entry.err}
+}
+
+func TestDirectoryInspectionWithConcurrentRemoval(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "sibling"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// On Windows, Info can use metadata cached by ReadDir. Inject the lstat
+	// error that other filesystems return when a sibling vanishes mid-scan.
+	for _, tc := range []struct {
+		name         string
+		err, wantErr error
+	}{{"removed", os.ErrNotExist, nil}, {"unreadable", os.ErrPermission, os.ErrPermission}} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := inspectDirectoryEntries([]os.DirEntry{unavailableEntry{entries[0], tc.err}, entries[0]})
+			if !errors.Is(err, tc.wantErr) || len(result) != 1 || result[0].Name != "sibling" || !result[0].Directory || result[0].Link {
+				t.Fatalf("observed entries %+v, error %v", result, err)
+			}
+		})
 	}
 }

@@ -36,6 +36,19 @@ func (s *Service) clonePlanned(ctx context.Context, planner ClonePlanner, remote
 
 func cloneReceipt(token string) string { return ".bearforge-clone-" + token }
 
+// Keep new attempts beside their destination for an atomic rename. A short,
+// fixed inner name avoids repeating a long repository slug or reclone operation
+// ID inside the Git directory path. Existing attempts retain their journaled layout.
+func cloneStagePaths(target, token string, compact bool) (wrapper, source string) {
+	parent := filepath.Dir(target)
+	if compact {
+		wrapper = filepath.Join(parent, ".bf-"+token)
+		return wrapper, filepath.Join(wrapper, "r")
+	}
+	wrapper = filepath.Join(parent, cloneReceipt(token))
+	return wrapper, filepath.Join(wrapper, filepath.Base(target))
+}
+
 func (s *Service) verifyPublishedClone(ctx context.Context, path, remote string, step Step) error {
 	if step.CloneStage != "" {
 		rel, err := filepath.Rel(s.Store.RootPath(), path)
@@ -75,15 +88,13 @@ func (s *Service) stageClone(ctx context.Context, git stagedClonePlanner, mover 
 	if err != nil {
 		return err
 	}
-	parent, leaf := filepath.Dir(target), filepath.Base(target)
 	var wrapper, source, stagePath string
 	retained, ready := false, false
 	if step.CloneStage != "" {
-		wrapper = filepath.Join(parent, cloneReceipt(step.CloneStage))
+		wrapper, source = cloneStagePaths(target, step.CloneStage, step.CompactCloneStage)
 		if err := s.checkCloneMarker(wrapper, step.CloneStage); err != nil {
 			return err
 		}
-		source = filepath.Join(wrapper, leaf)
 		stagePath, err = s.Store.SafePath(source)
 		if err != nil {
 			return err
@@ -128,18 +139,17 @@ func (s *Service) stageClone(ctx context.Context, git stagedClonePlanner, mover 
 	}
 	if wrapper == "" {
 		token := strings.ToLower(rand.Text())
-		wrapper = filepath.Join(parent, cloneReceipt(token))
+		wrapper, source = cloneStagePaths(target, token, true)
 		if err := s.Store.CreateDir(wrapper); err != nil {
 			return err
 		}
 		if err := s.Store.CreateDir(wrapper, cloneReceipt(token)); err != nil {
 			return err
 		}
-		step.CloneStage = token
+		step.CloneStage, step.CompactCloneStage = token, true
 		if err := checkpoint(*step); err != nil {
 			return err
 		}
-		source = filepath.Join(wrapper, leaf)
 		stagePath, err = s.Store.SafePath(source)
 		if err != nil {
 			return err

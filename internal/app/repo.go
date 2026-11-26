@@ -14,11 +14,16 @@ func (s *Service) AddRepository(ctx context.Context, id, remote string, dry bool
 // AddRepositoryWithFormat retains the single-repository workflow while allowing
 // deliberate backend selection. Dry runs validate the option without probing.
 func (s *Service) AddRepositoryWithFormat(ctx context.Context, id, remote, format string, dry bool) (Result, error) {
+	return s.AddRepositoryAt(ctx, id, remote, format, "", dry)
+}
+
+// AddRepositoryAt registers a source at an optional portable leaf or parent/leaf.
+func (s *Service) AddRepositoryAt(ctx context.Context, id, remote, format, folder string, dry bool) (Result, error) {
 	r := NewResult("repo.add")
 	if err := ValidateRefFormat(format); err != nil {
 		return r, err
 	}
-	if err := domain.ValidateID(id); err != nil {
+	if err := domain.ValidateFolder(id, folder); err != nil {
 		return r, err
 	}
 	if err := domain.ValidateURL(remote); err != nil {
@@ -45,6 +50,9 @@ func (s *Service) AddRepositoryWithFormat(ctx context.Context, id, remote, forma
 		}
 	}
 	if repo, ok := c.Repositories[id]; ok {
+		if folder != "" && domain.FolderName(id, repo.Folder) != folder {
+			return r, domain.E("conflict", "repository %s already uses folder %s", id, domain.FolderName(id, repo.Folder))
+		}
 		if repo.Remotes["origin"] != remote {
 			return r, domain.E("conflict", "repository %s already has a different origin", id)
 		}
@@ -60,16 +68,13 @@ func (s *Service) AddRepositoryWithFormat(ctx context.Context, id, remote, forma
 			return r, domain.E("conflict", "remote is already registered as %s", repo.ID)
 		}
 	}
-	p, err := s.repoPath(id)
-	if err != nil {
+	repo := domain.Repository{ID: id, Folder: folder}
+	if err := s.importDestination(c, repo); err != nil {
 		return r, err
 	}
-	exists, err := s.Store.Exists("repos", id+".git")
+	p, err := s.RepositoryPath(repo)
 	if err != nil {
 		return r, err
-	}
-	if exists {
-		return r, domain.E("conflict", "unregistered destination already exists: %s", p)
 	}
 	r.Items = append(r.Items, Item{Repository: id, Path: p, Outcome: "planned"})
 	if dry {
@@ -78,7 +83,7 @@ func (s *Service) AddRepositoryWithFormat(ctx context.Context, id, remote, forma
 	}
 	op := newOperation(s.Store.RootPath(), "repo.add", "")
 	op.Remote = remote
-	op.Steps = []Step{{Repository: id, State: "planned", RequestedRefFormat: format, OnDemandBranches: true}}
+	op.Steps = []Step{{Repository: id, Folder: folder, State: "planned", RequestedRefFormat: format, OnDemandBranches: true}}
 	if err := s.Journal.Save(op); err != nil {
 		return r, err
 	}
@@ -88,7 +93,9 @@ func (s *Service) AddRepositoryWithFormat(ctx context.Context, id, remote, forma
 func (s *Service) applyRepo(ctx context.Context, op *Operation) (Result, error) {
 	r := NewResult(op.Kind)
 	step := &op.Steps[0]
-	p, err := s.repoPath(step.Repository)
+	planned := domain.Repository{ID: step.Repository, Folder: step.Folder}
+	parts := folderParts("repos", step.Repository, step.Folder, ".git")
+	p, err := s.RepositoryPath(planned)
 	if err != nil {
 		return s.finish(op, r, err)
 	}
@@ -97,7 +104,7 @@ func (s *Service) applyRepo(ctx context.Context, op *Operation) (Result, error) 
 		return s.finish(op, r, err)
 	}
 	if repo, ok := c.Repositories[step.Repository]; ok {
-		if repo.Remotes["origin"] != op.Remote {
+		if repo.Remotes["origin"] != op.Remote || repo.Folder != step.Folder {
 			return s.finish(op, r, domain.E("conflict", "catalog registration changed"))
 		}
 		if _, err := s.checkRepository(ctx, repo); err != nil {
@@ -107,7 +114,13 @@ func (s *Service) applyRepo(ctx context.Context, op *Operation) (Result, error) 
 		r.Items = append(r.Items, Item{Repository: step.Repository, Path: p, Outcome: "unchanged"})
 		return s.finish(op, r, nil)
 	}
-	exists, err := s.Store.Exists("repos", step.Repository+".git")
+	if err := checkRepositoryFolder(c, planned); err != nil {
+		return s.finish(op, r, err)
+	}
+	if err := s.checkFolderEntries(parts); err != nil {
+		return s.finish(op, r, err)
+	}
+	exists, err := s.Store.Exists(parts...)
 	if err != nil {
 		return s.finish(op, r, err)
 	}
@@ -128,7 +141,7 @@ func (s *Service) applyRepo(ctx context.Context, op *Operation) (Result, error) 
 		}
 		if canPlan {
 			if !exists {
-				if err := s.Store.EnsureDir("repos"); err != nil {
+				if err := s.ensureFolderParent(parts); err != nil {
 					return s.finish(op, r, err)
 				}
 			}
@@ -150,7 +163,7 @@ func (s *Service) applyRepo(ctx context.Context, op *Operation) (Result, error) 
 	}
 	s.event(step.Repository, "running")
 	if !exists {
-		if err := s.Store.EnsureDir("repos"); err != nil {
+		if err := s.ensureFolderParent(parts); err != nil {
 			return s.finish(op, r, err)
 		}
 		if canPlan {
@@ -173,7 +186,7 @@ func (s *Service) applyRepo(ctx context.Context, op *Operation) (Result, error) 
 		return s.finish(op, r, err)
 	}
 	base, _ := s.Git.DefaultBase(ctx, p, "origin")
-	c.Repositories[step.Repository] = domain.Repository{ID: step.Repository, Remotes: map[string]string{"origin": op.Remote}, Base: base}
+	c.Repositories[step.Repository] = domain.Repository{ID: step.Repository, Folder: step.Folder, Remotes: map[string]string{"origin": op.Remote}, Base: base}
 	if err := s.Store.SaveCatalog(c, rev); err != nil {
 		return s.finish(op, r, err)
 	}

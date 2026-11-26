@@ -10,6 +10,7 @@ type DirectoryEntry struct {
 }
 
 type Repository struct {
+	Folder   string `json:"folder,omitempty"`
 	ID       string
 	Remotes  map[string]string
 	Base     string
@@ -30,6 +31,7 @@ type RetiredRepository struct {
 }
 
 type Mapping struct {
+	Folder     string `json:"folder,omitempty"`
 	CheckoutID string `json:",omitempty"`
 	Branch     string
 	Base       string

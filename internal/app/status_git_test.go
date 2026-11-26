@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -57,8 +58,11 @@ func TestStatusGitLaunchesAndEffectiveRemoteURLs(t *testing.T) {
 			}
 			// Count commands launched by the Git adapter, excluding any Git
 			// helpers launched internally (e.g. a configured file monitor).
-			if event.Event == "start" && len(event.Argv) >= 6 && event.Argv[1] == "--no-pager" && event.Argv[3] == "-C" {
-				counts[event.Argv[5]]++
+			if event.Event == "start" && len(event.Argv) >= 6 && event.Argv[1] == "--no-pager" && event.Argv[2] == "--no-optional-locks" {
+				// Platform and connection settings can add -c key=value pairs before -C.
+				if dirFlag := slices.Index(event.Argv, "-C"); dirFlag >= 3 && dirFlag+2 < len(event.Argv) {
+					counts[event.Argv[dirFlag+2]]++
+				}
 			}
 		}
 		want := map[string]int{"rev-parse": 2, "config": 1, "status": 1}

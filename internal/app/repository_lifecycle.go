@@ -12,7 +12,10 @@ func (s *Service) applyRepositoryLifecycle(ctx context.Context, op *Operation) (
 		return s.finish(op, r, domain.E("invalid", "repository lifecycle journal is incomplete"))
 	}
 	repo, step := *op.Repository, &op.Steps[0]
-	source, target := lifecycleParts(op.Kind, repo.ID, op.Retirement)
+	if err := domain.ValidateFolder(repo.ID, repo.Folder); err != nil {
+		return s.finish(op, r, err)
+	}
+	source, target := lifecycleParts(op.Kind, repo, op.Retirement)
 	from, err := s.Store.SafePath(source...)
 	if err != nil {
 		return s.finish(op, r, err)
@@ -120,6 +123,11 @@ func (s *Service) applyRepositoryLifecycle(ctx context.Context, op *Operation) (
 			return finish(domain.E("unavailable", "opaque directory moves are unavailable"))
 		}
 		s.event(repo.ID, "running")
+		if op.Kind == "repo.restore" {
+			if err := s.ensureFolderParent(target); err != nil {
+				return finish(err)
+			}
+		}
 		if err := mover.MoveDirectory(source, target); err != nil {
 			return finish(err)
 		}
@@ -132,6 +140,11 @@ func (s *Service) applyRepositoryLifecycle(ctx context.Context, op *Operation) (
 		}
 		if fingerprint != op.Fingerprint {
 			return finish(domain.E("conflict", "repository identity changed after rename"))
+		}
+	}
+	if op.Kind == "repo.retire" {
+		if err := s.cleanupFolderParent(source); err != nil {
+			return finish(err)
 		}
 	}
 	if !committed {

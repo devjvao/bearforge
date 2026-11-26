@@ -112,7 +112,7 @@ func (s *Service) Doctor(ctx context.Context, workspace string) (Result, error) 
 		}
 		d.record("workspace.directory", "", name, "", err, "inspect the directory and operations; do not recreate ambiguous paths automatically")
 		for id := range w.Repositories {
-			path, err := s.treePath(name, id)
+			path, err := s.treePath(name, id, w.Repositories[id].Folder)
 			if err == nil {
 				expected[filepath.Clean(path)] = true
 			}
@@ -172,7 +172,7 @@ func (s *Service) Doctor(ctx context.Context, workspace string) (Result, error) 
 			}
 			bare, err := s.checkRepository(ctx, catalog.Repositories[id])
 			if err != nil && ProblemFor(err).Code == "missing_store" {
-				bare, _ = s.repoPath(id)
+				bare, _ = s.RepositoryPath(catalog.Repositories[id])
 				d.record("repository.missing_store", id, "", bare, err, "review the affected workspace findings before considering repo reclone "+id)
 			} else {
 				d.record("repository.identity", id, "", bare, err, "inspect bare-directory and remote identity; no clone or fetch is performed")
@@ -232,19 +232,7 @@ func (s *Service) Doctor(ctx context.Context, workspace string) (Result, error) 
 		}
 	}
 	if hasReader {
-		entries, err := reader.ReadDirectory("repos")
-		d.record("repository.directory", "", "", "", err, "inspect the managed repositories directory")
-		for _, entry := range entries {
-			if entry.Link {
-				d.record("path.link", "", "", "", domain.E("unsafe_path", "repository entry %q is a link or reparse point", entry.Name), "inspect manually; managed repository paths cannot be links")
-				continue
-			}
-			if catalogErr == nil {
-				if _, ok := catalog.Repositories[strings.TrimSuffix(entry.Name, ".git")]; !ok || !strings.HasSuffix(entry.Name, ".git") || !entry.Directory {
-					d.record("repository.unregistered", "", "", "", domain.E("conflict", "unregistered repository destination %q", entry.Name), "inspect interrupted operations before registration or manual cleanup")
-				}
-			}
-		}
+		d.repositoryDirectory(s.Store, reader, catalog, catalogErr == nil)
 	}
 	if err := ctx.Err(); err != nil {
 		return d.result, err
@@ -255,4 +243,55 @@ func (s *Service) Doctor(ctx context.Context, workspace string) (Result, error) 
 	}
 	d.result.Outcome = "healthy"
 	return d.result, nil
+}
+
+// Inspect only the managed root and the project directories named in the
+// catalog. Never descend into a bare repository or an unrelated directory.
+func (d *doctorFindings) repositoryDirectory(store IntentStore, reader directoryReader, catalog domain.Catalog, checkCatalog bool) {
+	expected := map[string]bool{}
+	parents := map[string]bool{}
+	for id, repo := range catalog.Repositories {
+		relative := domain.FolderName(id, repo.Folder) + ".git"
+		expected[relative] = true
+		if parent, _, ok := strings.Cut(relative, "/"); ok {
+			parents[parent] = true
+		}
+	}
+	var inspect func(string)
+	inspect = func(parent string) {
+		parts := []string{"repos"}
+		if parent != "" {
+			parts = append(parts, parent)
+		}
+		entries, err := reader.ReadDirectory(parts...)
+		d.record("repository.directory", "", "", "", err, "inspect the managed repositories directory")
+		for _, entry := range entries {
+			path := entry.Name
+			if parent != "" {
+				path = parent + "/" + entry.Name
+			}
+			if entry.Link {
+				d.record("path.link", "", "", "", domain.E("unsafe_path", "repository entry %q is a link or reparse point", path), "inspect the managed path manually")
+				continue
+			}
+			if !checkCatalog {
+				continue
+			}
+			if parent == "" && entry.Directory && parents[path] {
+				inspect(path)
+				continue
+			}
+			if parent != "" && entry.Directory {
+				if token, ok := strings.CutPrefix(entry.Name, folderMarkerPrefix); ok && domain.ValidateID(token) == nil {
+					if owned, err := store.Exists(folderOwnershipRecord(parts, token)...); err == nil && owned {
+						continue
+					}
+				}
+			}
+			if !entry.Directory || !expected[path] {
+				d.record("repository.unregistered", "", "", "", domain.E("conflict", "unregistered repository destination %q", path), "inspect interrupted operations before registration or manual cleanup")
+			}
+		}
+	}
+	inspect("")
 }
