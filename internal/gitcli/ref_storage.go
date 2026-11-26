@@ -291,6 +291,15 @@ func (c *Client) PlanClone(ctx context.Context, remote, destination, requested s
 }
 
 func (c *Client) CloneWithFormat(ctx context.Context, remote, path, format string) error {
+	return c.cloneWithFormat(ctx, remote, path, format, true)
+}
+
+// CloneAllBranchesWithFormat replays the layout approved in a legacy journal.
+func (c *Client) CloneAllBranchesWithFormat(ctx context.Context, remote, path, format string) error {
+	return c.cloneWithFormat(ctx, remote, path, format, false)
+}
+
+func (c *Client) cloneWithFormat(ctx context.Context, remote, path, format string, onlyDefault bool) error {
 	if format != "files" && format != "reftable" {
 		return domain.E("invalid", "clone requires a selected files or reftable format")
 	}
@@ -300,6 +309,11 @@ func (c *Client) CloneWithFormat(ctx context.Context, remote, path, format strin
 	// Explicit flags override GIT_DEFAULT_REF_FORMAT as well as config. Older
 	// Git without ref-format supports only files; retain that compatibility.
 	args := []string{"-c", "init.defaultRefFormat=" + format, "clone", "--bare", "--no-local"}
+	if onlyDefault {
+		// Let clone negotiate the remote object format and establish ownership.
+		// Initialize fetches all tracking refs after installing the guarded refspec.
+		args = append(args, "--single-branch", "--no-tags")
+	}
 	if format == "reftable" {
 		args = append(args, "--ref-format=reftable")
 	} else {
@@ -322,7 +336,7 @@ func (c *Client) CloneWithFormat(ctx context.Context, remote, path, format strin
 	if actual != format {
 		return domain.E("conflict", "cloned reference format %s differs from planned %s", actual, format)
 	}
-	return c.Initialize(ctx, path)
+	return c.initialize(ctx, path, onlyDefault)
 }
 
 // fetchRemotes follows fetch --all's effective skipFetchAll/skipDefaultUpdate
@@ -563,6 +577,15 @@ func (c *Client) verifyFetchedRefs(ctx context.Context, path string, expected []
 // InitializeWithFormat is only for a verified, journal-owned interrupted clone.
 // The caller must hold the root mutation lock and stop external Git writers.
 func (c *Client) InitializeWithFormat(ctx context.Context, path, format string) error {
+	return c.initializeWithFormat(ctx, path, format, false)
+}
+
+// InitializeOnDemandWithFormat finishes a journal-owned default-branch bootstrap.
+func (c *Client) InitializeOnDemandWithFormat(ctx context.Context, path, format string) error {
+	return c.initializeWithFormat(ctx, path, format, true)
+}
+
+func (c *Client) initializeWithFormat(ctx context.Context, path, format string, onDemand bool) error {
 	if format != "files" && format != "reftable" {
 		return domain.E("invalid", "resume requires a selected files or reftable format")
 	}
@@ -578,7 +601,7 @@ func (c *Client) InitializeWithFormat(ctx context.Context, path, format string) 
 			return err
 		}
 	}
-	return c.Initialize(ctx, path)
+	return c.initialize(ctx, path, onDemand)
 }
 
 func (c *Client) refSnapshot(ctx context.Context, path string) (string, error) {
