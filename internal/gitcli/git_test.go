@@ -14,7 +14,12 @@ import (
 
 func fixture(t *testing.T) (*Client, string, string) {
 	t.Helper()
-	root := t.TempDir()
+	// Git records canonical paths in its worktree back-pointers. macOS may
+	// provide a temporary path beneath the /var symlink.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	seed := filepath.Join(root, "remote")
 	bare := filepath.Join(root, "api.git")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")

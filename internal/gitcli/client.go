@@ -261,6 +261,11 @@ func (c *Client) restoreCloneDefault(ctx context.Context, path string) (string, 
 func (c *Client) VerifyBare(ctx context.Context, path string) error {
 	b, err := c.Run(ctx, path, "rev-parse", "--is-bare-repository")
 	if err != nil {
+		if ctx.Err() == nil {
+			if _, statErr := os.Lstat(path); os.IsNotExist(statErr) {
+				return domain.E("missing_store", "shared repository %s is missing. Restore its original bare directory from backup to recover local history; repo reclone can replace an unused store from its remote", path)
+			}
+		}
 		return err
 	}
 	if strings.TrimSpace(string(b)) != "true" {

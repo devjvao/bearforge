@@ -49,6 +49,15 @@ func (c *Client) Worktrees(ctx context.Context, bare string) ([]domain.Worktree,
 }
 
 func (c *Client) VerifyCommon(ctx context.Context, path, bare string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(path); err != nil {
+		if os.IsNotExist(err) {
+			return domain.E("missing_worktree", "checkout %s is missing", path)
+		}
+		return err
+	}
 	b, err := c.Run(ctx, path, "rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel")
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
@@ -60,12 +69,6 @@ func (c *Client) VerifyCommon(ctx context.Context, path, bare string) error {
 		// independently in those cases, checking the common identity first.
 		if ctx.Err() != nil {
 			return ctx.Err()
-		}
-		// With no working directory both probes fail at Git's -C option.
-		if err != nil {
-			if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
-				return err
-			}
 		}
 		b, err = c.Run(ctx, path, "rev-parse", "--path-format=absolute", "--git-common-dir")
 		if err != nil {
@@ -227,12 +230,11 @@ func (c *Client) CheckRemoval(ctx context.Context, bare, path string) error {
 	return nil
 }
 
+// Clean porcelain status does not expose paused operations or autostashes.
+var operationStateNames = []string{"rebase-merge", "rebase-apply", "sequencer", "MERGE_HEAD", "MERGE_AUTOSTASH", "CHERRY_PICK_HEAD", "REVERT_HEAD"}
+
 func (c *Client) checkOperationState(ctx context.Context, path string) error {
-	// Clean porcelain status does not expose paused operations or autostashes.
-	for _, state := range []string{
-		"rebase-merge", "rebase-apply", "sequencer",
-		"MERGE_HEAD", "MERGE_AUTOSTASH", "CHERRY_PICK_HEAD", "REVERT_HEAD",
-	} {
+	for _, state := range operationStateNames {
 		b, err := c.Run(ctx, path, "rev-parse", "--path-format=absolute", "--git-path", state)
 		if err != nil {
 			return err
@@ -259,40 +261,58 @@ func (c *Client) PreserveHistory(ctx context.Context, bare, path, operation, rep
 	if err != nil {
 		return err
 	}
-	tips := append([]string{status.Head}, strings.Fields(string(b))...)
+	_, err = c.preserveTips(ctx, bare, operation, repo, status.Head, b)
+	return err
+}
+
+// Portable IDs cannot contain '%'. Use it for dots in otherwise invalid
+// components to preserve path lengths and existing, valid recovery refs.
+func recoveryRefPrefix(operation, repo string) string {
+	component := func(id string) string {
+		if strings.Contains(id, "..") || strings.HasSuffix(id, ".lock") {
+			return strings.ReplaceAll(id, ".", "%")
+		}
+		return id
+	}
+	return "bearforge/recovery/" + component(operation) + "/" + component(repo) + "/"
+}
+
+// A shared symbolic ref may resolve through the registration being removed.
+// Direct refs sort first because their symref field is empty.
+func (c *Client) hasDirectRecoveryRef(ctx context.Context, bare, match string) (bool, error) {
+	out, err := c.Run(ctx, bare, "--no-replace-objects", "for-each-ref", "--count=1", "--sort=symref",
+		"--format=%(if)%(symref)%(then)%(else)%(refname)%(end)", match)
+	return strings.TrimSpace(string(out)) != "", err
+}
+
+func (c *Client) preserveTips(ctx context.Context, bare, operation, repo, head string, reflog []byte) (map[string]bool, error) {
+	tips := append([]string{head}, strings.Fields(string(reflog))...)
 	seen := map[string]bool{}
 	for i, tip := range tips {
 		if tip == "" || seen[tip] {
 			continue
 		}
 		seen[tip] = true
-		refs, err := c.Run(ctx, bare, "for-each-ref", "--format=%(refname)", "--contains="+tip)
+		durable, err := c.hasDirectRecoveryRef(ctx, bare, "--contains="+tip)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if len(refs) > 0 {
+		if durable {
 			continue
 		}
-		name := fmt.Sprintf("bearforge/recovery/%s/%s/reflog-%d", operation, repo, i)
+		name := fmt.Sprintf("%sreflog-%d", recoveryRefPrefix(operation, repo), i)
 		exists, err := c.BranchExists(ctx, bare, name)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if exists {
-			got, err := c.Resolve(ctx, bare, "refs/heads/"+name)
-			if err != nil {
-				return err
-			}
-			if got != tip {
-				return domain.E("conflict", "recovery ref already exists with a different commit")
-			}
-			continue
+			return nil, domain.E("conflict", "recovery branch %s already exists without independently protecting commit %s", name, tip)
 		}
 		if _, err := c.Run(ctx, bare, "branch", "--no-track", name, tip); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return seen, nil
 }
 
 func (c *Client) Remove(ctx context.Context, bare, path string) error {

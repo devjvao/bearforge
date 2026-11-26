@@ -276,6 +276,11 @@ func (o *options) render(r app.Result) error {
 				return err
 			}
 		}
+		if advice := app.MissingRemovalAdvice(item.RemovalMode); item.Outcome == "planned" && advice != "" {
+			if _, err := fmt.Fprintf(o.out, "\t%s", advice); err != nil {
+				return err
+			}
+		}
 		if item.Execution != nil {
 			if _, err := fmt.Fprintf(o.out, "\texit=%d\tduration=%s", item.Execution.ExitCode, item.Execution.Duration); err != nil {
 				return err
@@ -333,6 +338,16 @@ func (o *options) confirm(ctx context.Context, plan app.Result) error {
 			}
 			if name == "" {
 				name = item.Check
+			}
+			if plan.Command == "repo.reclone" {
+				if err := o.confirmationText("%s\n", app.RecloneNotice); err != nil {
+					return err
+				}
+			}
+			if advice := app.MissingRemovalAdvice(item.RemovalMode); advice != "" {
+				if err := o.confirmationText("%s\n", advice); err != nil {
+					return err
+				}
 			}
 			if move, ok := plan.Data.(app.RepositoryPlan); ok {
 				if err := o.confirmationText("Move %s intact from %s to %s; local history is preserved and trash is never purged automatically\n", name, move.Source, move.Destination); err != nil {

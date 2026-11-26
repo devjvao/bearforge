@@ -186,7 +186,7 @@ func (s *Service) ImportRepositories(ctx context.Context, req ImportRequest) (Re
 		if err := s.importDestination(repo.ID); err != nil {
 			return r, err
 		}
-		if err := s.validateImportCredentials(ctx, repo, false); err != nil {
+		if err := s.validateTransferCredentials(ctx, importCredentialRequest(repo), false); err != nil {
 			return r, err
 		}
 		steps = append(steps, Step{Repository: repo.ID, ImportedRepository: &repo, State: "planned", RequestedRefFormat: req.RefFormat, OnDemandBranches: true})
@@ -548,8 +548,7 @@ func validateImportConnection(name string) error {
 	return nil
 }
 
-func (s *Service) validateImportCredentials(ctx context.Context, repo domain.Repository, allowRefresh bool) error {
-	req := importCredentialRequest(repo)
+func (s *Service) validateTransferCredentials(ctx context.Context, req domain.CredentialRequest, allowRefresh bool) error {
 	req.AllowRefresh = allowRefresh
 	if req.Connection == "" && req.TokenEnv == "" {
 		return ctx.Err()
@@ -561,9 +560,9 @@ func (s *Service) validateImportCredentials(ctx context.Context, repo domain.Rep
 	return err
 }
 
-func (s *Service) importGit(repo domain.Repository) (Git, error) {
-	if repo.Provider["transport"] == "https" && repo.Provider["token_env"] == "" && s.GitForConnection != nil {
-		return s.GitForConnection(importCredentialRequest(repo))
+func (s *Service) transferGit(req domain.CredentialRequest) (Git, error) {
+	if req.GitURL != "" && req.TokenEnv == "" && s.GitForConnection != nil {
+		return s.GitForConnection(req)
 	}
 	return s.Git, nil
 }
@@ -575,10 +574,13 @@ func importDurabilityFailure(r Result, err error) (Result, error) {
 }
 
 func (s *Service) transferImport(ctx context.Context, step *Step, path string, exists bool, checkpoint func(Step) error) error {
+	return s.transferClone(ctx, step, step.ImportedRepository.Remotes["origin"], path, exists, checkpoint)
+}
+
+func (s *Service) transferClone(ctx context.Context, step *Step, remote, path string, exists bool, checkpoint func(Step) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	remote := step.ImportedRepository.Remotes["origin"]
 	planner, canPlan := s.Git.(ClonePlanner)
 	if step.RefFormat == "" || (exists && step.CloneStage == "" && canPlan && step.RefFormat == "files" && step.RequestedRefFormat != "files") {
 		if canPlan {
@@ -622,12 +624,12 @@ func (s *Service) transferImport(ctx context.Context, step *Step, path string, e
 	return s.Git.Clone(ctx, remote, path)
 }
 
-func (s *Service) bindImport(ctx context.Context, repo domain.Repository, path string) error {
-	if repo.Provider["transport"] == "https" && repo.Provider["connection"] != "" && repo.Provider["token_env"] == "" {
+func (s *Service) bindTransferConnection(ctx context.Context, path string, req domain.CredentialRequest) error {
+	if req.GitURL != "" && req.Connection != "" && req.TokenEnv == "" {
 		if s.BindConnection == nil {
 			return domain.E("unavailable", "persistent Git connection binding is unavailable")
 		}
-		return s.BindConnection(ctx, path, importCredentialRequest(repo))
+		return s.BindConnection(ctx, path, req)
 	}
 	return nil
 }

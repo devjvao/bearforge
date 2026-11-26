@@ -175,21 +175,35 @@ func (s *Service) verifyRebindRepository(ctx context.Context, repo domain.Reposi
 }
 
 func (s *Service) rebindCredential(ctx context.Context, repo domain.Repository) (domain.CredentialRequest, error) {
-	if s.PRs == nil || s.Credentials == nil {
+	if s.Credentials == nil {
+		return domain.CredentialRequest{}, domain.E("unavailable", "repository credential scope verification is unavailable")
+	}
+	request, err := s.registeredCredentialRequest(repo)
+	if err != nil {
+		return request, err
+	}
+	_, err = s.Credentials.Resolve(ctx, request)
+	return request, err
+}
+
+// registeredCredentialRequest derives the same credential scope for both
+// rebinding and restoring repositories originally registered with repo add.
+func (s *Service) registeredCredentialRequest(repo domain.Repository) (domain.CredentialRequest, error) {
+	if s.PRs == nil {
 		return domain.CredentialRequest{}, domain.E("unavailable", "repository credential scope verification is unavailable")
 	}
 	origin := repo.Remotes["origin"]
+	if err := validateRepositoryRebindOrigin(origin); err != nil {
+		return domain.CredentialRequest{}, err
+	}
 	query, err := s.PRs.Resolve(repo, origin, "main")
 	if err != nil {
 		return domain.CredentialRequest{}, err
 	}
 	request := domain.CredentialRequest{Provider: query.Provider, Host: query.Host, APIURL: query.APIURL,
-		Repository: query.SourceRepository, Connection: repo.Provider["connection"], GrantID: repo.Provider["grant_id"]}
+		Repository: query.SourceRepository, Connection: repo.Provider["connection"], GrantID: repo.Provider["grant_id"], TokenEnv: repo.Provider["token_env"]}
 	if strings.HasPrefix(origin, "https://") {
 		request.GitURL = origin
-	}
-	if _, err := s.Credentials.Resolve(ctx, request); err != nil {
-		return request, err
 	}
 	return request, nil
 }

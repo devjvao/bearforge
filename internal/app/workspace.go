@@ -4,10 +4,9 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
-	"runtime"
-	"strings"
 
 	"github.com/devjvao/bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/pathmatch"
 )
 
 type AddRequest struct {
@@ -473,8 +472,5 @@ func (s *Service) applyAddStep(ctx context.Context, op *Operation, step *Step, w
 }
 
 func pathsEqual(a, b string) bool {
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
-	}
-	return filepath.Clean(a) == filepath.Clean(b)
+	return pathmatch.SameDirectoryEntries(filepath.Clean(a), filepath.Clean(b))
 }

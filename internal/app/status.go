@@ -125,6 +125,16 @@ func (s *Service) inspectStatus(ctx context.Context, item Item, catalog domain.C
 			bare, err = s.checkRepository(ctx, repo)
 			if err == nil {
 				err = s.Git.VerifyCommon(ctx, p, bare)
+				var failure *domain.Error
+				if errors.As(err, &failure) && failure.Code == "missing_worktree" {
+					observed, inspectErr := s.missingRemovalStep(ctx, bare, p, Step{Repository: item.Repository, Branch: item.ExpectedBranch})
+					if inspectErr != nil {
+						err = inspectErr
+					} else {
+						item.RemovalMode = observed.RemovalMode
+						err = domain.E("missing_worktree", "checkout %s is missing. %s Review with workspace remove-repo %s %s --dry-run", p, MissingRemovalAdvice(observed.RemovalMode), item.Workspace, item.Repository)
+					}
+				}
 			}
 		}
 	}
