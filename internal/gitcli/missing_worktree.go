@@ -65,7 +65,10 @@ func (c *Client) RegisteredWorktreeID(ctx context.Context, bare, path string) (s
 			return "", err
 		}
 	}
-	_, err = c.Run(ctx, bare, "--git-dir="+admin, "--work-tree="+bare, "diff", "--cached", "--quiet", "--no-ext-diff", "HEAD", "--")
+	if err := c.checkPrivateWorktreeRefs(ctx, bare, admin); err != nil {
+		return "", err
+	}
+	_, err = c.Run(ctx, bare, "--git-dir="+admin, "--work-tree="+bare, "diff", "--cached", "--quiet", "--no-ext-diff", "--ignore-submodules=none", "HEAD", "--")
 	if isExit(err, 1) {
 		return "", domain.E("unsafe_removal", "missing checkout %s has staged changes in its Git index; recover the index before removing the registration", path)
 	}
@@ -73,6 +76,62 @@ func (c *Client) RegisteredWorktreeID(ctx context.Context, bare, path string) (s
 		return "", err
 	}
 	return found, nil
+}
+
+// The shared repository does not retain this worktree's private refs or their
+// logs after Git removes its registration.
+func (c *Client) checkPrivateWorktreeRefs(ctx context.Context, bare, admin string) error {
+	refused := func(name string) error {
+		return domain.E("unsafe_removal", "private Git history remains in %s (%s); recover it before removing the registration", admin, name)
+	}
+	format, err := c.ReferenceFormat(ctx, bare)
+	if err != nil {
+		return err
+	}
+	if format == "files" {
+		// Git 2.40 lacks "reflog list", and for-each-ref omits dangling
+		// symbolic refs and orphaned logs. These directories are per-worktree.
+		for _, relative := range []string{"refs", "logs/refs"} {
+			root := filepath.Join(admin, relative)
+			err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+				if path == root && os.IsNotExist(err) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				if !entry.IsDir() {
+					return refused(path)
+				}
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	private := []string{"refs/worktree", "refs/bisect", "refs/rewritten"}
+	args := []string{"--git-dir=" + admin, "for-each-ref", "--count=1", "--format=%(refname)"}
+	refs, err := c.Run(ctx, bare, append(args, private...)...)
+	if err != nil {
+		return err
+	}
+	if name := strings.TrimSpace(string(refs)); name != "" {
+		return refused(name)
+	}
+	logs, err := c.Run(ctx, bare, "--git-dir="+admin, "reflog", "list")
+	if err != nil {
+		return err
+	}
+	for name := range strings.SplitSeq(string(logs), "\n") {
+		for _, prefix := range private {
+			if strings.HasPrefix(name, prefix+"/") {
+				return refused(name)
+			}
+		}
+	}
+	return nil
 }
 
 // ReleaseMissingWorktree is used only after a reviewed registration's working
