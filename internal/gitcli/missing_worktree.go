@@ -75,8 +75,10 @@ func (c *Client) inspectMissingRegistration(ctx context.Context, bare, path stri
 	if err != nil {
 		return "", nil, err
 	}
-	if err := c.checkPrivateWorktreeRefs(ctx, bare, admin, format); err != nil {
-		return "", nil, err
+	if format == "files" {
+		if err := checkPrivateFiles(admin); err != nil {
+			return "", nil, err
+		}
 	}
 	_, err = c.Run(ctx, bare, "--git-dir="+admin, "--work-tree="+bare, "diff", "--cached", "--quiet", "--no-ext-diff", "--ignore-submodules=none", "HEAD", "--")
 	if isExit(err, 1) {
@@ -92,75 +94,66 @@ func (c *Client) inspectMissingRegistration(ctx context.Context, bare, path stri
 	return found, tips, nil
 }
 
-// The shared repository does not retain this worktree's private refs or their
-// logs after Git removes its registration.
-func (c *Client) checkPrivateWorktreeRefs(ctx context.Context, bare, admin, format string) error {
-	refused := func(name string) error {
-		return domain.E("unsafe_removal", "private Git history remains in %s (%s); recover it before removing the registration", admin, name)
+// Unknown entries are left in place. In particular Git accepts arbitrary
+// one-level ref names that for-each-ref --include-root-refs never enumerates.
+func (c *Client) checkPrivateAdmin(ctx context.Context, bare, admin string) error {
+	entries, err := os.ReadDir(admin)
+	if err != nil {
+		return err
 	}
-	activeRoots := []string{"AUTO_MERGE", "BISECT_EXPECTED_REV", "MERGE_AUTOSTASH", "NOTES_MERGE_PARTIAL", "NOTES_MERGE_REF"}
-	active := func(ref string) bool {
-		return !strings.Contains(ref, "/") && ((strings.HasSuffix(ref, "_HEAD") && ref != "FETCH_HEAD" && ref != "ORIG_HEAD") || slices.Contains(activeRoots, ref))
-	}
-	if format == "files" {
-		entries, err := os.ReadDir(admin)
-		if err != nil {
-			return err
-		}
-		for _, entry := range entries {
-			if active(entry.Name()) {
-				return refused(entry.Name())
+	for _, entry := range entries {
+		name := entry.Name()
+		switch name {
+		case "HEAD", "FETCH_HEAD", "ORIG_HEAD", "index", "commondir", "gitdir":
+			if !entry.Type().IsRegular() {
+				return privateRefError(admin, name)
 			}
+		case "logs", "refs", "reftable":
+			if !entry.IsDir() {
+				return privateRefError(admin, name)
+			}
+		case "COMMIT_EDITMSG":
+			// This ordinary message file can itself be overwritten by update-ref.
+			_, err := c.Run(ctx, bare, "--git-dir="+admin, "show-ref", "--verify", "--quiet", name)
+			if !entry.Type().IsRegular() || err == nil {
+				return privateRefError(admin, name)
+			}
+			if !isExit(err, 1) {
+				return err
+			}
+		default:
+			return privateRefError(admin, name)
 		}
-		// Git 2.40 lacks "reflog list", and for-each-ref omits dangling
-		// symbolic refs and orphaned logs. These directories are per-worktree.
-		for _, relative := range []string{"refs", "logs"} {
-			root := filepath.Join(admin, relative)
-			err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-				if path == root && os.IsNotExist(err) {
-					return nil
-				}
-				if err != nil {
-					return err
-				}
-				if relative == "logs" && (path == filepath.Join(root, "HEAD") || path == filepath.Join(root, "ORIG_HEAD")) {
-					return nil
-				}
-				if !entry.IsDir() {
-					return refused(path)
-				}
+	}
+	return nil
+}
+
+func privateRefError(admin, ref string) error {
+	return domain.E("unsafe_removal", "private Git metadata remains in %s (%s); recover it before removing the registration", admin, ref)
+}
+
+// The files backend can retain dangling symbolic refs and orphaned logs
+// invisible to Git's ordinary ref listing.
+func checkPrivateFiles(admin string) error {
+	for _, relative := range []string{"refs", "logs"} {
+		root := filepath.Join(admin, relative)
+		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+			if path == root && os.IsNotExist(err) {
 				return nil
-			})
+			}
 			if err != nil {
 				return err
 			}
-		}
-		return nil
-	}
-	private := []string{"refs/worktree", "refs/bisect", "refs/rewritten"}
-	args := []string{"--git-dir=" + admin, "for-each-ref", "--include-root-refs", "--format=%(refname)", "*_HEAD"}
-	args = append(args, activeRoots...)
-	refs, err := c.Run(ctx, bare, append(args, private...)...)
-	if err != nil {
-		return err
-	}
-	for _, name := range strings.Fields(string(refs)) {
-		if active(name) || strings.HasPrefix(name, "refs/") {
-			return refused(name)
-		}
-	}
-	logs, err := c.Run(ctx, bare, "--git-dir="+admin, "reflog", "list")
-	if err != nil {
-		return err
-	}
-	for _, name := range strings.Fields(string(logs)) {
-		if active(name) {
-			return refused(name)
-		}
-		for _, prefix := range private {
-			if strings.HasPrefix(name, prefix+"/") {
-				return refused(name)
+			if relative == "logs" && (path == filepath.Join(root, "HEAD") || path == filepath.Join(root, "ORIG_HEAD")) {
+				return nil
 			}
+			if !entry.IsDir() {
+				return privateRefError(admin, path)
+			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
 	}
 	return nil
@@ -206,15 +199,15 @@ func (c *Client) ReleaseMissingWorktree(ctx context.Context, bare, path, id, bra
 	if err != nil {
 		return err
 	}
-	if err := c.preserveRootTips(ctx, bare, operation, repo, tips); err != nil {
-		return err
-	}
 	ref := "worktrees/" + id + "/HEAD"
 	log, err := c.Run(ctx, bare, "reflog", "show", "--format=%H", ref)
 	if err != nil {
 		return err
 	}
 	if err := c.preserveTips(ctx, bare, operation, repo, head, log); err != nil {
+		return err
+	}
+	if err := c.preserveRootTips(ctx, bare, operation, repo, tips); err != nil {
 		return err
 	}
 	current, err := check()
