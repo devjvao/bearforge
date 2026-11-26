@@ -96,7 +96,16 @@ func (c *Client) IsAncestor(ctx context.Context, bare, ancestor, descendant stri
 // worktree bisecting or rebasing the branch. A dry-run against this same store
 // presents the existing tip as both source and destination and writes no refs.
 func (c *Client) CheckBranchAvailable(ctx context.Context, bare, branch, old string) error {
-	_, err := c.Run(ctx, bare, "-c", "fetch.writeCommitGraph=false", "fetch", "--dry-run", "--no-auto-maintenance", "--no-write-fetch-head", "--no-prune", "--no-tags", "--no-recurse-submodules", "--refmap=", "--", ".", old+":refs/heads/"+branch)
+	// Git can rewrite even "." through url.*.insteadOf or remote configuration.
+	// Restrict the command-local file transport exception to the current store.
+	url, err := c.Run(ctx, bare, "ls-remote", "--get-url", "--", ".")
+	if err != nil {
+		return err
+	}
+	if strings.TrimRight(string(url), "\r\n") != "." {
+		return domain.E("conflict", "Git rewrites the local repository URL for the branch reservation check")
+	}
+	_, err = c.Run(ctx, bare, "-c", "protocol.file.allow=always", "-c", "fetch.writeCommitGraph=false", "fetch", "--dry-run", "--no-auto-maintenance", "--no-write-fetch-head", "--no-prune", "--no-tags", "--no-recurse-submodules", "--refmap=", "--", ".", old+":refs/heads/"+branch)
 	return err
 }
 
