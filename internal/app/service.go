@@ -97,7 +97,6 @@ type Operation struct {
 }
 
 type Step struct {
-	RemoteBranch               *RemoteBranchPlan      `json:"remote_branch,omitempty"`
 	RepositoryBefore           *domain.Repository     `json:"repository_before,omitempty"`
 	RepositoryAfter            *domain.Repository     `json:"repository_after,omitempty"`
 	ImportedRepository         *domain.Repository     `json:"imported_repository,omitempty"`
@@ -111,6 +110,7 @@ type Step struct {
 	Tracking                   string                 `json:"tracking,omitempty"`
 	Start                      string                 `json:"start,omitempty"`
 	Upstream                   string                 `json:"upstream,omitempty"`
+	RemoteBranch               *RemoteBranchPlan      `json:"remote_branch,omitempty"`
 	Create                     bool                   `json:"create"`
 	State                      string                 `json:"state"`
 	Error                      string                 `json:"error,omitempty"`
