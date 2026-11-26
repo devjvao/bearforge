@@ -307,6 +307,20 @@ func TestNestedRemoteBranchRemovalAndRecloneRecovery(t *testing.T) {
 		t.Fatalf("missing durable native stage: %+v %v", op, err)
 	}
 	locked.interruption = nil
+	receipt := filepath.Join(store.Root, ".bearforge", "staging", op.ID+".git", ".bearforge-clone-"+op.Steps[0].CloneStage)
+	movedReceipt := filepath.Join(t.TempDir(), "receipt")
+	if err := os.Rename(receipt, movedReceipt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Resume(ctx, result.OperationID); err == nil || app.ProblemFor(err).Code != "conflict" {
+		t.Fatalf("published a staged clone without its ownership receipt: %v", err)
+	}
+	if _, err := os.Stat(bare); !os.IsNotExist(err) {
+		t.Fatalf("unverified clone appeared at its destination: %v", err)
+	}
+	if err := os.Rename(movedReceipt, receipt); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := service.Resume(ctx, result.OperationID); err != nil {
 		t.Fatal(err)
 	}
