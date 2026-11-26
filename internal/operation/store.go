@@ -270,6 +270,9 @@ func valid(op *app.Operation, root string) error {
 				return domain.E("invalid", "invalid upstream in workspace branch plan")
 			}
 		}
+		if step.CompactCloneStage && step.CloneStage == "" {
+			return domain.E("invalid", "compact clone staging requires an ownership token")
+		}
 		if step.CloneStage != "" {
 			if !step.OnDemandBranches || (op.Kind != "repo.add" && op.Kind != "repo.import" && op.Kind != "repo.reclone") || len(step.CloneStage) != 26 || strings.Trim(step.CloneStage, "abcdefghijklmnopqrstuvwxyz234567") != "" {
 				return domain.E("invalid", "invalid clone staging token")

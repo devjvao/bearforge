@@ -9,7 +9,10 @@ import (
 	"testing"
 
 	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/config"
+	"github.com/devjvao/bearforge/internal/domain"
 	"github.com/devjvao/bearforge/internal/gitcli"
+	"github.com/devjvao/bearforge/internal/operation"
 )
 
 func TestResumeLegacyCloneLayout(t *testing.T) {
@@ -200,5 +203,80 @@ func TestWorkspaceAddsExistingRemoteBranchFromOnDemandClone(t *testing.T) {
 	}
 	if local, err := s.Git.BranchExists(ctx, bare, "unselected"); err != nil || local {
 		t.Fatalf("unselected branch became local: %v %v", local, err)
+	}
+}
+
+func TestDeepReclone(t *testing.T) {
+	s, _, remote := fixture(t)
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An ordinary 150-byte workspace root leaves room for Git's own files,
+	// but nesting both the attempt token and operation ID in staging can push
+	// Git for Windows over its separate GIT_DIR limit during index-pack.
+	store := config.New(filepath.Join(base, strings.Repeat("x", max(1, 150-len(base)-1))))
+	s = app.New(store, s.Git, operation.New(store))
+	catalog, rev, err := store.LoadCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const id = "api"
+	catalog.Repositories[id] = domain.Repository{ID: id, Folder: "team/api", Remotes: map[string]string{"origin": remote}}
+	if err := store.SaveCatalog(catalog, rev); err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	preview, err := s.RecloneRepository(ctx, id, true, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RecloneRepository(ctx, id, false, preview.PlanDigest); err != nil {
+		t.Fatal(err)
+	}
+	bare := filepath.Join(store.Root, "repos", "team", "api.git")
+	want, err := s.Git.Resolve(ctx, remote, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Git.Resolve(ctx, bare, "refs/heads/main"); err != nil || got != want {
+		t.Fatalf("reclone tip = %q, want %q, error %v", got, want, err)
+	}
+}
+
+func TestResumeRecordedCloneStageLayout(t *testing.T) {
+	s, store, remote := fixture(t)
+	const token = "abcdefghijklmnopqrstuvwxyz"
+	receipt := ".bearforge-clone-" + token
+	wrapper := filepath.Join(store.Root, "repos", receipt)
+	if err := os.MkdirAll(filepath.Join(wrapper, receipt), 0700); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(wrapper, "example.git")
+	ctx := t.Context()
+	if err := s.Git.(*gitcli.Client).CloneWithFormat(ctx, remote, source, "files"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(source, receipt), 0700); err != nil {
+		t.Fatal(err)
+	}
+	op := &app.Operation{Version: 1, ID: "recorded-stage", Root: store.Root, Kind: "repo.add", Remote: remote, State: "partial",
+		Steps: []app.Step{{Repository: "example", State: "started", OnDemandBranches: true, CloneStage: token, RefFormat: "files"}}}
+	if err := s.Journal.Save(op); err != nil {
+		t.Fatal(err)
+	}
+	// A ready, owned clone can be published even if the remote is gone.
+	if err := os.Rename(remote, filepath.Join(filepath.Dir(remote), "unavailable")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Resume(ctx, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(store.Root, "repos", "example.git")
+	if _, err := os.Stat(filepath.Join(target, receipt)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(wrapper); !os.IsNotExist(err) {
+		t.Fatalf("old staging wrapper still exists: %v", err)
 	}
 }
