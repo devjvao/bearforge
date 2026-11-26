@@ -48,7 +48,7 @@ func (c *Client) missingRootTips(ctx context.Context, bare, admin, format string
 		return nil, err
 	}
 	defer root.Close()
-	if err := c.checkPrivateAdmin(ctx, bare, admin); err != nil {
+	if err := c.checkPrivateAdmin(ctx, bare, root, format); err != nil {
 		return nil, err
 	}
 	var tips []string

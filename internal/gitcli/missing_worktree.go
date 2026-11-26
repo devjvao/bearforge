@@ -2,6 +2,7 @@ package gitcli
 
 import (
 	"context"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -75,11 +76,6 @@ func (c *Client) inspectMissingRegistration(ctx context.Context, bare, path stri
 	if err != nil {
 		return "", nil, err
 	}
-	if format == "files" {
-		if err := checkPrivateFiles(admin); err != nil {
-			return "", nil, err
-		}
-	}
 	_, err = c.Run(ctx, bare, "--git-dir="+admin, "--work-tree="+bare, "diff", "--cached", "--quiet", "--no-ext-diff", "--ignore-submodules=none", "HEAD", "--")
 	if isExit(err, 1) {
 		return "", nil, domain.E("unsafe_removal", "missing checkout %s has staged changes in its Git index; recover the index before removing the registration", path)
@@ -105,8 +101,9 @@ func (c *Client) inspectMissingRegistration(ctx context.Context, bare, path stri
 
 // Unknown entries are left in place. In particular Git accepts arbitrary
 // one-level ref names that for-each-ref --include-root-refs never enumerates.
-func (c *Client) checkPrivateAdmin(ctx context.Context, bare, admin string) error {
-	entries, err := os.ReadDir(admin)
+func (c *Client) checkPrivateAdmin(ctx context.Context, bare string, root *os.Root, format string) error {
+	admin := root.Name()
+	entries, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
 		return err
 	}
@@ -114,12 +111,22 @@ func (c *Client) checkPrivateAdmin(ctx context.Context, bare, admin string) erro
 		name := entry.Name()
 		switch name {
 		case "HEAD", "FETCH_HEAD", "ORIG_HEAD", "index", "commondir", "gitdir":
-			if !entry.Type().IsRegular() {
+			if !entry.Type().IsRegular() || (format == "reftable" && name == "ORIG_HEAD") {
 				return privateRefError(admin, name)
+			}
+			if format == "reftable" && name == "HEAD" {
+				if err := checkReftableStub(root, name, "ref: refs/heads/.invalid\n"); err != nil {
+					return err
+				}
 			}
 		case "logs", "refs", "reftable":
 			if !entry.IsDir() {
 				return privateRefError(admin, name)
+			}
+			if name != "reftable" || format == "files" {
+				if err := checkPrivateFiles(root, name, format); err != nil {
+					return err
+				}
 			}
 		case "COMMIT_EDITMSG":
 			// This ordinary message file can itself be overwritten by update-ref.
@@ -141,29 +148,27 @@ func privateRefError(admin, ref string) error {
 	return domain.E("unsafe_removal", "private Git metadata remains in %s (%s); recover it before removing the registration", admin, ref)
 }
 
-// The files backend can retain dangling symbolic refs and orphaned logs
-// invisible to Git's ordinary ref listing.
-func checkPrivateFiles(admin string) error {
-	for _, relative := range []string{"refs", "logs"} {
-		root := filepath.Join(admin, relative)
-		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-			if path == root && os.IsNotExist(err) {
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			if relative == "logs" && (path == filepath.Join(root, "HEAD") || path == filepath.Join(root, "ORIG_HEAD")) {
-				return nil
-			}
-			if !entry.IsDir() {
-				return privateRefError(admin, path)
-			}
-			return nil
-		})
-		if err != nil {
+// Loose refs and orphaned logs can be invisible to the active backend.
+// Permit the files history inspected by filesHistory and Git's reftable stub.
+func checkPrivateFiles(root *os.Root, name, format string) error {
+	return fs.WalkDir(root.FS(), name, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
 			return err
 		}
+		if format == "files" && (path == "logs/HEAD" || path == "logs/ORIG_HEAD") {
+			return nil
+		}
+		if format == "reftable" && path == "refs/heads" {
+			return checkReftableStub(root, path, "this repository uses the reftable format\n")
+		}
+		return privateRefError(root.Name(), path)
+	})
+}
+
+func checkReftableStub(root *os.Root, path, want string) error {
+	data, err := readPrivateFile(root, path, len(want))
+	if err != nil || string(data) != want {
+		return privateRefError(root.Name(), path)
 	}
 	return nil
 }
