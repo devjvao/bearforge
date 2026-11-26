@@ -12,6 +12,7 @@ require (
 	github.com/danieljoos/wincred v1.2.3
 	github.com/godbus/dbus/v5 v5.1.0
 	github.com/gofrs/flock v0.13.2
+	github.com/hanwen/reftable v1.0.0
 	github.com/spf13/cobra v1.10.2
 	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/sys v0.50.0
