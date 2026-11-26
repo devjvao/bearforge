@@ -229,7 +229,7 @@ Also reject effective `fetch.pruneTags=true` or `remote.<name>.pruneTags=true`, 
 
 New registrations copy the advertised default branch into the local branch namespace. The initial guarded fetch acquires every remote branch in `refs/remotes/origin/*` and all tags, including tags on disconnected history. The default local branch tracks its origin counterpart. Workspace add creates other local branches on demand.
 
-Existing repositories retain their local branches, commits and tracking configuration. A registration interrupted under the older all-branches layout resumes with its recorded policy. Ordinary sync updates remote-tracking refs and leaves local branch tips in place.
+Existing repositories retain their local branches, commits and tracking configuration. A registration interrupted under the older all-branches layout resumes with its recorded policy. Ordinary sync updates remote-tracking refs and leaves local branch tips in place. A reviewed workspace add can fast-forward an available local tracking branch that is behind its selected remote.
 
 Remote-default discovery uses `git ls-remote --symref <remote> HEAD` and, after fetch, `git remote set-head <remote> -a`. An explicit repository base wins. If there is no advertised default or the repository is empty, registration can succeed with “base unresolved”; normal provisioning requires an existing commit or an explicit later-supported orphan mode. Never assume every repository uses `main`. [Git remote documentation](https://git-scm.com/docs/git-remote)
 

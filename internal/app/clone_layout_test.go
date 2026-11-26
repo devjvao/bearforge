@@ -162,3 +162,43 @@ func TestResumeIncompleteDefaultBranchTransfer(t *testing.T) {
 		t.Fatalf("upstream=%q want=%q err=%v", upstream, oid, err)
 	}
 }
+
+func TestWorkspaceAddsExistingRemoteBranchFromOnDemandClone(t *testing.T) {
+	s, store, remote := fixture(t)
+	ctx := t.Context()
+	prGit(t, remote, "branch", "unselected")
+	prGit(t, remote, "switch", "-c", "feature")
+	prGit(t, remote, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "feature tip")
+	prGit(t, remote, "switch", "main")
+	if _, err := s.AddRepository(ctx, "api", remote, false); err != nil {
+		t.Fatal(err)
+	}
+	bare := filepath.Join(store.Root, "repos", "api.git")
+	if local, err := s.Git.BranchExists(ctx, bare, "feature"); err != nil || local {
+		t.Fatalf("unexpected initial local feature: %v %v", local, err)
+	}
+	want, err := s.Git.Resolve(ctx, bare, "refs/remotes/origin/feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateWorkspace(ctx, "review", "feature", false); err != nil {
+		t.Fatal(err)
+	}
+	req := addRequest("review", "api")
+	req.DryRun = true
+	plan, err := s.AddRepositories(ctx, req)
+	if err != nil || len(plan.Items) != 1 || plan.Items[0].Start != want || !plan.Items[0].CreateBranch || plan.Items[0].Tracking != "same-name" {
+		t.Fatalf("remote branch review: %+v %v", plan, err)
+	}
+	req.DryRun, req.ExpectedPlan = false, plan.PlanDigest
+	if _, err := s.AddRepositories(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	status, err := s.Git.Inspect(ctx, filepath.Join(store.Root, "review", "api"))
+	if err != nil || status.Detached || status.Branch != "feature" || status.Head != want || status.Upstream != "origin/feature" {
+		t.Fatalf("wrong workspace branch: %+v %v", status, err)
+	}
+	if local, err := s.Git.BranchExists(ctx, bare, "unselected"); err != nil || local {
+		t.Fatalf("unselected branch became local: %v %v", local, err)
+	}
+}
