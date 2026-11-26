@@ -63,7 +63,7 @@ func (m dashboardModel) addFooter() []string {
 	first, second := "Esc back | q quit", "Ctrl-C cancel"
 	switch run.phase {
 	case addPicking:
-		first, second = "Space select | / filter | p parent | d folder", "Enter preview | Esc back | q quit"
+		first, second = "Space select | / filter | p parent | d folder | o offline", "Enter preview | Esc back | q quit"
 		if run.folderID != "" {
 			first, second = "Enter save | Esc cancel", "Ctrl-U clear"
 		} else if run.editing {
@@ -123,6 +123,9 @@ func (m dashboardModel) addPickerLines(height int) []string {
 func (m dashboardModel) addPickerIntroduction() []string {
 	run := m.addRun
 	lines := []string{m.styles.muted.Render("Branch default: " + displayText(run.choices.DefaultBranch))}
+	if run.offline {
+		lines = append(lines, "Branch selection: cached (offline)")
+	}
 	parentSetting := "on"
 	if run.flat {
 		parentSetting = "off"
@@ -170,8 +173,14 @@ func (m dashboardModel) addContent() []string {
 			return []string{m.styles.bad.Render("Error: " + displayText(run.err.Error())), "Press r to preview again, or Escape to change the selection."}
 		}
 		lines := []string{"Review all destinations and branch choices below.", "Press y to add these repositories; Escape returns to selection."}
+		if run.request.Offline {
+			lines = append(lines, "Branch selection: cached (offline)")
+		}
 		for _, item := range run.preview.Items {
 			action := "reuse existing branch"
+			if item.AdvanceFrom != "" {
+				action = "fast-forward from " + displayText(item.AdvanceFrom)
+			}
 			if item.CreateBranch {
 				action = "create branch"
 			}

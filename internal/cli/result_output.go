@@ -127,6 +127,9 @@ func (o *options) renderHumanResult(r app.Result, terminal bool) error {
 				if item.Tracking != "" {
 					values = append(values, "tracking="+item.Tracking)
 				}
+				if item.AdvanceFrom != "" {
+					values = append(values, "fast-forward from "+item.AdvanceFrom)
+				}
 				if item.CreateBranch {
 					values = append(values, "new branch")
 				}

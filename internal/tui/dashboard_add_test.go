@@ -94,6 +94,23 @@ func reviewAdd(t *testing.T, m dashboardModel) dashboardModel {
 	return updated.(dashboardModel)
 }
 
+func TestDashboardAddOfflineChoiceSurvivesReview(t *testing.T) {
+	m := selectAddRepositories(t, addDashboard(t, func(_ context.Context, req app.AddRequest, _ func(app.Event)) (app.Result, error) {
+		if !req.Offline {
+			t.Error("cached selection lost")
+		}
+		return addPreview(req), nil
+	}))
+	m, _ = dashboardKey(m, 'o', "o")
+	m = reviewAdd(t, m)
+	if !strings.Contains(m.View().Content, "cached") {
+		t.Error("review hides offline branch selection")
+	}
+	m, cmd := dashboardKey(m, 'y', "y")
+	batch := cmd().(tea.BatchMsg)
+	_ = batch[0]()
+}
+
 func TestDashboardAddPickerKeepsSelectionAcrossFilters(t *testing.T) {
 	var requested app.AddRequest
 	m := openAddPicker(t, addDashboard(t, func(_ context.Context, req app.AddRequest, _ func(app.Event)) (app.Result, error) {

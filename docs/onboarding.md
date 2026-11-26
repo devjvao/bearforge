@@ -213,7 +213,9 @@ bearforge status audit-feature
 bearforge tui audit-feature
 ```
 
-Each workspace gets a separate worktree per member. Branches default to the workspace name. `workspace add` supports `--branch`, `--branch-map`, `--base` and `--track` when defaults are insufficient. Existing branches are reused only after safety checks; a branch already checked out elsewhere is refused.
+Each workspace gets a separate worktree per member. Branches default to the workspace name. `workspace add` supports `--branch`, `--branch-map`, `--base` and `--track` when defaults are insufficient. When a repository first joins the workspace, Bearforge looks up the requested branch on the selected remote. The preview pins its commit. A remote-only branch gets a local tracking branch at that commit. An available local branch tracking the same remote fast-forwards when behind and keeps its own commits when ahead. Diverged tips or a different upstream require a choice. Use `--track preserve` to keep the existing local branch, or select a different branch. A branch in use by another worktree stays there.
+
+Use `bearforge workspace add WORKSPACE REPO --offline` to use existing local tips and cached remote refs without contacting the server. An explicit `--base` also uses locally available refs. A failed online lookup stops the add. If the remote moves after preview, review the new plan. If an apply-time conflict left a partial operation, inspect it in Operations and stop tracking that operation before submitting the revised request.
 
 The dashboard offers provider import, workspace creation, repository selection, sync, pull-request lookup and recovery inspection. Mutation previews require `y`; Escape returns without executing. See [dashboard controls and behavior](dashboard.md).
 

@@ -262,6 +262,10 @@ func (c *Client) ValidateFetch(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
+	return c.validateFetchRemotes(ctx, path, remotes)
+}
+
+func (c *Client) validateFetchRemotes(ctx context.Context, path string, remotes []string) error {
 	keys := []string{"fetch.pruneTags"}
 	for _, remote := range remotes {
 		if err := domain.ValidateRemoteName(remote); err != nil {

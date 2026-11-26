@@ -35,6 +35,12 @@ type Git interface {
 	VerifyBare(context.Context, string) error
 	Config(context.Context, string, string) (string, error)
 	Fetch(context.Context, string) error
+	AdvertisedBranch(context.Context, string, string, string) (string, error)
+	FetchBranch(context.Context, string, string, string, string) error
+	HasCommit(context.Context, string, string) (bool, error)
+	IsAncestor(context.Context, string, string, string) (bool, error)
+	CheckBranchAvailable(context.Context, string, string, string) error
+	AdvanceBranch(context.Context, string, string, string, string) error
 	Resolve(context.Context, string, string) (string, error)
 	BranchExists(context.Context, string, string) (bool, error)
 	RefExists(context.Context, string, string) (bool, error)
@@ -108,6 +114,7 @@ type Step struct {
 	Tracking                   string                 `json:"tracking,omitempty"`
 	Start                      string                 `json:"start,omitempty"`
 	Upstream                   string                 `json:"upstream,omitempty"`
+	RemoteBranch               *RemoteBranchPlan      `json:"remote_branch,omitempty"`
 	Create                     bool                   `json:"create"`
 	State                      string                 `json:"state"`
 	Error                      string                 `json:"error,omitempty"`
@@ -127,6 +134,7 @@ type Item struct {
 	Workspace      string                         `json:"workspace,omitempty"`
 	Path           string                         `json:"path,omitempty"`
 	Branch         string                         `json:"branch,omitempty"`
+	AdvanceFrom    string                         `json:"advance_from,omitempty"`
 	ExpectedBranch string                         `json:"expected_branch,omitempty"`
 	Base           string                         `json:"base,omitempty"`
 	Start          string                         `json:"start,omitempty"`

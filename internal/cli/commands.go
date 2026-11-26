@@ -90,10 +90,11 @@ func addCommands(root *cobra.Command, o *options) {
 	var branch, base, track string
 	var overrides, folders map[string]string
 	var parent string
-	var flat bool
+	var flat, offline bool
 	add := command(workspace, "add WORKSPACE REPO...", "Materialize repositories as worktrees", cobra.MinimumNArgs(2), true, true, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
-		return s.AddRepositories(ctx, app.AddRequest{Workspace: a[0], Repositories: a[1:], Branch: branch, Base: base, Tracking: track, BranchMap: overrides, Folders: folders, Flat: flat, Parent: parent, DryRun: o.dry})
+		return s.AddRepositories(ctx, app.AddRequest{Workspace: a[0], Repositories: a[1:], Branch: branch, Base: base, Tracking: track, BranchMap: overrides, Folders: folders, Offline: offline, Flat: flat, Parent: parent, DryRun: o.dry})
 	})
+	add.Flags().BoolVar(&offline, "offline", false, "Use local branches and cached remote refs without contacting the server")
 	add.Flags().StringVar(&branch, "branch", "", "Branch for selected repositories")
 	add.Flags().BoolVar(&flat, "flat", false, "Place worktrees directly inside the workspace")
 	add.Flags().StringVar(&parent, "parent", "", "Place worktrees under this parent folder")

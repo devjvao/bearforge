@@ -32,6 +32,7 @@ const (
 )
 
 type dashboardAdd struct {
+	offline              bool
 	flat                 bool
 	folders              map[string]string
 	folderID, editFolder string
@@ -112,7 +113,7 @@ func (m dashboardModel) previewAdd() (tea.Model, tea.Cmd) {
 		m.addRun.err = errors.New("select at least one repository with Space")
 		return m, nil
 	}
-	req := app.AddRequest{Workspace: m.addRun.workspace, Repositories: names, DryRun: true, Flat: m.addRun.flat, Folders: maps.Clone(m.addRun.folders)}
+	req := app.AddRequest{Workspace: m.addRun.workspace, Repositories: names, Offline: m.addRun.offline, DryRun: true, Flat: m.addRun.flat, Folders: maps.Clone(m.addRun.folders)}
 	m.addRun.request = req
 	m.addRun.phase, m.addRun.err, m.addRun.offset = addPlanning, nil, 0
 	m.addRun.preview = app.Result{}
@@ -389,6 +390,8 @@ func (m dashboardModel) addKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				run.folderID = c.Repository
 				run.editFolder = run.addFolder(c)
 			}
+		case "o":
+			run.offline = !run.offline
 		case "/":
 			run.editing = true
 		case "enter":

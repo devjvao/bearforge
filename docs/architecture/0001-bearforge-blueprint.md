@@ -226,7 +226,7 @@ Configure the fetch destination only under `refs/remotes/<remote>/`; reject mirr
 
 Also reject effective `fetch.pruneTags=true` or `remote.<name>.pruneTags=true`, tag refspecs, and any prune destination outside that remote's tracking namespace. Ordinary fetch may acquire tags, but Bearforge sync must not prune local tags. Explain the conflicting setting and require an explicit configuration correction; never silently rewrite global configuration. Include configuration inherited from global files and conditional includes in this check.
 
-Bare cloning creates local branch heads too. Keep them; do not delete or reset them as initialization cleanup. Fetch will update tracking refs, not automatically advance those local branches. Therefore a pre-existing `main` may lag `origin/main`; show that fact rather than silently moving it.
+Bare cloning creates local branch heads too. Keep them; do not delete or reset them as initialization cleanup. Fetch will update tracking refs, not automatically advance those local branches. A pre-existing `main` may lag `origin/main` until a reviewed workspace add fast-forwards the available branch.
 
 Before publishing a newly cloned registration, initialize upstreams for the copied local branches that have matching origin tracking refs, using journaled `git branch --set-upstream-to=origin/<branch> <branch>` calls. This makes a later `main` workspace usable with ordinary pull/status without resetting commits. This initialization applies only to branches proven to belong to that fresh clone operation; adopted repositories and later-created feature branches retain their own tracking policy.
 
@@ -241,8 +241,8 @@ Resolve the desired branch from the repository override, workspace default, or w
 1. If the destination is already the expected registered worktree, with the expected common repository and branch, return success without changing it.
 2. If the destination is occupied by anything else, stop. A dirty worktree on another branch is never “fixed” implicitly.
 3. Inspect all registered worktrees. If this branch is checked out elsewhere, report that path; require another branch name or explicitly requested detached mode. Never bypass this with Git's force option.
-4. If the local branch exists and is available, attach it unchanged, preserving tracking. An explicit incompatible base does not reset it; report that the base only applies to new branches.
-5. If only the selected remote has a same-name branch, create a local branch from that remote ref. Default its upstream to that branch unless an explicit tracking policy says otherwise.
+4. On first provisioning, inspect the exact advertised same-name branch on the selected remote and pin the response to the review. For an available local branch tracking that remote, preserve an equal or ahead tip. Fast-forward a strictly behind tip after checking ancestry and atomically verifying its previously observed value. A diverged tip or different upstream requires an explicit local choice. `--track preserve` keeps the available local branch. `--offline` uses existing local and cached remote refs. An explicit base retains its local creation semantics.
+5. For a remote-only branch, apply verifies the advertisement, fetches the reviewed commit into the remote-tracking namespace and checks submodule policy before creating an attached local branch. Default its upstream to the same-name branch unless an explicit tracking policy says otherwise. A changed advertisement requires a fresh plan.
 6. Otherwise resolve the configured base to a commit OID, create the branch with `--no-track`, and attach the worktree. A base such as `origin/main` does not become the feature branch's upstream.
 
 ```sh
