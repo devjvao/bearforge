@@ -276,6 +276,11 @@ func (o *options) render(r app.Result) error {
 				return err
 			}
 		}
+		if advice := app.MissingRemovalAdvice(item.RemovalMode); item.Outcome == "planned" && advice != "" {
+			if _, err := fmt.Fprintf(o.out, "\t%s", advice); err != nil {
+				return err
+			}
+		}
 		if item.Execution != nil {
 			if _, err := fmt.Fprintf(o.out, "\texit=%d\tduration=%s", item.Execution.ExitCode, item.Execution.Duration); err != nil {
 				return err
