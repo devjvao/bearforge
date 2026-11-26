@@ -171,17 +171,38 @@ func TestRemovalLeavesUnownedFolderInPlace(t *testing.T) {
 	if err := os.WriteFile(file, []byte("mine"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	req := app.RemoveRequest{Workspace: "review", Whole: true, DryRun: true}
+	req := app.RemoveRequest{Workspace: "review", Repositories: []string{"api"}, DryRun: true}
 	plan, err := s.RemoveRepositories(ctx, req)
 	if err != nil || plan.Items[0].RetainedPath != path {
 		t.Fatalf("expected keep-in-place review: %+v %v", plan, err)
 	}
 	req.DryRun, req.ExpectedPlan = false, plan.PlanDigest
-	if _, err := s.RemoveRepositories(ctx, req); err != nil {
+	out, err := s.RemoveRepositories(ctx, req)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if got, err := os.ReadFile(file); err != nil || string(got) != "mine" {
 		t.Fatalf("unrelated file %q, %v", got, err)
+	}
+	// Simulate a restart after the mapping was saved but before the
+	// journal was marked complete. The kept directory is now user-owned.
+	journal, err := s.Journal.Load(out.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal.State, journal.Steps[0].State = "partial", "started"
+	if err := os.Rename(path, path+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(bare, bare+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Journal.Save(journal); err != nil {
+		t.Fatal(err)
+	}
+	retry, err := s.Resume(ctx, journal.ID)
+	if err != nil || len(retry.Items) != 1 || retry.Items[0].Outcome != "removed" || retry.Items[0].RetainedPath != "" {
+		t.Fatalf("failed to reconcile completed mapping removal: %+v %v", retry, err)
 	}
 }
 
