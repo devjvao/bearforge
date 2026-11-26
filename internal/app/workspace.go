@@ -17,6 +17,7 @@ type AddRequest struct {
 	BranchMap    map[string]string
 	Base         string
 	Tracking     string
+	Offline      bool
 	DryRun       bool
 	ExpectedPlan string
 }
@@ -138,6 +139,11 @@ func (s *Service) applyCreate(ctx context.Context, op *Operation) (Result, error
 
 func (s *Service) AddRepositories(ctx context.Context, req AddRequest) (Result, error) {
 	r := NewResult("workspace.add")
+	switch req.Tracking {
+	case "", "none", "same-name", "preserve":
+	default:
+		return r, domain.E("invalid", "invalid tracking policy %q", req.Tracking)
+	}
 	if len(req.Repositories) == 0 {
 		return r, domain.E("invalid", "select at least one repository")
 	}
@@ -174,7 +180,7 @@ func (s *Service) AddRepositories(ctx context.Context, req AddRequest) (Result, 
 		}
 		p, _ := s.treePath(req.Workspace, step.Repository)
 		r.Items = append(r.Items, Item{Repository: step.Repository, Workspace: req.Workspace, Path: p, Branch: step.Branch,
-			Base: step.Base, Start: step.Start, Tracking: step.Tracking, CreateBranch: step.Create, Outcome: outcome})
+			Base: step.Base, Start: step.Start, AdvanceFrom: step.advanceFrom(), Tracking: step.Tracking, CreateBranch: step.Create, Outcome: outcome})
 	}
 	if req.DryRun {
 		r.Outcome = "planned"
@@ -283,74 +289,8 @@ func (s *Service) planAdd(ctx context.Context, req AddRequest, w domain.Workspac
 			return nil, domain.E("conflict", "branch name %s conflicts with a tag", branch)
 		}
 		step := Step{Repository: id, Branch: branch, State: "planned", Create: !local}
-		tracking := req.Tracking
-		remoteRef := "refs/remotes/" + c.Remote + "/" + branch
-		remoteExists, err := s.Git.RefExists(ctx, bare, remoteRef)
-		if err != nil {
+		if err := s.planWorkspaceBranch(ctx, bare, c.Remote, repo, req, &step); err != nil {
 			return nil, err
-		}
-		if local {
-			step.Start, err = s.Git.Resolve(ctx, bare, "refs/heads/"+branch)
-			if err != nil {
-				return nil, err
-			}
-			if err := s.checkTracking(ctx, bare, branch, c.Remote, tracking); err != nil {
-				return nil, err
-			}
-			step.Tracking = "preserve"
-			step.Base = repo.Base
-		} else {
-			if tracking == "preserve" {
-				return nil, domain.E("invalid", "preserve tracking requires an existing branch")
-			}
-			base := req.Base
-			if base == "" && remoteExists {
-				base = remoteRef
-				if tracking == "" {
-					tracking = "same-name"
-				}
-			}
-			if base == "" {
-				base = repo.Base
-			}
-			if base == "" {
-				base, err = s.Git.DefaultBase(ctx, bare, c.Remote)
-				if err != nil {
-					return nil, err
-				}
-			}
-			step.Base = base
-			step.Start, err = s.Git.Resolve(ctx, bare, base)
-			if err != nil {
-				return nil, err
-			}
-			if tracking == "" {
-				tracking = "none"
-			}
-			if tracking != "none" && tracking != "same-name" {
-				return nil, domain.E("invalid", "invalid tracking policy")
-			}
-			if tracking == "same-name" {
-				if !remoteExists {
-					return nil, domain.E("conflict", "same-name remote branch does not exist")
-				}
-				remoteOID, err := s.Git.Resolve(ctx, bare, remoteRef)
-				if err != nil {
-					return nil, err
-				}
-				if remoteOID != step.Start {
-					return nil, domain.E("conflict", "base differs from requested tracking branch")
-				}
-				step.Upstream = c.Remote + "/" + branch
-			}
-			step.Tracking = tracking
-		}
-		hasSubmodules, err := s.Git.HasSubmodules(ctx, bare, step.Start)
-		if err != nil {
-			return nil, err
-		}
-		if hasSubmodules {
-			return nil, domain.E("conflict", "submodules are not supported for provisioning in this milestone")
 		}
 		steps = append(steps, step)
 	}
@@ -404,7 +344,7 @@ func (s *Service) applyAdd(ctx context.Context, op *Operation) (Result, error) {
 		s.event(step.Repository, "running")
 		err := s.applyAddStep(ctx, op, step, wasStarted)
 		item := Item{Repository: step.Repository, Workspace: op.Workspace, Branch: step.Branch, Outcome: "created",
-			Base: step.Base, Start: step.Start, Tracking: step.Tracking, CreateBranch: step.Create}
+			Base: step.Base, Start: step.Start, AdvanceFrom: step.advanceFrom(), Tracking: step.Tracking, CreateBranch: step.Create}
 		item.Path, _ = s.treePath(op.Workspace, step.Repository)
 		if err != nil {
 			step.Error = err.Error()
@@ -478,6 +418,11 @@ func (s *Service) applyAddStep(ctx context.Context, op *Operation, step *Step, w
 			return domain.E("conflict", "uncommitted membership has a changed HEAD; inspect before recovery")
 		}
 	} else {
+		if step.RemoteBranch != nil {
+			if err := s.prepareRemoteBranch(ctx, bare, repo, step); err != nil {
+				return err
+			}
+		}
 		local, err := s.Git.BranchExists(ctx, bare, step.Branch)
 		if err != nil {
 			return err
@@ -487,6 +432,15 @@ func (s *Service) applyAddStep(ctx context.Context, op *Operation, step *Step, w
 			oid, err := s.Git.Resolve(ctx, bare, "refs/heads/"+step.Branch)
 			if err != nil {
 				return err
+			}
+			if !wasStarted && step.advanceFrom() != "" && oid != step.RemoteBranch.LocalOID {
+				return domain.E("conflict", "local branch changed since planning")
+			}
+			if old := step.advanceFrom(); old != "" && oid == old {
+				if err := s.Git.AdvanceBranch(ctx, bare, step.Branch, old, step.Start); err != nil {
+					return err
+				}
+				oid = step.Start
 			}
 			if oid != step.Start {
 				return domain.E("conflict", "branch moved since planning")
@@ -500,6 +454,13 @@ func (s *Service) applyAddStep(ctx context.Context, op *Operation, step *Step, w
 		}
 		if err := s.Git.Add(ctx, bare, p, step.Branch, step.Start, create); err != nil {
 			return err
+		}
+		head, err := s.Git.Resolve(ctx, p, "HEAD")
+		if err != nil {
+			return err
+		}
+		if head != step.Start {
+			return domain.E("conflict", "checkout has a different commit than the reviewed branch")
 		}
 	}
 	if step.Upstream != "" {

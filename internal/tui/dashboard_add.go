@@ -42,6 +42,7 @@ type dashboardAdd struct {
 	index     int
 	filter    string
 	editing   bool
+	offline   bool
 	offset    int
 	request   app.AddRequest
 	preview   app.Result
@@ -109,7 +110,7 @@ func (m dashboardModel) previewAdd() (tea.Model, tea.Cmd) {
 		m.addRun.err = errors.New("select at least one repository with Space")
 		return m, nil
 	}
-	req := app.AddRequest{Workspace: m.addRun.workspace, Repositories: names, DryRun: true}
+	req := app.AddRequest{Workspace: m.addRun.workspace, Repositories: names, Offline: m.addRun.offline, DryRun: true}
 	m.addRun.request = req
 	m.addRun.phase, m.addRun.err, m.addRun.offset = addPlanning, nil, 0
 	m.addRun.preview = app.Result{}
@@ -340,6 +341,8 @@ func (m dashboardModel) addKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				run.selected[id] = !run.selected[id]
 				run.err = nil
 			}
+		case "o":
+			run.offline = !run.offline
 		case "/":
 			run.editing = true
 		case "enter":
