@@ -147,7 +147,7 @@ func (m dashboardModel) operationsContent() []string {
 		}
 		for _, item := range run.result.Items {
 			if item.RetainedPath != "" {
-				lines = append(lines, displayText(item.Repository)+" retained files: "+displayText(item.RetainedPath))
+				lines = append(lines, displayText(item.Repository)+" ? "+removalResultPath(item))
 			}
 			if item.Problem != nil {
 				lines = append(lines, displayText(item.Repository)+": "+displayText(item.Problem.Message))

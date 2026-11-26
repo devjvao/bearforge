@@ -77,8 +77,12 @@ func (s *Service) ReviewRemovalRecovery(ctx context.Context, id, digest string) 
 		if !required {
 			continue
 		}
-		if residualMode(updated.RemovalMode) && prior.RemovalDirectory == "" {
-			if err := selectResidualMode(&updated, mapping.CheckoutID, path, false); err != nil {
+		if residualMode(updated.RemovalMode) {
+			checkoutID := prior.RemovalDirectory
+			if !strongDirectoryIdentity(checkoutID) {
+				checkoutID = mapping.CheckoutID
+			}
+			if err := selectResidualMode(&updated, checkoutID, path, false); err != nil {
 				return r, err
 			}
 		}

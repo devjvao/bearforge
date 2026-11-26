@@ -26,8 +26,12 @@ type removalDirectoryStore interface {
 func keepsDirectory(mode string) bool { return mode == keepResidual || mode == keepRegisteredResidual }
 func residualMode(mode string) bool   { return mode == preserveResidual || keepsDirectory(mode) }
 
+func strongDirectoryIdentity(id string) bool {
+	return id != "" && !strings.HasPrefix(id, "weak-")
+}
+
 func selectResidualMode(step *Step, checkoutID, path string, moveUnverified bool) error {
-	if checkoutID == "" || strings.HasPrefix(checkoutID, "weak-") {
+	if !strongDirectoryIdentity(checkoutID) {
 		if !moveUnverified && step.WorktreeID != "" {
 			step.RemovalMode = keepRegisteredResidual
 		}
@@ -113,7 +117,7 @@ func (s *Service) residualStep(ctx context.Context, bare, path string, prior Ste
 	}
 	step.RemovalDirectory = id
 	step.RemovalMode = keepResidual
-	if step.WorktreeID != "" || prior.RemovalDirectory != "" {
+	if step.WorktreeID != "" {
 		step.RemovalMode = preserveResidual
 	}
 	return step, true, nil

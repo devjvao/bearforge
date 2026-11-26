@@ -412,3 +412,54 @@ func TestResidualMoveRechecksRegistrationBeforeMovingFiles(t *testing.T) {
 		t.Fatalf("unexpected recovery destination: %v", err)
 	}
 }
+
+type weakResidualStore struct{ *config.Store }
+
+const weakCheckoutID = "weak-1-2"
+
+func (s weakResidualStore) DirectoryIdentity(...string) (string, error) { return weakCheckoutID, nil }
+
+func TestReviewWeakResidualIdentityKeepsFilesInPlace(t *testing.T) {
+	s, store := missingFixture(t)
+	ctx := t.Context()
+	weak := weakResidualStore{store}
+	s.Store = weak
+	w, rev, err := store.LoadWorkspace("review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := w.Repositories["api"]
+	m.CheckoutID = weakCheckoutID
+	w.Repositories["api"] = m
+	if err := store.SaveWorkspace(w, rev); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(store.Root, "review", "api")
+	head, err := s.Git.Resolve(ctx, path, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := &app.Operation{Version: 1, ID: "weak-removal", Root: store.Root, Kind: "workspace.remove-repo", Workspace: "review", State: "partial",
+		Steps: []app.Step{{Repository: "api", Branch: "review", Start: head, RemovalDirectory: m.CheckoutID, State: "planned"}}}
+	if err := s.Journal.Save(op); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(path, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"keep_registered_files", "keep_files"} {
+		if mode == "keep_files" {
+			if err := os.Rename(path, path+".aside"); err != nil {
+				t.Fatal(err)
+			}
+			prGit(t, filepath.Join(store.Root, "repos", "api.git"), "worktree", "remove", "--", path)
+			if err := os.Rename(path+".aside", path); err != nil {
+				t.Fatal(err)
+			}
+		}
+		r, err := s.ReviewRemovalRecovery(ctx, op.ID, "")
+		if err != nil || len(r.Items) != 1 || r.Items[0].RemovalMode != mode || r.Items[0].RetainedPath != path {
+			t.Errorf("want %s in place, got %+v, %v", mode, r.Items, err)
+		}
+	}
+}
