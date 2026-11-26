@@ -87,6 +87,15 @@ func (c *Client) inspectMissingRegistration(ctx context.Context, bare, path stri
 	if err != nil {
 		return "", nil, err
 	}
+	// A resolved conflict can leave its original stages in the index even
+	// when the staged tree now matches HEAD.
+	undo, err := c.Run(ctx, bare, "--git-dir="+admin, "--work-tree="+bare, "ls-files", "--resolve-undo", "-z")
+	if err != nil {
+		return "", nil, err
+	}
+	if len(undo) != 0 {
+		return "", nil, domain.E("unsafe_removal", "missing checkout %s retains resolve-undo records in its Git index; recover the conflict stages before removing the registration", path)
+	}
 	tips, err := c.missingRootTips(ctx, bare, admin, format)
 	if err != nil {
 		return "", nil, err
