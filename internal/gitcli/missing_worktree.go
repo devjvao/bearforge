@@ -49,6 +49,13 @@ func (c *Client) RegisteredWorktreeID(ctx context.Context, bare, path string) (s
 		return "", domain.E("conflict", "cannot identify the Git registration for %s", path)
 	}
 	admin := filepath.Join(parent, found)
+	// Git skips its submodule checks when the working directory is gone.
+	// Deleting this registration would also delete its private object stores.
+	if _, err := os.Lstat(filepath.Join(admin, "modules")); err == nil {
+		return "", domain.E("unsafe_removal", "missing checkout %s retains submodule metadata at %s; recover its submodule repositories before removing the registration", path, filepath.Join(admin, "modules"))
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
 	// The missing directory can still have recoverable staged blobs and
 	// operation state in Git's private per-worktree metadata.
 	for _, name := range operationStateNames {
