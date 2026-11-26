@@ -2,7 +2,9 @@ package app_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/devjvao/bearforge/internal/app"
@@ -154,5 +156,65 @@ func TestProjectFolderConflictBetweenInstallations(t *testing.T) {
 	req.Repositories[1].Folder = "second/api"
 	if _, err := s.ImportRepositories(t.Context(), req); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGroupingFoldersRejectForeignBareRepositories(t *testing.T) {
+	s, store, _ := retirementFixture(t)
+	if _, err := s.CreateWorkspace(t.Context(), "review", "feature", false); err != nil {
+		t.Fatal(err)
+	}
+	for _, base := range []string{"repos", "review"} {
+		p := filepath.Join(store.Root, base, "team")
+		if output, err := exec.CommandContext(t.Context(), "git", "init", "--bare", p).CombinedOutput(); err != nil {
+			t.Fatalf("%s: %v", output, err)
+		}
+		if base == "repos" {
+			if _, err := s.AddRepositoryAt(t.Context(), "other", "https://example.com/team/other", "auto", "team/other", true); err == nil {
+				t.Error("clone preview accepted a bare repository as its parent")
+			}
+		} else {
+			if _, err := s.AddRepositories(t.Context(), app.AddRequest{Workspace: "review", Repositories: []string{"api"}, Parent: "team", DryRun: true}); err == nil {
+				t.Error("workspace preview accepted a bare repository as its parent")
+			}
+		}
+	}
+}
+
+func TestRemovalRetainsPreexistingParentMarker(t *testing.T) {
+	s, store, remote := fixture(t)
+	ctx := t.Context()
+	if _, err := s.AddRepositoryAt(ctx, "api", remote, "auto", "team/api", false); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Join(store.Root, "repos", "team"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var witness string
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".bearforge-parent-") {
+			witness = entry.Name()
+		}
+	}
+	if witness == "" {
+		t.Fatal("nested clone did not establish an ownership witness")
+	}
+	if _, err := s.CreateWorkspace(ctx, "review", "feature", false); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ parent, marker string }{{"shared", ".bearforge-parent"}, {"copied", witness}} {
+		if err := store.CreateDir("review", tc.parent, tc.marker); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.AddRepositories(ctx, app.AddRequest{Workspace: "review", Repositories: []string{"api"}, Parent: tc.parent, Base: "main"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.RemoveRepositories(ctx, app.RemoveRequest{Workspace: "review", Repositories: []string{"api"}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(store.Root, "review", tc.parent, tc.marker)); err != nil {
+			t.Fatalf("user-owned marker removed: %v", err)
+		}
 	}
 }

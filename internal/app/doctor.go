@@ -218,7 +218,7 @@ func (s *Service) Doctor(ctx context.Context, workspace string) (Result, error) 
 		}
 	}
 	if hasReader {
-		d.repositoryDirectory(reader, catalog, catalogErr == nil)
+		d.repositoryDirectory(s.Store, reader, catalog, catalogErr == nil)
 	}
 	if err := ctx.Err(); err != nil {
 		return d.result, err
@@ -233,7 +233,7 @@ func (s *Service) Doctor(ctx context.Context, workspace string) (Result, error) 
 
 // Inspect only the managed root and the project directories named in the
 // catalog. Never descend into a bare repository or an unrelated directory.
-func (d *doctorFindings) repositoryDirectory(reader directoryReader, catalog domain.Catalog, checkCatalog bool) {
+func (d *doctorFindings) repositoryDirectory(store IntentStore, reader directoryReader, catalog domain.Catalog, checkCatalog bool) {
 	expected := map[string]bool{}
 	parents := map[string]bool{}
 	for id, repo := range catalog.Repositories {
@@ -267,8 +267,12 @@ func (d *doctorFindings) repositoryDirectory(reader directoryReader, catalog dom
 				inspect(path)
 				continue
 			}
-			if parent != "" && entry.Directory && entry.Name == folderMarker {
-				continue
+			if parent != "" && entry.Directory {
+				if token, ok := strings.CutPrefix(entry.Name, folderMarkerPrefix); ok && domain.ValidateID(token) == nil {
+					if owned, err := store.Exists(folderOwnershipRecord(parts, token)...); err == nil && owned {
+						continue
+					}
+				}
 			}
 			if !entry.Directory || !expected[path] {
 				d.record("repository.unregistered", "", "", "", domain.E("conflict", "unregistered repository destination %q", path), "inspect interrupted operations before registration or manual cleanup")

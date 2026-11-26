@@ -320,6 +320,9 @@ func (s *Service) commitImportTask(ctx context.Context, op *Operation, result im
 			return fail(domain.E("conflict", "import identity %s is already registered or retired", repo.ID), false)
 		}
 	}
+	if err := checkRepositoryFolder(catalog, repo); err != nil {
+		return fail(err, false)
+	}
 	if err := s.bindImportStep(ctx, *step, item.Path); err != nil {
 		return fail(err, false)
 	}

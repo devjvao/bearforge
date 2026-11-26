@@ -34,7 +34,7 @@ Definitions live under `.bearforge`, bare repositories under `repos`, and worktr
 
 New Bitbucket Server and Data Center imports group folders by project key. For example, `TEST/Service1` gets the catalog ID `test-service1`, a bare clone at `repos/test/service1.git`, and a checkout at `review/test/service1` in the `review` workspace. The import picker also supports grouping by GitHub owner and Bitbucket Cloud project or workspace.
 
-For a local source or URL, `bearforge repo add test-service1 URL --folder test/service1` sets the same layout. Workspace add inherits the registered folder. Use `--flat` for `review/service1`, `--parent services` for `review/services/service1`, or `--folder-map test-service1=custom/service-one` for a specific destination. Use `--dry-run` to review the paths before adding worktrees. Existing catalogs and workspaces retain their recorded locations.
+For a local source or URL, `bearforge repo add test-service1 URL --folder test/service1` sets the same layout. Workspace add inherits the registered folder. Use `--flat` for `review/service1`, `--parent services` for `review/services/service1`, or `--folder-map test-service1=custom/service-one` for a specific destination. Use `--dry-run` to review the paths before adding worktrees. Existing catalogs and workspaces retain their recorded locations. When the last checkout leaves a project folder that Bearforge created, it checks the ownership marker and removes the empty folder. You can also select an existing parent, which Bearforge preserves.
 
 
 ## Configuration formats

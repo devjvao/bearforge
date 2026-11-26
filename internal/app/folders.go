@@ -1,6 +1,9 @@
 package app
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"strings"
 
@@ -35,6 +38,9 @@ func (s *Service) treePath(workspace, id, folder string) (string, error) {
 func (s *Service) checkFolderEntries(parts []string) error {
 	reader, ok := s.Store.(directoryReader)
 	if !ok {
+		if len(parts) > 2 {
+			return domain.E("unavailable", "project folders require directory inspection")
+		}
 		return nil
 	}
 	for i := 1; i < len(parts); i++ {
@@ -42,10 +48,10 @@ func (s *Service) checkFolderEntries(parts []string) error {
 		if err != nil {
 			return err
 		}
+		if i == 2 && gitParent(entries) {
+			return domain.E("conflict", "parent %q contains a Git checkout or administrative directory", parts[1])
+		}
 		for _, entry := range entries {
-			if i == 2 && strings.EqualFold(entry.Name, ".git") {
-				return domain.E("conflict", "parent %q contains a Git checkout", parts[1])
-			}
 			if !strings.EqualFold(entry.Name, parts[i]) {
 				continue
 			}
@@ -55,6 +61,28 @@ func (s *Service) checkFolderEntries(parts []string) error {
 		}
 	}
 	return nil
+}
+
+// A worktree has a .git entry. A bare repository is itself a Git directory:
+// HEAD and its object/ref stores live directly under the proposed parent.
+// A linked administrative directory can instead refer to a common directory.
+func gitParent(entries []domain.DirectoryEntry) bool {
+	var head, objects, refs, common bool
+	for _, entry := range entries {
+		switch strings.ToLower(entry.Name) {
+		case ".git":
+			return true
+		case "head":
+			head = true
+		case "objects":
+			objects = true
+		case "refs", "reftable":
+			refs = true
+		case "commondir":
+			common = true
+		}
+	}
+	return head && (common || objects && refs)
 }
 
 func folderConflict(a, b string) bool {
@@ -82,9 +110,15 @@ func checkRepositoryFolder(c domain.Catalog, repo domain.Repository) error {
 	return nil
 }
 
-// The marker is created only in a parent that Bearforge created exclusively.
-// A preexisting shared project folder and its contents remain user-owned.
-const folderMarker = ".bearforge-parent"
+// Each exclusively created parent gets a fresh witness inside it and an
+// independent ownership record under this root's private state. Neither the
+// marker name nor a marker copied from another folder authorizes cleanup.
+const folderMarkerPrefix = ".bearforge-parent-"
+
+func folderOwnershipRecord(parent []string, token string) []string {
+	digest := sha256.Sum256([]byte(parent[0] + "\x00" + parent[1] + "\x00" + token))
+	return []string{".bearforge", "state", "folder-owners", hex.EncodeToString(digest[:])}
+}
 
 func (s *Service) ensureFolderParent(parts []string) error {
 	parent := parts[:len(parts)-1]
@@ -97,7 +131,11 @@ func (s *Service) ensureFolderParent(parts []string) error {
 		}
 		return err
 	}
-	return s.Store.CreateDir(parent[0], parent[1], folderMarker)
+	token := strings.ToLower(rand.Text())
+	if err := s.Store.CreateDir(parent[0], parent[1], folderMarkerPrefix+token); err != nil {
+		return err
+	}
+	return s.Store.CreateDir(folderOwnershipRecord(parent, token)...)
 }
 
 func (s *Service) cleanupFolderParent(parts []string) error {
@@ -113,16 +151,22 @@ func (s *Service) cleanupFolderParent(parts []string) error {
 	if err != nil {
 		return err
 	}
-	if len(entries) != 1 || entries[0].Name != folderMarker || !entries[0].Directory || entries[0].Link {
+	if len(entries) != 1 || !entries[0].Directory || entries[0].Link {
 		return nil
 	}
-	marker := []string{parent[0], parent[1], folderMarker}
-	contents, err := reader.ReadDirectory(marker...)
-	if err != nil {
+	token, ok := strings.CutPrefix(entries[0].Name, folderMarkerPrefix)
+	if !ok || domain.ValidateID(token) != nil {
+		return nil
+	}
+	record := folderOwnershipRecord(parent, token)
+	owned, err := s.Store.Exists(record...)
+	if err != nil || !owned {
 		return err
 	}
-	if len(contents) > 0 {
-		return nil
+	marker := []string{parent[0], parent[1], entries[0].Name}
+	contents, err := reader.ReadDirectory(marker...)
+	if err != nil || len(contents) > 0 {
+		return err
 	}
 	if err := s.Store.RemoveEmpty(marker...); err != nil && !os.IsNotExist(err) {
 		return err
@@ -134,7 +178,7 @@ func (s *Service) cleanupFolderParent(parts []string) error {
 			return err
 		}
 	}
-	return nil
+	return s.Store.RemoveEmpty(record...)
 }
 
 func (req AddRequest) worktreeFolder(id, registeredFolder, mappedFolder string, mapped bool) (string, error) {
