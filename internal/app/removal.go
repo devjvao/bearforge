@@ -9,11 +9,12 @@ import (
 )
 
 type RemoveRequest struct {
-	Workspace    string
-	Repositories []string
-	Whole        bool
-	DryRun       bool
-	ExpectedPlan string
+	MoveUnverified bool
+	Workspace      string
+	Repositories   []string
+	Whole          bool
+	DryRun         bool
+	ExpectedPlan   string
 }
 
 func (s *Service) RemoveRepositories(ctx context.Context, req RemoveRequest) (Result, error) {
@@ -74,18 +75,36 @@ func (s *Service) RemoveRepositories(ctx context.Context, req RemoveRequest) (Re
 			if err != nil {
 				return r, err
 			}
-		} else {
-			if err := s.Git.CheckRemoval(ctx, bare, path); err != nil {
+		} else if checkErr := s.Git.CheckRemoval(ctx, bare, path); checkErr != nil {
+			var residual bool
+			step, residual, err = s.residualStep(ctx, bare, path, step)
+			if err != nil {
 				return r, err
 			}
+			if !residual {
+				return r, checkErr
+			}
+			if err := selectResidualMode(&step, m.CheckoutID, path, req.MoveUnverified); err != nil {
+				return r, err
+			}
+			if err := s.checkRecoveryTarget(w.Name, path, step); err != nil {
+				return r, err
+			}
+		} else {
 			status, err := s.Git.Inspect(ctx, path)
 			if err != nil {
 				return r, err
 			}
 			step.Start, step.Branch = status.Head, status.Branch
+			if _, ok := s.Store.(removalDirectoryStore); ok {
+				step.RemovalDirectory, err = s.removalDirectory(path)
+				if err != nil {
+					return r, err
+				}
+			}
 		}
 		steps = append(steps, step)
-		r.Items = append(r.Items, Item{Repository: id, Workspace: w.Name, Path: path, Branch: step.Branch, Base: step.Base, Start: step.Start, RemovalMode: step.RemovalMode, Outcome: "planned"})
+		r.Items = append(r.Items, Item{Repository: id, Workspace: w.Name, Path: path, Branch: step.Branch, Base: step.Base, Start: step.Start, RemovalMode: step.RemovalMode, RetainedPath: s.retainedPath(w.Name, path, step), Outcome: "planned"})
 	}
 	if req.Whole {
 		path, err := s.Store.SafePath(w.Name)
@@ -163,7 +182,17 @@ func (s *Service) applyRemove(ctx context.Context, op *Operation) (Result, error
 		if err != nil {
 			return finish(err)
 		}
-		if step.RemovalMode == "missing" || step.RemovalMode == "missing_registered" {
+		_, mapped := w.Repositories[step.Repository]
+		if step.State == "succeeded" && mapped {
+			return finish(domain.E("conflict", "checkout mapping for %s reappeared", step.Repository))
+		}
+		if keepsDirectory(step.RemovalMode) && wasStarted && !mapped {
+			// The manifest update was durable. The user may have moved their files since then.
+		} else if residualMode(step.RemovalMode) {
+			if err := s.applyResidual(ctx, op, step, bare, path, exists); err != nil {
+				return finish(err)
+			}
+		} else if step.RemovalMode == "missing" || step.RemovalMode == "missing_registered" {
 			if exists {
 				return finish(domain.E("conflict", "missing checkout %s has reappeared; review removal again", path))
 			}
@@ -173,6 +202,15 @@ func (s *Service) applyRemove(ctx context.Context, op *Operation) (Result, error
 		} else if exists {
 			if step.State == "succeeded" {
 				return finish(domain.E("conflict", "removed destination has reappeared"))
+			}
+			if step.RemovalDirectory != "" {
+				id, err := s.removalDirectory(path)
+				if err != nil {
+					return finish(err)
+				}
+				if id != step.RemovalDirectory {
+					return finish(domain.E("conflict", "checkout directory changed since removal was reviewed"))
+				}
 			}
 			status, err := s.Git.Inspect(ctx, path)
 			if err != nil {
@@ -216,7 +254,7 @@ func (s *Service) applyRemove(ctx context.Context, op *Operation) (Result, error
 		if err := s.Journal.Save(op); err != nil {
 			return finish(err)
 		}
-		r.Items = append(r.Items, Item{Repository: step.Repository, Workspace: op.Workspace, Path: path, Branch: step.Branch, Start: step.Start, Outcome: "removed"})
+		r.Items = append(r.Items, Item{Repository: step.Repository, Workspace: op.Workspace, Path: path, Branch: step.Branch, Start: step.Start, RemovalMode: step.RemovalMode, RetainedPath: s.retainedPath(op.Workspace, path, *step), Outcome: "removed"})
 		s.event(active, "succeeded")
 		active = ""
 	}
@@ -271,7 +309,16 @@ func (s *Service) finishRemoval(op *Operation, r Result, active string, err erro
 			outcome = "failed"
 		}
 		path, _ := s.treePath(op.Workspace, step.Repository)
-		item := Item{Repository: step.Repository, Workspace: op.Workspace, Path: path, Branch: step.Branch, Start: step.Start, Outcome: outcome}
+		item := Item{Repository: step.Repository, Workspace: op.Workspace, Path: path, Branch: step.Branch, Start: step.Start, RemovalMode: step.RemovalMode, Outcome: outcome}
+		if residualMode(step.RemovalMode) {
+			target := s.retainedPath(op.Workspace, path, step)
+			for _, candidate := range []string{target, path} {
+				if id, probeErr := s.removalDirectory(candidate); probeErr == nil && id == step.RemovalDirectory {
+					item.RetainedPath = candidate
+					break
+				}
+			}
+		}
 		if step.Repository == active {
 			item.Problem = ProblemFor(err)
 		}

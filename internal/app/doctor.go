@@ -133,6 +133,8 @@ func (s *Service) Doctor(ctx context.Context, workspace string) (Result, error) 
 			if item.Problem != nil {
 				check, remedy := "worktree.identity", "inspect paths and common-directory identity before recovery"
 				switch item.Problem.Code {
+				case "missing_gitfile":
+					check, remedy = "worktree.missing_gitfile", "review the removal preview to see where the remaining files will be retained"
 				case "missing_store":
 					check, remedy = "workspace.missing_store", "restore the original bare store before using this workspace"
 				case "missing_worktree":

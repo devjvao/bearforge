@@ -108,6 +108,9 @@ func (o *options) renderHumanResult(r app.Result, terminal bool) error {
 				if advice := app.MissingRemovalAdvice(item.RemovalMode); advice != "" {
 					values = append(values, advice)
 				}
+				if item.RetainedPath != "" {
+					values = append(values, "Retained files: "+item.RetainedPath)
+				}
 				if item.RefFormat != "" {
 					format := "ref-format=" + item.RefFormat
 					if item.RefFormat == "reftable" {

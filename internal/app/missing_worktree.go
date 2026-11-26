@@ -64,6 +64,12 @@ func (s *Service) releaseMissingWorktree(ctx context.Context, op *Operation, ste
 // MissingRemovalAdvice describes the action covered by a removal preview.
 func MissingRemovalAdvice(mode string) string {
 	switch mode {
+	case preserveResidual:
+		return "Move the remaining working files intact to their recovery directory and remove the workspace mapping."
+	case keepResidual:
+		return "Leave the remaining files in place and clear the workspace mapping."
+	case keepRegisteredResidual:
+		return "Leave the directory, its files and any surviving Git registration in place. Clear only the workspace mapping. If the checkout moved, run git worktree repair in its new location."
 	case "missing_registered":
 		return "Release this missing checkout's Git registration. If you moved it, use git worktree repair from its new location first."
 	case "missing":

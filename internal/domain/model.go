@@ -30,10 +30,11 @@ type RetiredRepository struct {
 }
 
 type Mapping struct {
-	Branch   string
-	Base     string
-	Tracking string
-	PRTarget string
+	CheckoutID string `json:",omitempty"`
+	Branch     string
+	Base       string
+	Tracking   string
+	PRTarget   string
 }
 
 type Workspace struct {
