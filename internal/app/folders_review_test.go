@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -24,6 +25,8 @@ func TestProjectParentDistinguishesGitFilesFromSiblingDirectories(t *testing.T) 
 	}
 }
 
+var errParentOwnership = errors.New("simulated ownership setup failure")
+
 type failedParentOwnership struct {
 	*config.Store
 	fail string
@@ -33,7 +36,7 @@ func (f failedParentOwnership) CreateDir(parts ...string) error {
 	marker := strings.HasPrefix(parts[len(parts)-1], folderMarkerPrefix)
 	record := len(parts) == 4 && parts[2] == "folder-owners"
 	if (marker && f.fail == "marker") || (record && f.fail == "record") {
-		return errors.New("simulated ownership setup failure")
+		return errParentOwnership
 	}
 	return f.Store.CreateDir(parts...)
 }
@@ -41,11 +44,21 @@ func (f failedParentOwnership) CreateDir(parts ...string) error {
 func TestProjectParentRollsBackFailedOwnershipSetup(t *testing.T) {
 	for _, failure := range []string{"record", "marker"} {
 		t.Run(failure, func(t *testing.T) {
-			store := &config.Store{Root: t.TempDir()}
+			// Select this test's physical root even when the temp directory is
+			// reached through macOS /var or a Windows junction.
+			tmp := t.TempDir()
+			if err := os.Mkdir(filepath.Join(tmp, ".bearforge"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			root, err := config.DiscoverRoot(tmp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store := config.New(root)
 			parts := []string{"review", "project", "service"}
 			s := &Service{Store: failedParentOwnership{store, failure}}
-			if err := s.ensureFolderParent(parts); err == nil {
-				t.Fatal("expected ownership error")
+			if err := s.ensureFolderParent(parts); !errors.Is(err, errParentOwnership) {
+				t.Fatalf("expected injected ownership failure, got %v", err)
 			}
 			if p, err := store.SafePath(parts[:2]...); err != nil {
 				t.Fatal(err)
