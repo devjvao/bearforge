@@ -104,14 +104,16 @@ func TestClonePreservesCaseDistinctRefs(t *testing.T) {
 			}
 			got := exactRefs(t, c, dest)
 			for name, oid := range want {
-				if got[name] != oid {
-					t.Errorf("exact ref %s = %q, want %s", name, got[name], oid)
-				}
 				if strings.HasPrefix(name, "refs/heads/") {
+					if got[name] != "" {
+						t.Errorf("unexpected local head %s", name)
+					}
 					tracking := "refs/remotes/origin/" + strings.TrimPrefix(name, "refs/heads/")
 					if got[tracking] != oid {
 						t.Errorf("exact tracking ref %s = %q, want %s", tracking, got[tracking], oid)
 					}
+				} else if got[name] != oid {
+					t.Errorf("exact ref %s = %q, want %s", name, got[name], oid)
 				}
 			}
 		})
@@ -130,14 +132,14 @@ func TestFreshClonePreservesBranchesOccupyingOriginHead(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := exactRefs(t, c, dest)
-			if got["refs/heads/"+branch] != want["refs/heads/"+branch] || got["refs/remotes/origin/"+branch] != want["refs/heads/"+branch] {
+			if got["refs/heads/"+branch] != "" || got["refs/remotes/origin/"+branch] != want["refs/heads/"+branch] {
 				t.Errorf("initialization replaced a real branch with synthetic origin/HEAD: %v", got)
 			}
 			if got["refs/remotes/origin/main"] != main {
 				t.Error("initialization changed the default tracking branch")
 			}
 			merge, err := c.Config(t.Context(), dest, "branch."+branch+".merge")
-			if err != nil || merge != "refs/heads/"+branch {
+			if err != nil || merge != "" {
 				t.Errorf("literal branch upstream = %q, %v", merge, err)
 			}
 			base, err := c.DefaultBase(t.Context(), dest, "origin")
@@ -172,7 +174,7 @@ func TestFreshReftableClonePreservesLiteralHeadBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := exactRefs(t, c, dest)
-	if got["refs/heads/HEAD"] != want["refs/heads/HEAD"] || got["refs/remotes/origin/HEAD"] != want["refs/heads/HEAD"] {
+	if got["refs/heads/HEAD"] != "" || got["refs/remotes/origin/HEAD"] != want["refs/heads/HEAD"] {
 		t.Fatalf("reftable initialization replaced literal HEAD ref: %v", got)
 	}
 	if err := c.Fetch(t.Context(), dest); err != nil {
@@ -346,9 +348,13 @@ func TestLaterFetchPreservesDistinctBranchOIDs(t *testing.T) {
 	if err := c.Clone(t.Context(), remote, dest); err != nil {
 		t.Fatal(err)
 	}
-	// Swap the advertised OIDs. Tracking identities must follow exact spelling,
-	// while retained local branches keep their original commits.
+	// Materialize both branches first. Later syncs must preserve local tips.
 	names := []string{"refs/heads/Feature", "refs/heads/feature"}
+	for _, name := range names {
+		if _, err := c.Run(t.Context(), dest, "update-ref", name, want[name]); err != nil {
+			t.Fatal(err)
+		}
+	}
 	updated := map[string]string{names[0]: want[names[1]], names[1]: want[names[0]]}
 	contents := updated[names[0]] + " " + names[0] + "\n" + updated[names[1]] + " " + names[1] + "\n"
 	if err := os.WriteFile(filepath.Join(remote, ".git", "packed-refs"), []byte(contents), 0600); err != nil {

@@ -212,6 +212,28 @@ func valid(op *app.Operation, root string) error {
 			}
 			importIDs[step.Repository] = true
 		}
+		if step.CloneStage != "" {
+			if !step.OnDemandBranches || (op.Kind != "repo.add" && op.Kind != "repo.import") || len(step.CloneStage) != 26 || strings.Trim(step.CloneStage, "abcdefghijklmnopqrstuvwxyz234567") != "" {
+				return domain.E("invalid", "invalid clone staging token")
+			}
+		}
+		if pin := step.RemoteBranch; pin != nil {
+			if op.Kind != "workspace.add" || step.Branch == "" || domain.ValidateRemoteName(pin.Remote) != nil || domain.ValidateURL(pin.URL) != nil {
+				return domain.E("invalid", "invalid remote identity in workspace branch plan")
+			}
+			if !domain.ValidCommitID(step.Start) || pin.OID != "" && !domain.ValidCommitID(pin.OID) {
+				return domain.E("invalid", "invalid commit in workspace branch plan")
+			}
+			if step.Create && pin.OID != "" && step.Start != pin.OID {
+				return domain.E("invalid", "workspace branch creation differs from its advertised commit")
+			}
+			if pin.LocalOID != "" && (!domain.ValidCommitID(pin.LocalOID) || step.Create || pin.OID == "" || step.Start != pin.OID && step.Start != pin.LocalOID) {
+				return domain.E("invalid", "invalid local tip in workspace branch plan")
+			}
+			if step.Upstream != "" && (pin.OID == "" || !step.Create || step.Upstream != pin.Remote+"/"+step.Branch) {
+				return domain.E("invalid", "invalid upstream in workspace branch plan")
+			}
+		}
 		if step.RefFormat != "" && step.RefFormat != "files" && step.RefFormat != "reftable" {
 			return domain.E("invalid", "invalid selected ref format")
 		}

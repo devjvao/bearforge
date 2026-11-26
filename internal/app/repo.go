@@ -78,7 +78,7 @@ func (s *Service) AddRepositoryWithFormat(ctx context.Context, id, remote, forma
 	}
 	op := newOperation(s.Store.RootPath(), "repo.add", "")
 	op.Remote = remote
-	op.Steps = []Step{{Repository: id, State: "planned", RequestedRefFormat: format}}
+	op.Steps = []Step{{Repository: id, State: "planned", RequestedRefFormat: format, OnDemandBranches: true}}
 	if err := s.Journal.Save(op); err != nil {
 		return r, err
 	}
@@ -117,12 +117,12 @@ func (s *Service) applyRepo(ctx context.Context, op *Operation) (Result, error) 
 	// Establish ownership before filesystem probes, but perform the existing
 	// origin/worktree checks before allowing any retained repository migration.
 	if exists {
-		if err := s.verifyInterruptedClone(ctx, p, op.Remote); err != nil {
+		if err := s.verifyPublishedClone(ctx, p, op.Remote, *step); err != nil {
 			return s.finish(op, r, err)
 		}
 	}
 	planner, canPlan := s.Git.(ClonePlanner)
-	if step.RefFormat == "" || (exists && canPlan && step.RefFormat == "files" && step.RequestedRefFormat != "files") {
+	if step.RefFormat == "" || (exists && step.CloneStage == "" && canPlan && step.RefFormat == "files" && step.RequestedRefFormat != "files") {
 		if !canPlan && step.RequestedRefFormat != "" && step.RequestedRefFormat != "auto" {
 			return s.finish(op, r, domain.E("unavailable", "Git adapter does not support explicit ref format selection"))
 		}
@@ -154,12 +154,14 @@ func (s *Service) applyRepo(ctx context.Context, op *Operation) (Result, error) 
 			return s.finish(op, r, err)
 		}
 		if canPlan {
-			err = planner.CloneWithFormat(ctx, op.Remote, p, step.RefFormat)
+			err = s.clonePlanned(ctx, planner, op.Remote, p, step, func(Step) error { return s.Journal.Save(op) })
 		} else {
 			err = s.Git.Clone(ctx, op.Remote, p)
 		}
-	} else {
-		if canPlan {
+	} else if step.CloneStage == "" {
+		if init, ok := planner.(stagedClonePlanner); ok && step.OnDemandBranches {
+			err = init.InitializeOnDemandWithFormat(ctx, p, step.RefFormat)
+		} else if canPlan {
 			err = planner.InitializeWithFormat(ctx, p, step.RefFormat)
 		} else {
 			err = s.Git.Initialize(ctx, p)

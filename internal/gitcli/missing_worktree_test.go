@@ -7,6 +7,50 @@ import (
 	"testing"
 )
 
+func TestMissingCheckoutRefusesUnsafeUnrelatedBackPointer(t *testing.T) {
+	c, bare, path := removalFixture(t)
+	ctx := t.Context()
+	unrelated := filepath.Join(filepath.Dir(path), "unrelated")
+	if err := c.Add(ctx, bare, unrelated, "unrelated", "HEAD", true); err != nil {
+		t.Fatal(err)
+	}
+	id, err := c.RegisteredWorktreeID(ctx, bare, unrelated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(bare, "worktrees", id, "gitdir")
+	original, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path, filepath.Join(t.TempDir(), "moved")); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("oversized", func(t *testing.T) {
+		if err := os.WriteFile(file, append(original, strings.Repeat(" ", 128<<10)...), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.RegisteredWorktreeID(ctx, bare, path); err == nil || !strings.Contains(err.Error(), "gitdir") {
+			t.Fatalf("accepted an oversized back-pointer on another registration: %v", err)
+		}
+	})
+	t.Run("symlink", func(t *testing.T) {
+		if err := os.Remove(file); err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(t.TempDir(), "pointer")
+		if err := os.WriteFile(target, original, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, file); err != nil {
+			t.Skipf("cannot create test symlink: %v", err)
+		}
+		if _, err := c.RegisteredWorktreeID(ctx, bare, path); err == nil || !strings.Contains(err.Error(), "gitdir") {
+			t.Fatalf("accepted a symlinked back-pointer on another registration: %v", err)
+		}
+	})
+}
+
 func TestMissingCheckoutProtectsIgnoredStagedGitlink(t *testing.T) {
 	c, bare, path := removalFixture(t)
 	ctx := t.Context()

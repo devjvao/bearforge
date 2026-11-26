@@ -151,6 +151,10 @@ func (c *Client) Clone(ctx context.Context, remote, path string) error {
 
 // Initialize is resumable only for a freshly cloned directory owned by a journal.
 func (c *Client) Initialize(ctx context.Context, path string) error {
+	return c.initialize(ctx, path, false)
+}
+
+func (c *Client) initialize(ctx context.Context, path string, onDemand bool) error {
 	if err := c.VerifyBare(ctx, path); err != nil {
 		return err
 	}
@@ -159,7 +163,18 @@ func (c *Client) Initialize(ctx context.Context, path string) error {
 			return err
 		}
 	}
-	if err := c.Fetch(ctx, path); err != nil {
+	fetcher := c
+	if onDemand {
+		// --no-tags keeps the bootstrap from publishing a partial snapshot of
+		// tags. Remove its persisted flag so later syncs use normal tag selection.
+		if _, err := c.Run(ctx, path, "config", "--local", "--unset-all", "remote.origin.tagOpt", "^--no-tags$"); err != nil && !isExit(err, 5) {
+			return err
+		}
+		initial := *c
+		initial.commandConfig = append(append([]string{}, c.commandConfig...), "-c", "remote.origin.tagOpt=--tags")
+		fetcher = &initial
+	}
+	if err := fetcher.Fetch(ctx, path); err != nil {
 		return err
 	}
 	// The optional default alias must never replace a real tracking branch.
@@ -178,7 +193,19 @@ func (c *Client) Initialize(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	for _, branch := range strings.Fields(string(b)) {
+	branches := strings.Fields(string(b))
+	if onDemand && len(branches) == 0 {
+		// An interrupted clone can have its origin configured before Git writes
+		// any local heads. Recover the advertised default from fetched objects.
+		branch, err := c.restoreCloneDefault(ctx, path)
+		if err != nil {
+			return err
+		}
+		if branch != "" {
+			branches = []string{branch}
+		}
+	}
+	for _, branch := range branches {
 		if _, err := c.Resolve(ctx, path, "refs/remotes/origin/"+branch); err != nil {
 			continue
 		}
@@ -191,6 +218,44 @@ func (c *Client) Initialize(ctx context.Context, path string) error {
 		}
 	}
 	return nil
+}
+
+func (c *Client) restoreCloneDefault(ctx context.Context, path string) (string, error) {
+	const prefix = "ref: refs/heads/"
+	out, err := c.Run(ctx, path, "ls-remote", "--symref", "--", "origin", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	for line := range strings.SplitSeq(string(out), "\n") {
+		name, ok := strings.CutPrefix(line, prefix)
+		if !ok {
+			continue
+		}
+		branch, ref, ok := strings.Cut(name, "\t")
+		if !ok || ref != "HEAD" {
+			continue
+		}
+		local := "refs/heads/" + branch
+		if _, err := c.Run(ctx, path, "check-ref-format", local); err != nil {
+			return "", err
+		}
+		tracking := "refs/remotes/origin/" + branch
+		if err := c.verifyFetchedRefs(ctx, path, []string{tracking}); err != nil {
+			return "", err
+		}
+		oid, err := c.Resolve(ctx, path, tracking)
+		if err != nil {
+			return "", err
+		}
+		if _, err := c.Run(ctx, path, "symbolic-ref", "HEAD", local); err != nil {
+			return "", err
+		}
+		if _, err := c.Run(ctx, path, "update-ref", "--no-deref", local, oid, ""); err != nil {
+			return "", err
+		}
+		return branch, nil
+	}
+	return "", nil // Empty repository or no advertised default branch.
 }
 
 func (c *Client) VerifyBare(ctx context.Context, path string) error {
@@ -262,6 +327,10 @@ func (c *Client) ValidateFetch(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
+	return c.validateFetchRemotes(ctx, path, remotes)
+}
+
+func (c *Client) validateFetchRemotes(ctx context.Context, path string, remotes []string) error {
 	keys := []string{"fetch.pruneTags"}
 	for _, remote := range remotes {
 		if err := domain.ValidateRemoteName(remote); err != nil {
