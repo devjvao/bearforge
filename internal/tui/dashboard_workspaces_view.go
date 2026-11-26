@@ -10,6 +10,13 @@ import (
 	"github.com/devjvao/bearforge/internal/app"
 )
 
+func removalResultPath(item app.Item) string {
+	if item.Outcome == "planned" {
+		return "Proposed recovery path: " + displayText(item.RetainedPath)
+	}
+	return "Retained files: " + displayText(item.RetainedPath)
+}
+
 func hasRetainedDirectory(plan app.Result) bool {
 	for _, item := range plan.Items {
 		if item.RemovalMode == "keep_registered_files" {
@@ -147,7 +154,7 @@ func (m dashboardModel) workspaceContent() []string {
 			}
 			for _, item := range run.result.Items {
 				if item.Repository == id && item.RetainedPath != "" {
-					lines = append(lines, "Retained files: "+displayText(item.RetainedPath))
+					lines = append(lines, removalResultPath(item))
 				}
 				if item.Repository == id && item.Problem != nil {
 					lines = append(lines, m.styles.bad.Render("Error: "+displayText(item.Problem.Message)))
