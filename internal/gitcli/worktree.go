@@ -49,6 +49,15 @@ func (c *Client) Worktrees(ctx context.Context, bare string) ([]domain.Worktree,
 }
 
 func (c *Client) VerifyCommon(ctx context.Context, path, bare string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(path); err != nil {
+		if os.IsNotExist(err) {
+			return domain.E("missing_worktree", "checkout %s is missing", path)
+		}
+		return err
+	}
 	b, err := c.Run(ctx, path, "rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel")
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
@@ -60,12 +69,6 @@ func (c *Client) VerifyCommon(ctx context.Context, path, bare string) error {
 		// independently in those cases, checking the common identity first.
 		if ctx.Err() != nil {
 			return ctx.Err()
-		}
-		// With no working directory both probes fail at Git's -C option.
-		if err != nil {
-			if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
-				return err
-			}
 		}
 		b, err = c.Run(ctx, path, "rev-parse", "--path-format=absolute", "--git-common-dir")
 		if err != nil {
@@ -227,12 +230,11 @@ func (c *Client) CheckRemoval(ctx context.Context, bare, path string) error {
 	return nil
 }
 
+// Clean porcelain status does not expose paused operations or autostashes.
+var operationStateNames = []string{"rebase-merge", "rebase-apply", "sequencer", "MERGE_HEAD", "MERGE_AUTOSTASH", "CHERRY_PICK_HEAD", "REVERT_HEAD"}
+
 func (c *Client) checkOperationState(ctx context.Context, path string) error {
-	// Clean porcelain status does not expose paused operations or autostashes.
-	for _, state := range []string{
-		"rebase-merge", "rebase-apply", "sequencer",
-		"MERGE_HEAD", "MERGE_AUTOSTASH", "CHERRY_PICK_HEAD", "REVERT_HEAD",
-	} {
+	for _, state := range operationStateNames {
 		b, err := c.Run(ctx, path, "rev-parse", "--path-format=absolute", "--git-path", state)
 		if err != nil {
 			return err
@@ -259,7 +261,11 @@ func (c *Client) PreserveHistory(ctx context.Context, bare, path, operation, rep
 	if err != nil {
 		return err
 	}
-	tips := append([]string{status.Head}, strings.Fields(string(b))...)
+	return c.preserveTips(ctx, bare, operation, repo, status.Head, b)
+}
+
+func (c *Client) preserveTips(ctx context.Context, bare, operation, repo, head string, reflog []byte) error {
+	tips := append([]string{head}, strings.Fields(string(reflog))...)
 	seen := map[string]bool{}
 	for i, tip := range tips {
 		if tip == "" || seen[tip] {

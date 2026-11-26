@@ -565,7 +565,14 @@ func (s *Service) applyAddStep(ctx context.Context, op *Operation, step *Step, w
 			return err
 		}
 	}
-	w.Repositories[step.Repository] = domain.Mapping{Folder: step.Folder, Branch: step.Branch, Base: step.Base, Tracking: step.Tracking}
+	mapping := domain.Mapping{Folder: step.Folder, Branch: step.Branch, Base: step.Base, Tracking: step.Tracking}
+	if _, ok := s.Store.(removalDirectoryStore); ok {
+		mapping.CheckoutID, err = s.removalDirectory(p)
+		if err != nil {
+			return err
+		}
+	}
+	w.Repositories[step.Repository] = mapping
 	return s.Store.SaveWorkspace(w, rev)
 }
 

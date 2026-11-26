@@ -101,11 +101,12 @@ type retiredDTO struct {
 	Fingerprint string  `yaml:"fingerprint"`
 }
 type mappingDTO struct {
-	Folder   string `yaml:"folder,omitempty"`
-	Branch   string `yaml:"branch"`
-	Base     string `yaml:"base,omitempty"`
-	Tracking string `yaml:"tracking,omitempty"`
-	PRTarget string `yaml:"pr_target,omitempty"`
+	Folder     string `yaml:"folder,omitempty"`
+	CheckoutID string `yaml:"checkout_id,omitempty"`
+	Branch     string `yaml:"branch"`
+	Base       string `yaml:"base,omitempty"`
+	Tracking   string `yaml:"tracking,omitempty"`
+	PRTarget   string `yaml:"pr_target,omitempty"`
 }
 type workspaceDTO struct {
 	Version       int                   `yaml:"schema_version"`
@@ -466,7 +467,7 @@ func (s *Store) LoadWorkspace(name string) (domain.Workspace, string, error) {
 		if m.Tracking != "" && m.Tracking != "none" && m.Tracking != "same-name" && m.Tracking != "preserve" {
 			return w, rev, domain.E("invalid", "invalid tracking policy")
 		}
-		w.Repositories[id] = domain.Mapping{Folder: m.Folder, Branch: m.Branch, Base: m.Base, Tracking: m.Tracking, PRTarget: m.PRTarget}
+		w.Repositories[id] = domain.Mapping{Folder: m.Folder, Branch: m.Branch, Base: m.Base, Tracking: m.Tracking, PRTarget: m.PRTarget, CheckoutID: m.CheckoutID}
 	}
 	return w, rev, nil
 }
@@ -481,7 +482,7 @@ func (s *Store) SaveWorkspace(w domain.Workspace, rev string) error {
 		if err := folders.reserve(id, m.Folder, ""); err != nil {
 			return err
 		}
-		d.Repositories[id] = mappingDTO{Folder: m.Folder, Branch: m.Branch, Base: m.Base, Tracking: m.Tracking, PRTarget: m.PRTarget}
+		d.Repositories[id] = mappingDTO{Folder: m.Folder, Branch: m.Branch, Base: m.Base, Tracking: m.Tracking, PRTarget: m.PRTarget, CheckoutID: m.CheckoutID}
 	}
 	parts := []string{".bearforge", "workspaces", w.Name + ".yaml"}
 	var previous *yaml.Node

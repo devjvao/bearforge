@@ -58,6 +58,10 @@ Confirmation replans under the mutation lock and checks the reviewed root, works
 
 Escape closes the picker before execution or returns from completed results to the dashboard. While adding, the dialog retains its captured workspace and selection, and sync is unavailable. `v` reopens the latest results.
 
+A missing checkout has a removal preview that identifies whether Git still holds its registration. If the checkout was moved, use Git's worktree repair before clearing the old registration.
+
+If a checkout loses its `.git` link, preview its removal to see where the remaining files will be kept. Bearforge moves an identified checkout intact under `.bearforge/trash/worktrees` and shows the recovery path. For older checkouts whose identity was never recorded, the default keeps the files and registration in place. Press **m** in the removal preview or pass `--move-unverified` to `workspace remove-repo` or `workspace remove` to review an explicit move. An unregistered, unidentified folder stays in place. If deletion stopped partway through, open the pending operation and review its recovery action before resuming.
+
 Press `d` in the repository pane to preview removing the selected member. Press `D` to preview removal of every member and the workspace definition, including members hidden by filters. Only `y` confirms. Dirty or unsafe worktrees are refused, branches/history are preserved, and unrelated workspace container files remain. A changed preview requires review again. See [safe lifecycle workflows](onboarding.md#diagnose-and-retire-safely).
 
 ## Sync and pull requests

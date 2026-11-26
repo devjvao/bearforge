@@ -33,6 +33,16 @@ func addCommands(root *cobra.Command, o *options) {
 		return s.AddRepositoryAt(ctx, a[0], a[1], refFormat, repoFolder, o.dry)
 	})
 	repoAdd.Flags().StringVar(&repoFolder, "folder", "", "Clone destination under repos (leaf or parent/leaf, without .git)")
+	command(repo, "reclone NAME", "Recover an unused missing bare repository from its registered remote", cobra.ExactArgs(1), true, false, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
+		plan, err := s.RecloneRepository(ctx, a[0], true, "")
+		if err != nil || o.dry {
+			return plan, err
+		}
+		if err := o.confirm(ctx, plan); err != nil {
+			return plan, err
+		}
+		return s.RecloneRepository(ctx, a[0], false, plan.PlanDigest)
+	})
 	repoAdd.Flags().StringVar(&refFormat, "ref-format", "auto", "Reference storage: auto, files, reftable")
 	command(repo, "list", "List registered repositories", cobra.NoArgs, false, false, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
 		r := app.NewResult("repo.list")
@@ -145,8 +155,9 @@ func addCommands(root *cobra.Command, o *options) {
 			use = "remove WORKSPACE"
 			args = cobra.ExactArgs(1)
 		}
-		command(workspace, use, "Safely remove clean worktrees; preserve branches", args, true, false, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
-			req := app.RemoveRequest{Workspace: a[0], Repositories: a[1:], Whole: whole, DryRun: true}
+		var moveUnverified bool
+		remove := command(workspace, use, "Safely remove clean worktrees; preserve branches", args, true, false, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
+			req := app.RemoveRequest{Workspace: a[0], Repositories: a[1:], Whole: whole, DryRun: true, MoveUnverified: moveUnverified}
 			plan, err := s.RemoveRepositories(ctx, req)
 			if err != nil || o.dry {
 				return plan, err
@@ -160,6 +171,7 @@ func addCommands(root *cobra.Command, o *options) {
 				return s.RemoveRepositories(ctx, req)
 			})
 		})
+		remove.Flags().BoolVar(&moveUnverified, "move-unverified", false, "Move files at a legacy registered checkout with a lost Git link into recovery storage; if the checkout was moved, repair it instead")
 	}
 	command(ops, "list", "List recorded operations", cobra.NoArgs, false, false, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
 		r := app.NewResult("operations.list")
@@ -199,6 +211,21 @@ func addCommands(root *cobra.Command, o *options) {
 					return result, err
 				}
 				return s.Resume(ctx, a[0])
+			})
+		}
+		recovery, err := s.ReviewRemovalRecovery(ctx, a[0], "")
+		if err != nil {
+			return recovery, err
+		}
+		if recovery.PlanDigest != "" {
+			if o.dry {
+				return recovery, nil
+			}
+			if err := o.confirm(ctx, recovery); err != nil {
+				return recovery, err
+			}
+			return o.operationProgress(ctx, s, func(ctx context.Context, s *app.Service) (app.Result, error) {
+				return s.ReviewRemovalRecovery(ctx, a[0], recovery.PlanDigest)
 			})
 		}
 		if o.dry {

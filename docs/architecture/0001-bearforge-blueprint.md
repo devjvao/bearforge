@@ -350,6 +350,8 @@ Removal is the highest-risk operation and must ship with the first usable releas
 6. Use `git worktree remove -- <path>`. Never recursively delete a checkout as a fallback. Git's refusal is authoritative.
 7. Commit membership changes after verifying removal. Remove only an empty workspace container; report retained unrelated files without deleting them.
 
+For a missing mapped checkout, bind the review to its exact Git registration, branch and commit. An already-cleared registration requires only a membership update. A remaining registration must be unlocked and have a recoverable clean index. Preserve its surviving worktree HEAD and reflog before releasing that registration by absolute path. A user who moved the checkout can repair it from its new location before confirming removal.
+
 An explicit `--discard-changes` may enable a single Git force removal of dirty/untracked content after a second detailed confirmation; noninteractive use requires both `--discard-changes` and `--yes`. It does not bypass path identity, locks, detached-commit preservation, or submodule checks. Label exactly what will be discarded. Ship this escape hatch only once tested; omitting it from the first release is preferable to unsafe deletion.
 
 Use Git to list ignored content (for example `ls-files --others --ignored --exclude-standard -z`) and inspect reflog/recovery needs; never infer cleanliness solely from a human status string. A clean worktree can still contain unpublished commits. Worktree removal retains its branch, and repository retirement retains the entire database, so neither depends on assuming that “clean” means “backed up.”

@@ -131,7 +131,16 @@ func (s *Service) Doctor(ctx context.Context, workspace string) (Result, error) 
 		}
 		for _, item := range status.Items {
 			if item.Problem != nil {
-				d.record("worktree.identity", item.Repository, name, item.Path, fmt.Errorf("%s", item.Problem.Message), "inspect paths and common-directory identity before recovery")
+				check, remedy := "worktree.identity", "inspect paths and common-directory identity before recovery"
+				switch item.Problem.Code {
+				case "missing_gitfile":
+					check, remedy = "worktree.missing_gitfile", "review the removal preview to see where the remaining files will be retained"
+				case "missing_store":
+					check, remedy = "workspace.missing_store", "restore the original bare store before using this workspace"
+				case "missing_worktree":
+					check, remedy = "worktree.missing", ""
+				}
+				d.record(check, item.Repository, name, item.Path, domain.E(item.Problem.Code, "%s", item.Problem.Message), remedy)
 				continue
 			}
 			d.record("worktree.identity", item.Repository, name, item.Path, nil, "")
@@ -162,7 +171,12 @@ func (s *Service) Doctor(ctx context.Context, workspace string) (Result, error) 
 				return d.result, err
 			}
 			bare, err := s.checkRepository(ctx, catalog.Repositories[id])
-			d.record("repository.identity", id, "", bare, err, "inspect bare-directory and remote identity; no clone or fetch is performed")
+			if err != nil && ProblemFor(err).Code == "missing_store" {
+				bare, _ = s.RepositoryPath(catalog.Repositories[id])
+				d.record("repository.missing_store", id, "", bare, err, "review the affected workspace findings before considering repo reclone "+id)
+			} else {
+				d.record("repository.identity", id, "", bare, err, "inspect bare-directory and remote identity; no clone or fetch is performed")
+			}
 			if err != nil {
 				continue
 			}

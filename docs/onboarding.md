@@ -397,6 +397,10 @@ bearforge operations list
 bearforge operations show OPERATION_ID
 ```
 
+If a checkout folder disappeared, `status` identifies its path and the recovery action. If you moved the checkout, run `git worktree repair` from its new location first. To retire a missing checkout, preview `bearforge workspace remove-repo WORKSPACE REPO --dry-run` or use the dashboard removal preview. Confirmation releases only the matching unlocked Git registration and clears workspace membership. Recoverable detached commits and worktree reflog history stay in the shared repository.
+
+If the shared bare directory under `repos` disappeared, run `bearforge doctor` to find affected workspaces. Restore the original bare directory from backup to recover local-only history and linked-worktree metadata. For an unused store, review `bearforge repo reclone REPO --dry-run` and confirm with `--yes`. Reclone uses the registered origin and repopulates the store with history available from that remote. Check for external linked worktrees first. Bearforge can enumerate its own workspace mappings after the shared Git metadata is lost.
+
 Doctor is read-only and accumulates independent findings: catalog/schema problems, malformed workspace definitions, remote/common-directory drift, changed worktrees, missing/prunable registrations, unregistered destinations, preserved retired storage and unfinished/corrupt journals. It does not fetch, prune, repair, clone or change files. Healthy returns zero; actionable health findings return three.
 
 Before retiring a repository, remove its clean worktrees and workspace references. Safe removal refuses tracked changes, untracked/ignored content, special index flags, sparse checkouts, locked worktrees, unfinished rebase/merge/cherry-pick/revert operations and submodules. It preserves branches and otherwise-unreferenced surviving HEAD reflog tips through Git recovery branches. It never recursively deletes a checkout as a fallback and has no force/discard option:
