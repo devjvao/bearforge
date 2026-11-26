@@ -9,7 +9,7 @@ import (
 type missingWorktreeGit interface {
 	FindWorktreeRegistration(ctx context.Context, bare, path string) (string, error)
 	RegisteredWorktreeID(ctx context.Context, bare, path string) (string, error)
-	ReleaseMissingWorktree(ctx context.Context, bare, path, id, branch, head, operation, repo string) error
+	ReleaseMissingWorktreeWithCheckpoint(ctx context.Context, bare, path, id, branch, head, operation, repo string, checkpoint func() error) error
 }
 
 func (s *Service) missingRemovalStep(ctx context.Context, bare, path string, step Step) (Step, error) {
@@ -58,8 +58,13 @@ func (s *Service) releaseMissingWorktree(ctx context.Context, op *Operation, ste
 		return err
 	}
 	if observed.WorktreeID == "" && step.State != "planned" {
+		if step.WorktreeID != "" && step.State != "succeeded" && !step.MissingHistoryPreserved {
+			return domain.E("conflict", "Git registration at %s disappeared before worktree history preservation was confirmed; recover its history before clearing the workspace mapping", path)
+		}
 		return nil
 	}
+	// A registration that still exists must pass preservation again on retry.
+	step.MissingHistoryPreserved = false
 	if step.State == "succeeded" {
 		return domain.E("conflict", "Git registration for the removed checkout %s reappeared", path)
 	}
@@ -73,7 +78,14 @@ func (s *Service) releaseMissingWorktree(ctx context.Context, op *Operation, ste
 	if observed.WorktreeID == "" {
 		return nil
 	}
-	return s.Git.(missingWorktreeGit).ReleaseMissingWorktree(ctx, bare, path, step.WorktreeID, step.Branch, step.Start, op.ID, step.Repository)
+	return s.Git.(missingWorktreeGit).ReleaseMissingWorktreeWithCheckpoint(ctx, bare, path, step.WorktreeID, step.Branch, step.Start, op.ID, step.Repository, func() error {
+		step.MissingHistoryPreserved = true
+		if err := s.Journal.Save(op); err != nil {
+			step.MissingHistoryPreserved = false
+			return err
+		}
+		return nil
+	})
 }
 
 // MissingRemovalAdvice describes the action covered by a removal preview.

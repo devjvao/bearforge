@@ -139,11 +139,11 @@ func (c *Client) preserveRootTips(ctx context.Context, bare, operation, repo str
 		if strings.TrimSpace(string(kind)) == "commit" {
 			match = "--contains=" + oid
 		}
-		refs, err := c.Run(ctx, bare, "--no-replace-objects", "for-each-ref", "--count=1", "--format=%(refname)", match)
+		durable, err := c.hasDirectRecoveryRef(ctx, bare, match)
 		if err != nil {
 			return err
 		}
-		if len(refs) == 0 {
+		if !durable {
 			// Keep the exact object even for a fetched tag or tree. An empty
 			// old value makes creation exclusive against external ref updates.
 			ref := "refs/" + recoveryRefPrefix(operation, repo) + oid

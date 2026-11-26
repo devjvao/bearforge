@@ -277,6 +277,14 @@ func recoveryRefPrefix(operation, repo string) string {
 	return "bearforge/recovery/" + component(operation) + "/" + component(repo) + "/"
 }
 
+// A shared symbolic ref may resolve through the registration being removed.
+// Direct refs sort first because their symref field is empty.
+func (c *Client) hasDirectRecoveryRef(ctx context.Context, bare, match string) (bool, error) {
+	out, err := c.Run(ctx, bare, "--no-replace-objects", "for-each-ref", "--count=1", "--sort=symref",
+		"--format=%(if)%(symref)%(then)%(else)%(refname)%(end)", match)
+	return strings.TrimSpace(string(out)) != "", err
+}
+
 func (c *Client) preserveTips(ctx context.Context, bare, operation, repo, head string, reflog []byte) (map[string]bool, error) {
 	tips := append([]string{head}, strings.Fields(string(reflog))...)
 	seen := map[string]bool{}
@@ -285,11 +293,11 @@ func (c *Client) preserveTips(ctx context.Context, bare, operation, repo, head s
 			continue
 		}
 		seen[tip] = true
-		refs, err := c.Run(ctx, bare, "--no-replace-objects", "for-each-ref", "--format=%(refname)", "--contains="+tip)
+		durable, err := c.hasDirectRecoveryRef(ctx, bare, "--contains="+tip)
 		if err != nil {
 			return nil, err
 		}
-		if len(refs) > 0 {
+		if durable {
 			continue
 		}
 		name := fmt.Sprintf("%sreflog-%d", recoveryRefPrefix(operation, repo), i)
@@ -298,14 +306,7 @@ func (c *Client) preserveTips(ctx context.Context, bare, operation, repo, head s
 			return nil, err
 		}
 		if exists {
-			got, err := c.Resolve(ctx, bare, "refs/heads/"+name)
-			if err != nil {
-				return nil, err
-			}
-			if got != tip {
-				return nil, domain.E("conflict", "recovery ref already exists with a different commit")
-			}
-			continue
+			return nil, domain.E("conflict", "recovery branch %s already exists without independently protecting commit %s", name, tip)
 		}
 		if _, err := c.Run(ctx, bare, "branch", "--no-track", name, tip); err != nil {
 			return nil, err

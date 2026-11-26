@@ -68,3 +68,47 @@ func TestMissingCheckoutRetainsFetchAndOriginalHeads(t *testing.T) {
 		})
 	}
 }
+
+func TestMissingCheckoutRetainsObjectsBehindSharedSymref(t *testing.T) {
+	for _, source := range []string{"HEAD reflog", "ORIG_HEAD commit", "ORIG_HEAD blob"} {
+		t.Run(source, func(t *testing.T) {
+			c, bare, path := privateHistoryFixture(t, "files", "sha1")
+			ctx := t.Context()
+			id, err := c.RegisteredWorktreeID(ctx, bare, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			head := strings.TrimSpace(string(runGit(t, c, path, "rev-parse", "HEAD")))
+			var oid string
+			if source == "ORIG_HEAD blob" {
+				file := filepath.Join(t.TempDir(), "draft")
+				if err := os.WriteFile(file, []byte("private draft"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				oid = strings.TrimSpace(string(runGit(t, c, path, "hash-object", "-w", file)))
+			} else {
+				oid = privateCommit(t, c, path, "private commit")
+			}
+			if source == "HEAD reflog" {
+				runGit(t, c, path, "switch", "--detach", oid)
+				runGit(t, c, path, "switch", "main")
+			}
+			runGit(t, c, path, "update-ref", "ORIG_HEAD", oid)
+			runGit(t, c, bare, "symbolic-ref", "refs/saved", "worktrees/"+id+"/ORIG_HEAD")
+			if got := strings.TrimSpace(string(runGit(t, c, bare, "rev-parse", "--verify", "refs/saved"))); got != oid {
+				t.Fatalf("shared symref resolves to %q, want %s", got, oid)
+			}
+			if err := os.Rename(path, filepath.Join(t.TempDir(), "moved")); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.ReleaseMissingWorktree(ctx, bare, path, id, "main", head, "op", "repo"); err != nil {
+				t.Fatal(err)
+			}
+			runGit(t, c, bare, "reflog", "expire", "--expire=now", "--all")
+			runGit(t, c, bare, "gc", "--prune=now")
+			if _, err := c.Run(ctx, bare, "cat-file", "-e", oid); err != nil {
+				t.Fatalf("object %s lost after the registration and its symbolic target disappeared: %v", oid, err)
+			}
+		})
+	}
+}

@@ -3,7 +3,9 @@ package auth
 import (
 	"context"
 	"errors"
+	"net/url"
 	"strings"
+	"unicode"
 )
 
 func (m *Manager) Login(ctx context.Context, r LoginRequest, h LoginHooks) (Connection, error) {
@@ -13,6 +15,9 @@ func (m *Manager) Login(ctx context.Context, r LoginRequest, h LoginHooks) (Conn
 	r, e := NormalizeLoginRequest(r)
 	if e != nil {
 		return Connection{}, e
+	}
+	if r.Provider == "bitbucket-server" && !tokenPageUsername(r.Username) {
+		return Connection{}, errors.New("Bitbucket Server token setup requires a valid Git username")
 	}
 	c := Connection{Name: r.Name, Provider: r.Provider, Host: r.Host, APIURL: r.APIURL, GitURL: r.GitURL, Username: r.Username, GrantID: randomID(), State: StateUnverified, Method: MethodToken}
 	if h.Confirm != nil {
@@ -45,9 +50,6 @@ func (m *Manager) Login(ctx context.Context, r LoginRequest, h LoginHooks) (Conn
 		}
 		c.TokenKind = "bitbucket-api-token"
 	default:
-		if c.Username == "" {
-			return Connection{}, errors.New("Bitbucket Server token requires the Git username")
-		}
 		c.TokenKind = "bitbucket-user-token"
 	}
 	c, e = m.verify(ctx, c, credentialFor(c, access))
@@ -93,6 +95,7 @@ func tokenSetupGuide(c Connection) string {
 	default:
 		lines = append(lines,
 			"Create a user HTTP access token on this Bitbucket Server / Data Center installation:",
+			"If redirected by single sign-on, open your profile picture > Manage account > HTTP access tokens.",
 			"- Repository permissions: Repository read (discovery, clone/fetch, and PR lookup).",
 			"- Project permissions: Project read, if the form includes this selector.",
 			"Use your Git username. The account must already have repository access; company policy may require token approval.")
@@ -107,6 +110,15 @@ func managementURL(c Connection) string {
 	case "bitbucket-cloud":
 		return "https://id.atlassian.com/manage-profile/security/api-tokens"
 	default:
-		return c.Host + "/plugins/servlet/access-tokens/manage"
+		if !tokenPageUsername(c.Username) {
+			return c.Host
+		}
+		return c.Host + "/plugins/servlet/access-tokens/users/" + url.PathEscape(c.Username) + "/manage"
 	}
+}
+
+func tokenPageUsername(username string) bool {
+	return username != "" && strings.TrimSpace(username) == username &&
+		username != "." && username != ".." && !strings.ContainsAny(username, "/\\") &&
+		strings.IndexFunc(username, unicode.IsControl) == -1
 }

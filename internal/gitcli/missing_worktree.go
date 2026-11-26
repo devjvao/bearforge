@@ -12,11 +12,19 @@ import (
 	"github.com/devjvao/bearforge/internal/pathmatch"
 )
 
+// A UTF-8 back-pointer fits even an extended-length Windows path.
+const maxGitdirBytes = 128 << 10
+
 // FindWorktreeRegistration identifies the administrative directory by its Git
 // back-pointer, including suffixes Git adds when worktrees share a basename.
 func (c *Client) FindWorktreeRegistration(ctx context.Context, bare, path string) (string, error) {
 	parent := filepath.Join(bare, "worktrees")
-	entries, err := os.ReadDir(parent)
+	root, err := os.OpenRoot(parent)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	entries, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
 		return "", err
 	}
@@ -27,12 +35,12 @@ func (c *Client) FindWorktreeRegistration(ctx context.Context, bare, path string
 			continue
 		}
 		dir := filepath.Join(parent, entry.Name())
-		b, err := os.ReadFile(filepath.Join(dir, "gitdir"))
-		if os.IsNotExist(err) {
-			continue
-		}
+		b, err := readPrivateFile(root, filepath.Join(entry.Name(), "gitdir"), maxGitdirBytes)
 		if err != nil {
 			return "", err
+		}
+		if b == nil {
+			continue
 		}
 		back := filepath.FromSlash(strings.TrimSuffix(strings.TrimSuffix(string(b), "\n"), "\r"))
 		if !filepath.IsAbs(back) {
@@ -187,6 +195,12 @@ func checkReftableStub(root *os.Root, path, want string) error {
 // directory is gone. The logical worktrees/<id>/HEAD ref addresses its reflog
 // in both files and reftable repositories.
 func (c *Client) ReleaseMissingWorktree(ctx context.Context, bare, path, id, branch, head, operation, repo string) error {
+	return c.ReleaseMissingWorktreeWithCheckpoint(ctx, bare, path, id, branch, head, operation, repo, nil)
+}
+
+// ReleaseMissingWorktreeWithCheckpoint records that the reviewed history has
+// been protected before Git deletes its last worktree-private metadata.
+func (c *Client) ReleaseMissingWorktreeWithCheckpoint(ctx context.Context, bare, path, id, branch, head, operation, repo string, checkpoint func() error) error {
 	var registeredPath string
 	check := func() ([]string, error) {
 		if _, err := os.Lstat(path); !os.IsNotExist(err) {
@@ -241,6 +255,11 @@ func (c *Client) ReleaseMissingWorktree(ctx context.Context, bare, path, id, bra
 	}
 	if !slices.Equal(tips, current) {
 		return domain.E("conflict", "private worktree history changed; review removal again")
+	}
+	if checkpoint != nil {
+		if err := checkpoint(); err != nil {
+			return err
+		}
 	}
 	_, err = c.Run(ctx, bare, "worktree", "remove", "--", registeredPath)
 	return err
