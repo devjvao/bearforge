@@ -169,13 +169,9 @@ func (s *Service) applyRemove(ctx context.Context, op *Operation) (Result, error
 		if keepsDirectory(step.RemovalMode) && wasStarted && !mapped {
 			// Only the mapping belonged to this action. The user may have
 			// moved the retained files or repaired the checkout since then.
-			if step.State != "succeeded" {
-				step.State = "succeeded"
-				if err := s.Journal.Save(op); err != nil {
-					return finish(err)
-				}
+			if err := s.finishUnmappedRemoval(op, step); err != nil {
+				return finish(err)
 			}
-			s.event(active, "succeeded")
 			active = ""
 			continue
 		}
@@ -202,6 +198,23 @@ func (s *Service) applyRemove(ctx context.Context, op *Operation) (Result, error
 		exists, err := s.Store.Exists(parts...)
 		if err != nil {
 			return finish(err)
+		}
+		if step.RemovalMode == preserveResidual && wasStarted && !mapped {
+			if exists {
+				return finish(domain.E("conflict", "removed checkout has reappeared at %s", path))
+			}
+			observed, err := s.missingRemovalStep(ctx, bare, path, *step)
+			if err != nil {
+				return finish(err)
+			}
+			if observed.WorktreeID != "" {
+				return finish(domain.E("conflict", "removed checkout has a new registration at %s", path))
+			}
+			if err := s.finishUnmappedRemoval(op, step); err != nil {
+				return finish(err)
+			}
+			active = ""
+			continue
 		}
 		if residualMode(step.RemovalMode) {
 			if err := s.applyResidual(ctx, op, step, bare, path, exists); err != nil {
@@ -346,4 +359,17 @@ func (s *Service) finishRemoval(op *Operation, r Result, active string, err erro
 		r.Items = append(r.Items, item)
 	}
 	return s.finish(op, r, err)
+}
+
+// The mapping change has already been saved. Recovery files may since have
+// been moved by the user. finishRemoval reports them only if still present.
+func (s *Service) finishUnmappedRemoval(op *Operation, step *Step) error {
+	if step.State != "succeeded" {
+		step.State = "succeeded"
+		if err := s.Journal.Save(op); err != nil {
+			return err
+		}
+	}
+	s.event(step.Repository, "succeeded")
+	return nil
 }

@@ -114,9 +114,14 @@ func (s *Service) changedRemovalStep(ctx context.Context, bare, path string, pri
 		return s.residualStep(ctx, bare, path, prior)
 	}
 	observed, err := s.missingRemovalStep(ctx, bare, path, prior)
-	if err != nil || observed.WorktreeID == "" {
-		// Git may already have removed the checkout and its registration.
-		// The original operation can then retry its manifest update directly.
+	if err != nil {
+		return prior, false, err
+	}
+	if observed.WorktreeID == "" {
+		if prior.State == "planned" {
+			return observed, true, nil
+		}
+		// An already started step can finish its existing manifest update.
 		return prior, false, err
 	}
 	if observed.Start != prior.Start || observed.Branch != prior.Branch {

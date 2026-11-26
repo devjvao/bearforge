@@ -63,6 +63,30 @@ func TestRemoveCheckoutWithMissingGitfile(t *testing.T) {
 	if _, err = s.Resume(ctx, out.OperationID); err != nil {
 		t.Fatal(err)
 	}
+	journal, err := s.Journal.Load(out.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal.State = "partial"
+	if err = s.Journal.Save(journal); err != nil {
+		t.Fatal(err)
+	}
+	retained := plan.Items[0].RetainedPath
+	if err = os.Rename(retained, retained+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Resume(ctx, out.OperationID); err == nil {
+		t.Fatal("reappearing checkout accepted")
+	}
+	if err = os.Remove(dir); err != nil {
+		t.Fatal(err)
+	}
+	if resumed, err := s.Resume(ctx, out.OperationID); err != nil || len(resumed.Items) != 1 || resumed.Items[0].RetainedPath != "" {
+		t.Fatalf("failed to finish with relocated recovery directory: %+v %v", resumed, err)
+	}
 	if _, err = s.AddRepositories(ctx, app.AddRequest{Workspace: "work", Repositories: []string{"api"}}); err != nil {
 		t.Fatal(err)
 	}
