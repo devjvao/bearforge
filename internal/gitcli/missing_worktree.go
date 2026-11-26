@@ -4,11 +4,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 
 	"github.com/devjvao/bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/pathmatch"
 )
 
 // RegisteredWorktreeID finds the administrative directory by its Git back-pointer.
@@ -43,7 +43,7 @@ func (c *Client) inspectMissingRegistration(ctx context.Context, bare, path stri
 			back = filepath.Join(dir, back)
 		}
 		back = filepath.Clean(back)
-		if back != want && (runtime.GOOS != "windows" || !strings.EqualFold(back, want)) {
+		if !pathmatch.SameDirectoryEntries(back, want) {
 			continue
 		}
 		if found != "" {
@@ -170,6 +170,7 @@ func (c *Client) checkPrivateWorktreeRefs(ctx context.Context, bare, admin, form
 // directory is gone. The logical worktrees/<id>/HEAD ref addresses its reflog
 // in both files and reftable repositories.
 func (c *Client) ReleaseMissingWorktree(ctx context.Context, bare, path, id, branch, head, operation, repo string) error {
+	var registeredPath string
 	check := func() ([]string, error) {
 		if _, err := os.Lstat(path); !os.IsNotExist(err) {
 			if err != nil {
@@ -190,12 +191,13 @@ func (c *Client) ReleaseMissingWorktree(ctx context.Context, bare, path, id, bra
 		}
 		for _, tree := range trees {
 			candidate := filepath.Clean(tree.Path)
-			if candidate != path && (runtime.GOOS != "windows" || !strings.EqualFold(candidate, path)) {
+			if !pathmatch.SameDirectoryEntries(candidate, path) {
 				continue
 			}
 			if tree.Locked || tree.Bare || tree.Head != head || tree.Branch != branch {
 				return nil, domain.E("conflict", "worktree registration changed; review removal again")
 			}
+			registeredPath = candidate
 			return tips, nil
 		}
 		return nil, domain.E("conflict", "worktree registration disappeared")
@@ -222,6 +224,6 @@ func (c *Client) ReleaseMissingWorktree(ctx context.Context, bare, path, id, bra
 	if !slices.Equal(tips, current) {
 		return domain.E("conflict", "private worktree history changed; review removal again")
 	}
-	_, err = c.Run(ctx, bare, "worktree", "remove", "--", path)
+	_, err = c.Run(ctx, bare, "worktree", "remove", "--", registeredPath)
 	return err
 }
