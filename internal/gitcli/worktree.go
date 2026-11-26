@@ -145,7 +145,7 @@ func (c *Client) Add(ctx context.Context, bare, path, branch, start string, crea
 }
 
 func (c *Client) SetUpstream(ctx context.Context, bare, branch, upstream string) error {
-	_, err := c.Run(ctx, bare, "branch", "--set-upstream-to="+upstream, branch)
+	_, err := c.Run(ctx, bare, "branch", "--set-upstream-to=refs/remotes/"+upstream, branch)
 	return err
 }
 

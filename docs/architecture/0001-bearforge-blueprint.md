@@ -212,23 +212,24 @@ A bare clone copies branch heads but does not create the normal remote-tracking 
 Conceptual commands for a new repository, with arguments passed separately:
 
 ```sh
-git clone --bare -- <remote-url> <root>/repos/<repo>.git
+git clone --bare --single-branch --no-tags -- <remote-url> <staged-bare-directory>
 git -C <bare> config --local remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
 git -C <bare> config --local core.logAllRefUpdates true
 git -C <bare> config --local push.default simple
-git -C <bare> fetch --all --prune
+git -C <bare> config --local --unset-all remote.origin.tagOpt
+git -C <bare> -c remote.origin.tagOpt=--tags fetch --all --prune
 git -C <bare> remote set-head origin -a
 ```
 
-Journal the destination reservation before clone. Clone into the final reserved path so interruption does not create a hidden second database to adopt accidentally. Only the operation owning that reservation may resume it. An existing unexplained directory is a conflict, even if it appears empty or contains a repository.
+Journal a random staging token before starting the native clone. Bootstrap in a private directory beside the final destination and mark a fully initialized bare repository before publishing it by an exclusive same-volume rename. Resume requires the corresponding ownership marker and verifies origin and worktrees. An incomplete attempt with no origin remains in its staging directory while a new attempt proceeds. The final destination must be vacant or contain the verified publication of this operation.
 
 Configure the fetch destination only under `refs/remotes/<remote>/`; reject mirror settings or mappings that write fetched heads into `refs/heads/*`. Each managed remote receives its own namespace. The leading `+` permits tracking remote rewrites, not rewriting local branches. Sync performs fetch/prune without merging or resetting checkouts. Inspect effective configuration, including user overrides, before mutation. [Git fetch documentation](https://git-scm.com/docs/git-fetch)
 
 Also reject effective `fetch.pruneTags=true` or `remote.<name>.pruneTags=true`, tag refspecs, and any prune destination outside that remote's tracking namespace. Ordinary fetch may acquire tags, but Bearforge sync must not prune local tags. Explain the conflicting setting and require an explicit configuration correction; never silently rewrite global configuration. Include configuration inherited from global files and conditional includes in this check.
 
-Bare cloning creates local branch heads too. Keep them; do not delete or reset them as initialization cleanup. Fetch will update tracking refs, not automatically advance those local branches. Therefore a pre-existing `main` may lag `origin/main`; show that fact rather than silently moving it.
+New registrations copy the advertised default branch into the local branch namespace. The initial guarded fetch acquires every remote branch in `refs/remotes/origin/*` and all tags, including tags on disconnected history. The default local branch tracks its origin counterpart. Workspace add creates other local branches on demand.
 
-Before publishing a newly cloned registration, initialize upstreams for the copied local branches that have matching origin tracking refs, using journaled `git branch --set-upstream-to=origin/<branch> <branch>` calls. This makes a later `main` workspace usable with ordinary pull/status without resetting commits. This initialization applies only to branches proven to belong to that fresh clone operation; adopted repositories and later-created feature branches retain their own tracking policy.
+Existing repositories retain their local branches, commits and tracking configuration. A registration interrupted under the older all-branches layout resumes with its recorded policy. Ordinary sync updates remote-tracking refs and leaves local branch tips in place. A reviewed workspace add can fast-forward an available local tracking branch that is behind its selected remote.
 
 Remote-default discovery uses `git ls-remote --symref <remote> HEAD` and, after fetch, `git remote set-head <remote> -a`. An explicit repository base wins. If there is no advertised default or the repository is empty, registration can succeed with “base unresolved”; normal provisioning requires an existing commit or an explicit later-supported orphan mode. Never assume every repository uses `main`. [Git remote documentation](https://git-scm.com/docs/git-remote)
 
@@ -241,8 +242,8 @@ Resolve the desired branch from the repository override, workspace default, or w
 1. If the destination is already the expected registered worktree, with the expected common repository and branch, return success without changing it.
 2. If the destination is occupied by anything else, stop. A dirty worktree on another branch is never “fixed” implicitly.
 3. Inspect all registered worktrees. If this branch is checked out elsewhere, report that path; require another branch name or explicitly requested detached mode. Never bypass this with Git's force option.
-4. If the local branch exists and is available, attach it unchanged, preserving tracking. An explicit incompatible base does not reset it; report that the base only applies to new branches.
-5. If only the selected remote has a same-name branch, create a local branch from that remote ref. Default its upstream to that branch unless an explicit tracking policy says otherwise.
+4. On first provisioning, inspect the exact advertised same-name branch on the selected remote and pin the response to the review. For an available local branch tracking that remote, preserve an equal or ahead tip. Fast-forward a strictly behind tip after checking ancestry and atomically verifying its previously observed value. A diverged tip or different upstream requires an explicit local choice. `--track preserve` keeps the available local branch. `--offline` uses existing local and cached remote refs. An explicit base retains its local creation semantics.
+5. For a remote-only branch, apply verifies the advertisement, fetches the reviewed commit into the remote-tracking namespace and checks submodule policy before creating an attached local branch. Default its upstream to the same-name branch unless an explicit tracking policy says otherwise. A changed advertisement requires a fresh plan.
 6. Otherwise resolve the configured base to a commit OID, create the branch with `--no-track`, and attach the worktree. A base such as `origin/main` does not become the feature branch's upstream.
 
 ```sh

@@ -87,10 +87,12 @@ func addCommands(root *cobra.Command, o *options) {
 		c.Flags().StringVar(&branch, "branch", "", "Default branch name")
 	}
 	var branch, base, track string
+	var offline bool
 	var overrides map[string]string
 	add := command(workspace, "add WORKSPACE REPO...", "Materialize repositories as worktrees", cobra.MinimumNArgs(2), true, true, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
-		return s.AddRepositories(ctx, app.AddRequest{Workspace: a[0], Repositories: a[1:], Branch: branch, Base: base, Tracking: track, BranchMap: overrides, DryRun: o.dry})
+		return s.AddRepositories(ctx, app.AddRequest{Workspace: a[0], Repositories: a[1:], Branch: branch, Base: base, Tracking: track, Offline: offline, BranchMap: overrides, DryRun: o.dry})
 	})
+	add.Flags().BoolVar(&offline, "offline", false, "Use local branches and cached remote refs without contacting the server")
 	add.Flags().StringVar(&branch, "branch", "", "Branch for selected repositories")
 	add.Flags().StringVar(&base, "base", "", "Starting ref for new branches")
 	add.Flags().StringVar(&track, "track", "", "Tracking: none, same-name, preserve")
