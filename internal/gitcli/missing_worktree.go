@@ -19,9 +19,17 @@ func (c *Client) RegisteredWorktreeID(ctx context.Context, bare, path string) (s
 	return id, err
 }
 
+// A UTF-8 back-pointer fits even an extended-length Windows path.
+const maxGitdirBytes = 128 << 10
+
 func (c *Client) inspectMissingRegistration(ctx context.Context, bare, path string) (string, []string, error) {
 	parent := filepath.Join(bare, "worktrees")
-	entries, err := os.ReadDir(parent)
+	root, err := os.OpenRoot(parent)
+	if err != nil {
+		return "", nil, err
+	}
+	defer root.Close()
+	entries, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
 		return "", nil, err
 	}
@@ -32,12 +40,12 @@ func (c *Client) inspectMissingRegistration(ctx context.Context, bare, path stri
 			continue
 		}
 		dir := filepath.Join(parent, entry.Name())
-		b, err := os.ReadFile(filepath.Join(dir, "gitdir"))
-		if os.IsNotExist(err) {
-			continue
-		}
+		b, err := readPrivateFile(root, filepath.Join(entry.Name(), "gitdir"), maxGitdirBytes)
 		if err != nil {
 			return "", nil, err
+		}
+		if b == nil {
+			continue
 		}
 		back := filepath.FromSlash(strings.TrimSuffix(strings.TrimSuffix(string(b), "\n"), "\r"))
 		if !filepath.IsAbs(back) {
