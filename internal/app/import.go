@@ -575,10 +575,13 @@ func importDurabilityFailure(r Result, err error) (Result, error) {
 }
 
 func (s *Service) transferImport(ctx context.Context, step *Step, path string, exists bool, checkpoint func(Step) error) error {
+	return s.transferClone(ctx, step, step.ImportedRepository.Remotes["origin"], path, exists, checkpoint)
+}
+
+func (s *Service) transferClone(ctx context.Context, step *Step, remote, path string, exists bool, checkpoint func(Step) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	remote := step.ImportedRepository.Remotes["origin"]
 	planner, canPlan := s.Git.(ClonePlanner)
 	if step.RefFormat == "" || (exists && canPlan && step.RefFormat == "files" && step.RequestedRefFormat != "files") {
 		if canPlan {

@@ -263,7 +263,7 @@ func validateWorkspacePreview(run *dashboardWorkspace, result app.Result) error 
 			seen[""] = true
 			continue
 		}
-		if !slices.Contains(run.names, item.Repository) || seen[item.Repository] || item.Workspace != run.workspace || item.Path == "" || item.Start == "" {
+		if !slices.Contains(run.names, item.Repository) || seen[item.Repository] || item.Workspace != run.workspace || item.Path == "" || (item.Start == "" && item.RemovalMode != "missing") {
 			return errors.New("the preview does not match the selected repositories; reopen removal")
 		}
 		seen[item.Repository] = true

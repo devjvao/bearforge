@@ -32,6 +32,16 @@ func addCommands(root *cobra.Command, o *options) {
 	repoAdd := command(repo, "add NAME URL", "Register and clone a bare repository", cobra.ExactArgs(2), true, true, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
 		return s.AddRepositoryWithFormat(ctx, a[0], a[1], refFormat, o.dry)
 	})
+	command(repo, "reclone NAME", "Recover an unused missing bare repository from its registered remote", cobra.ExactArgs(1), true, false, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
+		plan, err := s.RecloneRepository(ctx, a[0], true, "")
+		if err != nil || o.dry {
+			return plan, err
+		}
+		if err := o.confirm(ctx, plan); err != nil {
+			return plan, err
+		}
+		return s.RecloneRepository(ctx, a[0], false, plan.PlanDigest)
+	})
 	repoAdd.Flags().StringVar(&refFormat, "ref-format", "auto", "Reference storage: auto, files, reftable")
 	command(repo, "list", "List registered repositories", cobra.NoArgs, false, false, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
 		r := app.NewResult("repo.list")

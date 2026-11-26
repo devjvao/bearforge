@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/devjvao/bearforge/internal/app"
 )
 
 func (m dashboardModel) workspaceView() tea.View {
@@ -92,6 +94,9 @@ func (m dashboardModel) workspaceContent() []string {
 				continue
 			}
 			lines = append(lines, "", m.styles.title.Render(displayText(item.Repository)), "Path: "+displayText(item.Path), "Branch: "+displayText(item.Branch), "HEAD: "+displayText(item.Start))
+			if advice := app.MissingRemovalAdvice(item.RemovalMode); advice != "" {
+				lines = append(lines, advice)
+			}
 		}
 		return append(lines, "", "Press y to confirm this exact plan.")
 	case workspaceExecuting, workspaceResults:

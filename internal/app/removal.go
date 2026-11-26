@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"io/fs"
 
 	"github.com/devjvao/bearforge/internal/domain"
 )
@@ -63,15 +64,28 @@ func (s *Service) RemoveRepositories(ctx context.Context, req RemoveRequest) (Re
 		if err != nil {
 			return r, err
 		}
-		if err := s.Git.CheckRemoval(ctx, bare, path); err != nil {
-			return r, err
-		}
-		status, err := s.Git.Inspect(ctx, path)
+		exists, err := s.Store.Exists(w.Name, id)
 		if err != nil {
 			return r, err
 		}
-		steps = append(steps, Step{Repository: id, Branch: status.Branch, Start: status.Head, Base: m.Base, State: "planned"})
-		r.Items = append(r.Items, Item{Repository: id, Workspace: w.Name, Path: path, Branch: status.Branch, Base: m.Base, Start: status.Head, Outcome: "planned"})
+		step := Step{Repository: id, Branch: m.Branch, Base: m.Base, State: "planned"}
+		if !exists {
+			step, err = s.missingRemovalStep(ctx, bare, path, step)
+			if err != nil {
+				return r, err
+			}
+		} else {
+			if err := s.Git.CheckRemoval(ctx, bare, path); err != nil {
+				return r, err
+			}
+			status, err := s.Git.Inspect(ctx, path)
+			if err != nil {
+				return r, err
+			}
+			step.Start, step.Branch = status.Head, status.Branch
+		}
+		steps = append(steps, step)
+		r.Items = append(r.Items, Item{Repository: id, Workspace: w.Name, Path: path, Branch: step.Branch, Base: step.Base, Start: step.Start, RemovalMode: step.RemovalMode, Outcome: "planned"})
 	}
 	if req.Whole {
 		path, err := s.Store.SafePath(w.Name)
@@ -149,7 +163,14 @@ func (s *Service) applyRemove(ctx context.Context, op *Operation) (Result, error
 		if err != nil {
 			return finish(err)
 		}
-		if exists {
+		if step.RemovalMode == "missing" || step.RemovalMode == "missing_registered" {
+			if exists {
+				return finish(domain.E("conflict", "missing checkout %s has reappeared; review removal again", path))
+			}
+			if err := s.releaseMissingWorktree(ctx, op, step, bare, path); err != nil {
+				return finish(err)
+			}
+		} else if exists {
 			if step.State == "succeeded" {
 				return finish(domain.E("conflict", "removed destination has reappeared"))
 			}
@@ -217,7 +238,7 @@ func (s *Service) applyRemove(ctx context.Context, op *Operation) (Result, error
 		if err := s.Store.DeleteWorkspace(op.Workspace, rev); err != nil {
 			return finish(err)
 		}
-		if err := s.Store.RemoveEmpty(op.Workspace); err != nil {
+		if err := s.Store.RemoveEmpty(op.Workspace); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			path, _ := s.Store.SafePath(op.Workspace)
 			r.Items = append(r.Items, Item{Workspace: op.Workspace, Path: path, Outcome: "container_retained", Problem: ProblemFor(err)})
 		} else {

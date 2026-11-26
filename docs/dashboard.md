@@ -58,6 +58,8 @@ Confirmation replans under the mutation lock and checks the reviewed root, works
 
 Escape closes the picker before execution or returns from completed results to the dashboard. While adding, the dialog retains its captured workspace and selection, and sync is unavailable. `v` reopens the latest results.
 
+A missing checkout has a removal preview that identifies whether Git still holds its registration. If the checkout was moved, use Git's worktree repair before clearing the old registration.
+
 Press `d` in the repository pane to preview removing the selected member. Press `D` to preview removal of every member and the workspace definition, including members hidden by filters. Only `y` confirms. Dirty or unsafe worktrees are refused, branches/history are preserved, and unrelated workspace container files remain. A changed preview requires review again. See [safe lifecycle workflows](onboarding.md#diagnose-and-retire-safely).
 
 ## Sync and pull requests

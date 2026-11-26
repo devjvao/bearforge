@@ -42,7 +42,7 @@ func (o *options) renderHumanResult(r app.Result, terminal bool) error {
 			path = path || item.Path != ""
 			status = status || item.Status != nil
 			execution = execution || item.Execution != nil
-			details = details || item.Base != "" || item.Start != "" || item.Tracking != "" || item.CreateBranch || item.RefFormat != ""
+			details = details || item.RemovalMode != "" || item.Base != "" || item.Start != "" || item.Tracking != "" || item.CreateBranch || item.RefFormat != ""
 		}
 		if branch {
 			headers = append(headers, "BRANCH")
@@ -105,6 +105,9 @@ func (o *options) renderHumanResult(r app.Result, terminal bool) error {
 			}
 			if details {
 				values := []string{}
+				if advice := app.MissingRemovalAdvice(item.RemovalMode); advice != "" {
+					values = append(values, advice)
+				}
 				if item.RefFormat != "" {
 					format := "ref-format=" + item.RefFormat
 					if item.RefFormat == "reftable" {
