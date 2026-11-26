@@ -265,6 +265,18 @@ func (c *Client) PreserveHistory(ctx context.Context, bare, path, operation, rep
 	return err
 }
 
+// Portable IDs cannot contain '%'. Use it for dots in otherwise invalid
+// components to preserve path lengths and existing, valid recovery refs.
+func recoveryRefPrefix(operation, repo string) string {
+	component := func(id string) string {
+		if strings.Contains(id, "..") || strings.HasSuffix(id, ".lock") {
+			return strings.ReplaceAll(id, ".", "%")
+		}
+		return id
+	}
+	return "bearforge/recovery/" + component(operation) + "/" + component(repo) + "/"
+}
+
 func (c *Client) preserveTips(ctx context.Context, bare, operation, repo, head string, reflog []byte) (map[string]bool, error) {
 	tips := append([]string{head}, strings.Fields(string(reflog))...)
 	seen := map[string]bool{}
@@ -280,7 +292,7 @@ func (c *Client) preserveTips(ctx context.Context, bare, operation, repo, head s
 		if len(refs) > 0 {
 			continue
 		}
-		name := fmt.Sprintf("bearforge/recovery/%s/%s/reflog-%d", operation, repo, i)
+		name := fmt.Sprintf("%sreflog-%d", recoveryRefPrefix(operation, repo), i)
 		exists, err := c.BranchExists(ctx, bare, name)
 		if err != nil {
 			return nil, err

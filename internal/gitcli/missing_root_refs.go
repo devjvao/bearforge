@@ -146,7 +146,7 @@ func (c *Client) preserveRootTips(ctx context.Context, bare, operation, repo str
 		if len(refs) == 0 {
 			// Keep the exact object even for a fetched tag or tree. An empty
 			// old value makes creation exclusive against external ref updates.
-			ref := "refs/bearforge/recovery/" + operation + "/" + repo + "/" + oid
+			ref := "refs/" + recoveryRefPrefix(operation, repo) + oid
 			if _, err := c.Run(ctx, bare, "update-ref", "--no-deref", ref, oid, ""); err != nil {
 				return err
 			}
