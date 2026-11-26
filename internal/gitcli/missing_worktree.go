@@ -185,6 +185,12 @@ func checkReftableStub(root *os.Root, path, want string) error {
 // directory is gone. The logical worktrees/<id>/HEAD ref addresses its reflog
 // in both files and reftable repositories.
 func (c *Client) ReleaseMissingWorktree(ctx context.Context, bare, path, id, branch, head, operation, repo string) error {
+	return c.ReleaseMissingWorktreeWithCheckpoint(ctx, bare, path, id, branch, head, operation, repo, nil)
+}
+
+// ReleaseMissingWorktreeWithCheckpoint records that the reviewed history has
+// been protected before Git deletes its last worktree-private metadata.
+func (c *Client) ReleaseMissingWorktreeWithCheckpoint(ctx context.Context, bare, path, id, branch, head, operation, repo string, checkpoint func() error) error {
 	var registeredPath string
 	check := func() ([]string, error) {
 		if _, err := os.Lstat(path); !os.IsNotExist(err) {
@@ -239,6 +245,11 @@ func (c *Client) ReleaseMissingWorktree(ctx context.Context, bare, path, id, bra
 	}
 	if !slices.Equal(tips, current) {
 		return domain.E("conflict", "private worktree history changed; review removal again")
+	}
+	if checkpoint != nil {
+		if err := checkpoint(); err != nil {
+			return err
+		}
 	}
 	_, err = c.Run(ctx, bare, "worktree", "remove", "--", registeredPath)
 	return err
