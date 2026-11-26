@@ -1,0 +1,120 @@
+package gitcli
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/devjvao/bearforge/internal/domain"
+)
+
+// AdvertisedBranch returns an empty tip only after a successful exact-name lookup.
+func (c *Client) AdvertisedBranch(ctx context.Context, bare, remote, branch string) (string, error) {
+	if err := domain.ValidateRemoteName(remote); err != nil {
+		return "", err
+	}
+	if err := c.ValidateBranch(ctx, branch); err != nil {
+		return "", err
+	}
+	ref := "refs/heads/" + branch
+	b, err := c.Run(ctx, bare, "ls-remote", "--refs", "--exit-code", "--", remote, ref)
+	if isExit(err, 2) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("look up %s/%s (use --offline for cached branch selection): %w", remote, branch, err)
+	}
+	// ls-remote patterns can also match suffixes after a slash.
+	for line := range strings.SplitSeq(strings.TrimSpace(string(b)), "\n") {
+		oid, name, ok := strings.Cut(line, "\t")
+		if !ok || !domain.ValidCommitID(oid) {
+			return "", domain.E("git_failed", "invalid branch advertisement from %s", remote)
+		}
+		if name == ref {
+			return oid, nil
+		}
+	}
+	return "", nil
+}
+
+// FetchBranch updates just the requested tracking ref. Explicit refmap and tag
+// flags keep the transfer scoped to the destination checked for collisions.
+func (c *Client) FetchBranch(ctx context.Context, bare, remote, branch, oid string) error {
+	if err := c.validateFetchRemotes(ctx, bare, []string{remote}); err != nil {
+		return err
+	}
+	dest := "refs/remotes/" + remote + "/" + branch
+	if err := c.checkFetchDestinations(ctx, bare, []string{dest}); err != nil {
+		return err
+	}
+	exists, err := c.RefExists(ctx, bare, dest)
+	if err != nil {
+		return err
+	}
+	if exists {
+		current, err := c.Resolve(ctx, bare, dest)
+		if err != nil {
+			return err
+		}
+		if current == oid {
+			return c.verifyFetchedRefs(ctx, bare, []string{dest})
+		}
+	}
+	if _, err := c.Run(ctx, bare, "fetch", "--no-prune", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "--refmap=", "--", remote, "+refs/heads/"+branch+":"+dest); err != nil {
+		return err
+	}
+	if err := c.verifyFetchedRefs(ctx, bare, []string{dest}); err != nil {
+		return err
+	}
+	got, err := c.Resolve(ctx, bare, dest)
+	if err != nil {
+		return err
+	}
+	if got != oid {
+		return domain.E("conflict", "%s moved during fetch; review the add plan again", dest)
+	}
+	return nil
+}
+
+func (c *Client) HasCommit(ctx context.Context, bare, oid string) (bool, error) {
+	_, err := c.Run(ctx, bare, "rev-parse", "--verify", "--quiet", "--end-of-options", oid+"^{commit}")
+	if isExit(err, 1) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (c *Client) IsAncestor(ctx context.Context, bare, ancestor, descendant string) (bool, error) {
+	_, err := c.Run(ctx, bare, "--no-replace-objects", "merge-base", "--is-ancestor", "--", ancestor, descendant)
+	if isExit(err, 1) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// CheckBranchAvailable asks Git about branch reservations, including a detached
+// worktree bisecting or rebasing the branch. A dry-run against this same store
+// presents the existing tip as both source and destination and writes no refs.
+func (c *Client) CheckBranchAvailable(ctx context.Context, bare, branch, old string) error {
+	_, err := c.Run(ctx, bare, "-c", "fetch.writeCommitGraph=false", "fetch", "--dry-run", "--no-auto-maintenance", "--no-write-fetch-head", "--no-prune", "--no-tags", "--no-recurse-submodules", "--refmap=", "--", ".", old+":refs/heads/"+branch)
+	return err
+}
+
+func (c *Client) AdvanceBranch(ctx context.Context, bare, branch, old, tip string) error {
+	ref := "refs/heads/" + branch
+	if err := c.verifyFetchedRefs(ctx, bare, []string{ref}); err != nil {
+		return err
+	}
+	if err := c.CheckBranchAvailable(ctx, bare, branch, old); err != nil {
+		return err
+	}
+	ok, err := c.IsAncestor(ctx, bare, old, tip)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return domain.E("conflict", "local %s and remote %s diverged; use --track preserve to keep the local branch or choose another name", old, tip)
+	}
+	_, err = c.Run(ctx, bare, "update-ref", "--no-deref", "-m", "bearforge: fast-forward for workspace", ref, tip, old)
+	return err
+}
