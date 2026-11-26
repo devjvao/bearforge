@@ -13,9 +13,11 @@ func TestReviewPendingRemovalOfMissingCheckout(t *testing.T) {
 	for _, tc := range []struct {
 		name            string
 		alreadyReleased bool
+		planned         bool
 	}{
-		{"stale registration", false},
-		{"already released", true},
+		{"stale registration", false, false},
+		{"already released", true, false},
+		{"released before starting", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := t.Context()
@@ -27,6 +29,9 @@ func TestReviewPendingRemovalOfMissingCheckout(t *testing.T) {
 				t.Fatal(err)
 			}
 			op := &app.Operation{Version: 1, ID: "original-removal", Root: store.Root, Kind: "workspace.remove-repo", Workspace: "review", State: "partial", Created: time.Now().UTC(), Steps: []app.Step{{Repository: "api", Branch: "review", Start: start, State: "started"}}}
+			if tc.planned {
+				op.Steps[0].State = "planned"
+			}
 			if err := s.Journal.Save(op); err != nil {
 				t.Fatal(err)
 			}
@@ -40,7 +45,7 @@ func TestReviewPendingRemovalOfMissingCheckout(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tc.alreadyReleased {
+			if tc.alreadyReleased && !tc.planned {
 				if preview.PlanDigest != "" {
 					t.Fatalf("already released registration unexpectedly needs review: %+v", preview)
 				}
@@ -48,7 +53,11 @@ func TestReviewPendingRemovalOfMissingCheckout(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				if len(preview.Items) != 1 || preview.PlanDigest == "" || preview.Items[0].RemovalMode != "missing_registered" {
+				mode := "missing_registered"
+				if tc.alreadyReleased {
+					mode = "missing"
+				}
+				if len(preview.Items) != 1 || preview.PlanDigest == "" || preview.Items[0].RemovalMode != mode {
 					t.Fatalf("expected a fresh missing-worktree review: %+v", preview)
 				}
 				journal, err := s.Journal.Load(op.ID)
