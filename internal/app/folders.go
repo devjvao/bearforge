@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"strings"
 
@@ -73,13 +74,13 @@ func gitParent(entries []domain.DirectoryEntry) bool {
 		case ".git":
 			return true
 		case "head":
-			head = true
+			head = head || !entry.Directory
 		case "objects":
-			objects = true
+			objects = objects || entry.Directory || entry.Link
 		case "refs", "reftable":
-			refs = true
+			refs = refs || entry.Directory || entry.Link
 		case "commondir":
-			common = true
+			common = common || !entry.Directory
 		}
 	}
 	return head && (common || objects && refs)
@@ -132,10 +133,16 @@ func (s *Service) ensureFolderParent(parts []string) error {
 		return err
 	}
 	token := strings.ToLower(rand.Text())
-	if err := s.Store.CreateDir(parent[0], parent[1], folderMarkerPrefix+token); err != nil {
-		return err
+	marker := []string{parent[0], parent[1], folderMarkerPrefix + token}
+	if err := s.Store.CreateDir(marker...); err != nil {
+		return errors.Join(err, s.Store.RemoveEmpty(parent...))
 	}
-	return s.Store.CreateDir(folderOwnershipRecord(parent, token)...)
+	if err := s.Store.CreateDir(folderOwnershipRecord(parent, token)...); err != nil {
+		// Only remove entries created by this attempt. Nonempty directories
+		// survive if another process added files during initialization.
+		return errors.Join(err, s.Store.RemoveEmpty(marker...), s.Store.RemoveEmpty(parent...))
+	}
+	return nil
 }
 
 func (s *Service) cleanupFolderParent(parts []string) error {
