@@ -154,28 +154,19 @@ func (s *Service) applyReclone(ctx context.Context, op *Operation) (Result, erro
 }
 
 func (s *Service) stageReclone(ctx context.Context, op *Operation, step *Step, repo domain.Repository, stage string, exists bool) error {
-	if err := s.validateImportCredentials(ctx, repo, true); err != nil {
-		return err
-	}
-	git, err := s.importGit(repo)
-	if err != nil {
-		return err
-	}
-	scoped := *s
-	scoped.Git = git
-	prepare, ok := git.(interface {
+	prepare, ok := s.Git.(interface {
 		PrepareReclone(context.Context, string, domain.Repository, string) error
 	})
 	if !ok {
 		return domain.E("unavailable", "Git cannot restore the registered remotes")
 	}
 	if exists {
-		if err := scoped.verifyInterruptedClone(ctx, stage, repo.Remotes["origin"]); err != nil {
+		if err := s.verifyInterruptedClone(ctx, stage, repo.Remotes["origin"]); err != nil {
 			return err
 		}
 		// Older journals recorded a single started phase. A matching marker
 		// proves remote preparation already completed for this operation.
-		marker, err := git.Config(ctx, stage, "bearforge.recloneOperation")
+		marker, err := s.Git.Config(ctx, stage, "bearforge.recloneOperation")
 		if err != nil {
 			return err
 		}
@@ -186,7 +177,24 @@ func (s *Service) stageReclone(ctx context.Context, op *Operation, step *Step, r
 			step.State = "transferred"
 		}
 	}
+	credentials := importCredentialRequest(repo)
+	if repo.Provider["transport"] == "" && (credentials.Connection != "" || credentials.TokenEnv != "") {
+		var err error
+		credentials, err = s.registeredCredentialRequest(repo)
+		if err != nil {
+			return err
+		}
+	}
 	if step.State != "transferred" {
+		if err := s.validateTransferCredentials(ctx, credentials, true); err != nil {
+			return err
+		}
+		git, err := s.transferGit(credentials)
+		if err != nil {
+			return err
+		}
+		scoped := *s
+		scoped.Git = git
 		if err := s.Store.EnsureDir(".bearforge", "staging"); err != nil {
 			return err
 		}
@@ -205,7 +213,7 @@ func (s *Service) stageReclone(ctx context.Context, op *Operation, step *Step, r
 	if err := prepare.PrepareReclone(ctx, stage, repo, op.ID); err != nil {
 		return err
 	}
-	if err := scoped.bindImport(ctx, repo, stage); err != nil {
+	if err := s.bindTransferConnection(ctx, stage, credentials); err != nil {
 		return err
 	}
 	step.State = "publishing"
