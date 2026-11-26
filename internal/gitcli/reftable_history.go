@@ -5,9 +5,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/hanwen/reftable"
@@ -26,6 +28,27 @@ func (b historyBlocks) ReadBlock(offset uint64, size int) ([]byte, error) {
 		return nil, errors.New("private reftable block exceeds inspection limits")
 	}
 	return b[offset : offset+uint64(size)], nil
+}
+
+// A private stack may contain unpublished tables after an interrupted update.
+func checkPrivateStackEntries(root *os.Root, tables []string) error {
+	dir, err := root.Open(".")
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	// One entry beyond the manifest and its listed tables suffices to
+	// detect extra files without reading an arbitrarily large directory.
+	names, err := dir.Readdirnames(len(tables) + 2)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	for _, name := range names {
+		if name != "tables.list" && (strings.HasSuffix(name, ".lock") || !slices.Contains(tables, name)) {
+			return privateRefError(root.Name(), name)
+		}
+	}
+	return nil
 }
 
 // reftableHistory reads only the selected worktree's private stack. The
@@ -50,6 +73,9 @@ func reftableHistory(ctx context.Context, admin *os.Root) (tips []string, err er
 	names := strings.Fields(string(list))
 	if len(names) == 0 || len(names) > 128 {
 		return nil, domain.E("unsafe_removal", "cannot inspect an empty or oversized private reftable stack in %s", root.Name())
+	}
+	if err := checkPrivateStackEntries(root, names); err != nil {
+		return nil, err
 	}
 	var tables []reftable.Table
 	remaining := maxPrivateBytes

@@ -48,7 +48,7 @@ func (c *Client) missingRootTips(ctx context.Context, bare, admin, format string
 		return nil, err
 	}
 	defer root.Close()
-	if err := c.checkPrivateAdmin(ctx, bare, admin); err != nil {
+	if err := c.checkPrivateAdmin(ctx, bare, root, format); err != nil {
 		return nil, err
 	}
 	var tips []string
@@ -126,8 +126,11 @@ func filesHistory(root *os.Root) ([]string, error) {
 	return tips, nil
 }
 
-func (c *Client) preserveRootTips(ctx context.Context, bare, operation, repo string, tips []string) error {
+func (c *Client) preserveRootTips(ctx context.Context, bare, operation, repo string, tips []string, protected map[string]bool) error {
 	for _, oid := range tips {
+		if protected[oid] {
+			continue
+		}
 		kind, err := c.Run(ctx, bare, "--no-replace-objects", "cat-file", "-t", oid)
 		if err != nil {
 			return err
@@ -143,7 +146,7 @@ func (c *Client) preserveRootTips(ctx context.Context, bare, operation, repo str
 		if len(refs) == 0 {
 			// Keep the exact object even for a fetched tag or tree. An empty
 			// old value makes creation exclusive against external ref updates.
-			ref := "refs/bearforge/recovery/" + operation + "/" + repo + "/" + oid
+			ref := "refs/" + recoveryRefPrefix(operation, repo) + oid
 			if _, err := c.Run(ctx, bare, "update-ref", "--no-deref", ref, oid, ""); err != nil {
 				return err
 			}
