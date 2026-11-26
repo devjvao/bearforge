@@ -7,11 +7,18 @@ import (
 )
 
 type missingWorktreeGit interface {
+	FindWorktreeRegistration(ctx context.Context, bare, path string) (string, error)
 	RegisteredWorktreeID(ctx context.Context, bare, path string) (string, error)
 	ReleaseMissingWorktree(ctx context.Context, bare, path, id, branch, head, operation, repo string) error
 }
 
 func (s *Service) missingRemovalStep(ctx context.Context, bare, path string, step Step) (Step, error) {
+	return s.inspectRegistration(ctx, bare, path, step, true)
+}
+
+// A retained registration only needs an unambiguous identity. Releasing one
+// also requires checking its lock and private Git state.
+func (s *Service) inspectRegistration(ctx context.Context, bare, path string, step Step, forRelease bool) (Step, error) {
 	step.RemovalMode, step.WorktreeID, step.Start = "missing", "", ""
 	trees, err := s.Git.Worktrees(ctx, bare)
 	if err != nil {
@@ -21,20 +28,28 @@ func (s *Service) missingRemovalStep(ctx context.Context, bare, path string, ste
 		if !pathsEqual(tree.Path, path) {
 			continue
 		}
-		if tree.Locked || tree.Bare || step.WorktreeID != "" {
+		if (forRelease && tree.Locked) || tree.Bare || step.WorktreeID != "" {
 			return step, domain.E("unsafe_removal", "locked, bare or ambiguous Git registration at %s", path)
 		}
 		git, ok := s.Git.(missingWorktreeGit)
 		if !ok {
 			return step, domain.E("unavailable", "unable to preserve missing worktree history")
 		}
-		step.WorktreeID, err = git.RegisteredWorktreeID(ctx, bare, path)
+		lookup := git.FindWorktreeRegistration
+		if forRelease {
+			lookup = git.RegisteredWorktreeID
+		}
+		step.WorktreeID, err = lookup(ctx, bare, path)
 		if err != nil {
 			return step, err
 		}
 		step.RemovalMode, step.Start, step.Branch = "missing_registered", tree.Head, tree.Branch
 	}
 	return step, nil
+}
+
+func sameRegistration(a, b Step) bool {
+	return a.WorktreeID == b.WorktreeID && (a.WorktreeID == "" || (a.Branch == b.Branch && a.Start == b.Start))
 }
 
 func (s *Service) releaseMissingWorktree(ctx context.Context, op *Operation, step *Step, bare, path string) error {
@@ -48,7 +63,7 @@ func (s *Service) releaseMissingWorktree(ctx context.Context, op *Operation, ste
 	if step.State == "succeeded" {
 		return domain.E("conflict", "Git registration for the removed checkout %s reappeared", path)
 	}
-	if observed.WorktreeID != step.WorktreeID || (observed.WorktreeID != "" && (observed.Start != step.Start || observed.Branch != step.Branch)) {
+	if !sameRegistration(observed, *step) {
 		return domain.E("conflict", "Git registration at %s changed; review removal again", path)
 	}
 	step.State = "started"

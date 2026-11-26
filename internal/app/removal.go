@@ -87,7 +87,7 @@ func (s *Service) RemoveRepositories(ctx context.Context, req RemoveRequest) (Re
 			if err := selectResidualMode(&step, m.CheckoutID, path, req.MoveUnverified); err != nil {
 				return r, err
 			}
-			if err := s.checkRecoveryTarget(w.Name, path, step); err != nil {
+			if err := s.checkResidualMove(ctx, w.Name, bare, path, step); err != nil {
 				return r, err
 			}
 		} else {
