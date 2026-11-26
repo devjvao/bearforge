@@ -162,6 +162,23 @@ func (s *Service) applyRemove(ctx context.Context, op *Operation) (Result, error
 		if err != nil {
 			return finish(err)
 		}
+		_, mapped := w.Repositories[step.Repository]
+		if step.State == "succeeded" && mapped {
+			return finish(domain.E("conflict", "checkout mapping for %s reappeared", step.Repository))
+		}
+		if keepsDirectory(step.RemovalMode) && wasStarted && !mapped {
+			// Only the mapping belonged to this action. The user may have
+			// moved the retained files or repaired the checkout since then.
+			if step.State != "succeeded" {
+				step.State = "succeeded"
+				if err := s.Journal.Save(op); err != nil {
+					return finish(err)
+				}
+			}
+			s.event(active, "succeeded")
+			active = ""
+			continue
+		}
 		c, _, err := s.Store.LoadCatalog()
 		if err != nil {
 			return finish(err)
@@ -182,13 +199,7 @@ func (s *Service) applyRemove(ctx context.Context, op *Operation) (Result, error
 		if err != nil {
 			return finish(err)
 		}
-		_, mapped := w.Repositories[step.Repository]
-		if step.State == "succeeded" && mapped {
-			return finish(domain.E("conflict", "checkout mapping for %s reappeared", step.Repository))
-		}
-		if keepsDirectory(step.RemovalMode) && wasStarted && !mapped {
-			// The manifest update was durable. The user may have moved their files since then.
-		} else if residualMode(step.RemovalMode) {
+		if residualMode(step.RemovalMode) {
 			if err := s.applyResidual(ctx, op, step, bare, path, exists); err != nil {
 				return finish(err)
 			}
@@ -313,6 +324,9 @@ func (s *Service) finishRemoval(op *Operation, r Result, active string, err erro
 		if residualMode(step.RemovalMode) {
 			target := s.retainedPath(op.Workspace, path, step)
 			for _, candidate := range []string{target, path} {
+				if candidate == "" {
+					continue
+				}
 				if id, probeErr := s.removalDirectory(candidate); probeErr == nil && id == step.RemovalDirectory {
 					item.RetainedPath = candidate
 					break
