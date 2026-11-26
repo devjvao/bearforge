@@ -10,9 +10,9 @@ import (
 	"github.com/devjvao/bearforge/internal/domain"
 )
 
-// RegisteredWorktreeID finds the administrative directory by its Git back-pointer.
-// Git chooses a suffix when worktrees share a basename.
-func (c *Client) RegisteredWorktreeID(ctx context.Context, bare, path string) (string, error) {
+// FindWorktreeRegistration identifies the administrative directory by its Git
+// back-pointer, including suffixes Git adds when worktrees share a basename.
+func (c *Client) FindWorktreeRegistration(ctx context.Context, bare, path string) (string, error) {
 	parent := filepath.Join(bare, "worktrees")
 	entries, err := os.ReadDir(parent)
 	if err != nil {
@@ -48,7 +48,17 @@ func (c *Client) RegisteredWorktreeID(ctx context.Context, bare, path string) (s
 	if found == "" {
 		return "", domain.E("conflict", "cannot identify the Git registration for %s", path)
 	}
-	admin := filepath.Join(parent, found)
+	return found, nil
+}
+
+// RegisteredWorktreeID returns the registration only if its private Git state
+// can safely be released after the checkout loses its Git link.
+func (c *Client) RegisteredWorktreeID(ctx context.Context, bare, path string) (string, error) {
+	found, err := c.FindWorktreeRegistration(ctx, bare, path)
+	if err != nil {
+		return "", err
+	}
+	admin := filepath.Join(bare, "worktrees", found)
 	// Git skips its submodule checks when the working directory is gone.
 	// Deleting this registration would also delete its private object stores.
 	if _, err := os.Lstat(filepath.Join(admin, "modules")); err == nil {

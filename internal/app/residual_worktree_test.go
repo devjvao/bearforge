@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/devjvao/bearforge/internal/app"
@@ -295,5 +296,119 @@ func TestLegacyGitfileRemovalRequiresReviewedMove(t *testing.T) {
 				t.Fatalf("lost repairable registration: %+v", trees)
 			}
 		})
+	}
+}
+
+func TestLegacyKeepRegisteredFilesPreservesGitState(t *testing.T) {
+	for _, state := range []string{"staged", "private", "locked"} {
+		t.Run(state, func(t *testing.T) {
+			s, store := missingFixture(t)
+			ctx := t.Context()
+			w, rev, err := store.LoadWorkspace("review")
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := w.Repositories["api"]
+			m.CheckoutID = ""
+			w.Repositories["api"] = m
+			if err := store.SaveWorkspace(w, rev); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(store.Root, "review", "api")
+			bare := filepath.Join(store.Root, "repos", "api.git")
+			gitfile := filepath.Join(path, ".git")
+			link, err := os.ReadFile(gitfile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch state {
+			case "staged":
+				if err := os.WriteFile(filepath.Join(path, "draft"), []byte("staged contents"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				prGit(t, path, "add", "draft")
+			case "private":
+				prGit(t, path, "update-ref", "refs/worktree/saved", "HEAD")
+			case "locked":
+				prGit(t, bare, "worktree", "lock", path)
+			}
+			if err := os.Remove(gitfile); err != nil {
+				t.Fatal(err)
+			}
+
+			req := app.RemoveRequest{Workspace: "review", Repositories: []string{"api"}, DryRun: true, MoveUnverified: true}
+			if _, err := s.RemoveRepositories(ctx, req); err == nil || !strings.Contains(err.Error(), state) {
+				t.Fatalf("explicit move with %s state: %v", state, err)
+			}
+			req.MoveUnverified = false
+			preview, err := s.RemoveRepositories(ctx, req)
+			if err != nil || len(preview.Items) != 1 || preview.Items[0].RemovalMode != "keep_registered_files" {
+				t.Fatalf("preview with %s state: %+v, %v", state, preview, err)
+			}
+			req.ExpectedPlan, req.DryRun = preview.PlanDigest, false
+			if _, err := s.RemoveRepositories(ctx, req); err != nil {
+				t.Fatalf("could not keep the registered files: %v", err)
+			}
+			w, _, err = store.LoadWorkspace("review")
+			if _, mapped := w.Repositories["api"]; err != nil || mapped {
+				t.Fatalf("membership remains: %v, %v", w.Repositories, err)
+			}
+			if err := os.WriteFile(gitfile, link, 0600); err != nil {
+				t.Fatal(err)
+			}
+			prGit(t, path, "rev-parse", "--verify", "HEAD")
+			switch state {
+			case "staged":
+				prGit(t, path, "ls-files", "--error-unmatch", "draft")
+			case "private":
+				prGit(t, path, "show-ref", "--verify", "refs/worktree/saved")
+			case "locked":
+				trees, err := s.Git.Worktrees(ctx, bare)
+				if err != nil || len(trees) != 2 || !trees[1].Locked {
+					t.Fatalf("lock lost: %+v, %v", trees, err)
+				}
+			}
+		})
+	}
+}
+
+func TestResidualMoveRechecksRegistrationBeforeMovingFiles(t *testing.T) {
+	s, store := missingFixture(t)
+	ctx := t.Context()
+	path := filepath.Join(store.Root, "review", "api")
+	gitfile := filepath.Join(path, ".git")
+	link, err := os.ReadFile(gitfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(gitfile); err != nil {
+		t.Fatal(err)
+	}
+	req := app.RemoveRequest{Workspace: "review", Repositories: []string{"api"}, DryRun: true}
+	preview, err := s.RemoveRepositories(ctx, req)
+	if err != nil || len(preview.Items) != 1 || preview.Items[0].RemovalMode != "preserve_files" {
+		t.Fatalf("preview: %+v, %v", preview, err)
+	}
+	s.Observe = func(e app.Event) {
+		if e.Repository == "api" && e.State == "running" {
+			// Another Git client changes the registration after the plan is saved.
+			if err := os.WriteFile(gitfile, link, 0600); err != nil {
+				t.Fatal(err)
+			}
+			prGit(t, path, "update-ref", "refs/worktree/late", "HEAD")
+			if err := os.Remove(gitfile); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	req.ExpectedPlan, req.DryRun = preview.PlanDigest, false
+	if _, err := s.RemoveRepositories(ctx, req); err == nil || !strings.Contains(err.Error(), "private") {
+		t.Fatalf("move with late private ref: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("checkout moved before release validation: %v", err)
+	}
+	if _, err := os.Stat(preview.Items[0].RetainedPath); !os.IsNotExist(err) {
+		t.Fatalf("unexpected recovery destination: %v", err)
 	}
 }

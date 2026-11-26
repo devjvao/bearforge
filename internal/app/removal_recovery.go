@@ -79,7 +79,7 @@ func (s *Service) ReviewRemovalRecovery(ctx context.Context, id, digest string) 
 			}
 		}
 		op.Steps[i] = updated
-		if err := s.checkRecoveryTarget(op.Workspace, path, updated); err != nil {
+		if err := s.checkResidualMove(ctx, op.Workspace, bare, path, updated); err != nil {
 			return r, err
 		}
 		r.Items = append(r.Items, Item{Workspace: w.Name, Repository: prior.Repository, Path: path, Branch: updated.Branch, Start: updated.Start, RemovalMode: updated.RemovalMode, RetainedPath: s.retainedPath(w.Name, path, updated), Outcome: "planned"})

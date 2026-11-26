@@ -104,7 +104,7 @@ func (s *Service) residualStep(ctx context.Context, bare, path string, prior Ste
 	if prior.RemovalDirectory != "" && prior.RemovalDirectory != id {
 		return prior, false, domain.E("conflict", "directory at %s was replaced since removal was reviewed", path)
 	}
-	step, err := s.missingRemovalStep(ctx, bare, path, prior)
+	step, err := s.inspectRegistration(ctx, bare, path, prior, false)
 	if err != nil {
 		return prior, false, err
 	}
@@ -119,9 +119,16 @@ func (s *Service) residualStep(ctx context.Context, bare, path string, prior Ste
 	return step, true, nil
 }
 
-func (s *Service) checkRecoveryTarget(workspace, path string, step Step) error {
+func (s *Service) checkResidualMove(ctx context.Context, workspace, bare, path string, step Step) error {
 	if step.RemovalMode != preserveResidual {
 		return nil
+	}
+	observed, err := s.missingRemovalStep(ctx, bare, path, step)
+	if err != nil {
+		return err
+	}
+	if !sameRegistration(observed, step) {
+		return domain.E("conflict", "worktree registration changed since removal was reviewed")
 	}
 	exists, err := s.Store.Exists(residualTarget(workspace, step)...)
 	if err == nil && exists {
@@ -140,8 +147,11 @@ func (s *Service) applyResidual(ctx context.Context, op *Operation, step *Step, 
 		if err != nil {
 			return err
 		}
-		if !residual || observed.RemovalDirectory != step.RemovalDirectory || observed.WorktreeID != step.WorktreeID || (step.WorktreeID != "" && (observed.Start != step.Start || observed.Branch != step.Branch)) {
+		if !residual || observed.RemovalDirectory != step.RemovalDirectory || !sameRegistration(observed, *step) {
 			return domain.E("conflict", "checkout or registration at %s changed; review the retained files", path)
+		}
+		if err := s.checkResidualMove(ctx, op.Workspace, bare, path, *step); err != nil {
+			return err
 		}
 		step.State = "started"
 		if err := s.Journal.Save(op); err != nil {
