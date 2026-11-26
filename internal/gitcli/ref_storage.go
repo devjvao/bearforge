@@ -421,10 +421,6 @@ func (c *Client) fetchRefPlan(ctx context.Context, path string) ([]string, error
 	if err != nil {
 		return nil, err
 	}
-	retained, symbolic, err := c.refInventory(ctx, path)
-	if err != nil {
-		return nil, err
-	}
 	var expected, potential []string
 	for _, remote := range remotes {
 		names, err := c.advertised(ctx, path, remote, remote)
@@ -452,15 +448,26 @@ func (c *Client) fetchRefPlan(ctx context.Context, path string) ([]string, error
 			}
 		}
 	}
+	if err := c.checkFetchDestinations(ctx, path, potential); err != nil {
+		return nil, err
+	}
+	return expected, nil
+}
+
+func (c *Client) checkFetchDestinations(ctx context.Context, path string, potential []string) error {
+	retained, symbolic, err := c.refInventory(ctx, path)
+	if err != nil {
+		return err
+	}
 	format, err := c.ReferenceFormat(ctx, path)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	sensitive := true
 	if format == "files" {
 		sensitive, err = caseSensitive(path)
 		if err != nil {
-			return nil, err
+			return err
 		}
 	}
 	protected := map[string]string{}
@@ -475,7 +482,7 @@ func (c *Client) fetchRefPlan(ctx context.Context, path string) ([]string, error
 	}
 	for _, name := range potential {
 		if symref := protected[key(name)]; symref != "" {
-			return nil, domain.E("conflict", "fetch destination %q overlaps retained symbolic ref %q; reconcile remote names before syncing", name, symref)
+			return domain.E("conflict", "fetch destination %q overlaps retained symbolic ref %q; reconcile remote names before syncing", name, symref)
 		}
 	}
 	direct := map[string]bool{}
@@ -489,7 +496,7 @@ func (c *Client) fetchRefPlan(ctx context.Context, path string) ([]string, error
 	if format == "files" {
 		loose, symlinks, err = c.looseRefSpellings(ctx, path, sensitive)
 		if err != nil {
-			return nil, err
+			return err
 		}
 	}
 	knownDirect := func(name string) bool {
@@ -527,18 +534,18 @@ func (c *Client) fetchRefPlan(ctx context.Context, path string) ([]string, error
 		}
 		target, err := c.Run(ctx, path, "symbolic-ref", "--no-recurse", "--quiet", name)
 		if err == nil {
-			return nil, domain.E("conflict", "fetch destination %q is a retained symbolic ref to %q; reconcile remote names before syncing", name, strings.TrimSpace(string(target)))
+			return domain.E("conflict", "fetch destination %q is a retained symbolic ref to %q; reconcile remote names before syncing", name, strings.TrimSpace(string(target)))
 		}
 		if !isExit(err, 1) {
-			return nil, err
+			return err
 		}
 	}
 	if format == "files" {
 		if a, b := refCollision(append(retained, potential...), sensitive); a != "" {
-			return nil, domain.E("conflict", "files refs cannot preserve %q and %q; reconcile remote branch/tag names or arrange a separately planned migration (linked worktrees are never automatically migrated)", a, b)
+			return domain.E("conflict", "files refs cannot preserve %q and %q; reconcile remote branch/tag names or arrange a separately planned migration (linked worktrees are never automatically migrated)", a, b)
 		}
 	}
-	return expected, nil
+	return nil
 }
 
 func (c *Client) verifyFetchedRefs(ctx context.Context, path string, expected []string) error {

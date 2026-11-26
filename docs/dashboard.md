@@ -52,7 +52,7 @@ Press `n` to open the creation form. Enter a portable name and optional default 
 
 Press `a` to open **Add repositories** for the loaded workspace. Existing workspace members remain visible but disabled. Arrows or `j`/`k` move, Space toggles a repository, and `/` filters. Enter applies a filter; Escape clears it. Selections survive filtering, including selected rows that become hidden.
 
-Enter previews selected repositories using the workspace's default branch and the existing base/tracking defaults. The scrollable preview shows each destination path, branch creation/reuse, base ref, starting commit and tracking policy. Only `y` confirms execution. Escape or `n` returns to selection; `r` requests a fresh preview. For branch/base/tracking overrides, use `bearforge workspace add` in the CLI.
+Enter looks up the workspace branch on the selected remote and previews the selected repositories. Press `o` in the picker to use cached refs offline or to keep a local tip after a divergence. The review names the previous commit for a proposed fast-forward. The scrollable preview shows each destination path, branch creation/reuse, base ref, starting commit and tracking policy. Only `y` confirms execution. Escape or `n` returns to selection; `r` requests a fresh preview. For branch/base/tracking overrides, use `bearforge workspace add` in the CLI.
 
 Confirmation replans under the mutation lock and checks the reviewed root, workspace, definition revisions and resolved Git steps. Changed state causes a refusal before Git or journal effects; close the result and reopen the picker for a fresh preview. Successful repositories survive partial failures. Results include operation inspection/recovery commands.
 
