@@ -252,6 +252,8 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.showWorkspace && m.workspaceRun != nil && m.workspaceRun.phase == workspaceForm {
 			m = m.workspaceText(v.Content)
+		} else if m.showAdd && m.addRun != nil && m.addRun.folderID != "" {
+			appendInputText(&m.addRun.editFolder, v.Content, maxAddFolderBytes)
 		}
 	case tea.ColorProfileMsg:
 		m.colorProfile = v.Profile
