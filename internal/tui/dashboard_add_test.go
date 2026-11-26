@@ -493,3 +493,64 @@ func TestDashboardAddReviewsFolderOverrides(t *testing.T) {
 		t.Fatalf("folder review: %+v", requested)
 	}
 }
+
+func TestDashboardAddRequestsOverridesOnlyForSelectedRepositories(t *testing.T) {
+	var req app.AddRequest
+	m := selectAddRepositories(t, addDashboard(t, func(_ context.Context, r app.AddRequest, _ func(app.Event)) (app.Result, error) {
+		req = r
+		return addPreview(r), nil
+	}))
+	// Edit and then deselect worker. Its draft should survive switching back.
+	m, _ = dashboardKey(m, 'd', "d")
+	m, _ = importControl(m, 'u')
+	m, _ = dashboardKey(m, 't', "team/worker")
+	m, _ = dashboardKey(m, tea.KeyEnter, "")
+	m, _ = dashboardKey(m, ' ', " ")
+	m = reviewAdd(t, m)
+	if !reflect.DeepEqual(req.Repositories, []string{"web"}) || len(req.Folders) != 0 {
+		t.Fatalf("preview for web alone: %+v", req)
+	}
+	m, _ = dashboardKey(m, tea.KeyEsc, "")
+	m, _ = dashboardKey(m, ' ', " ")
+	m = reviewAdd(t, m)
+	if !reflect.DeepEqual(req.Folders, map[string]string{"worker": "team/worker"}) {
+		t.Fatalf("preview after reselecting worker: %+v", req)
+	}
+}
+
+func TestDashboardAddPastesIntoActiveFolderEditor(t *testing.T) {
+	m := selectAddRepositories(t, addDashboard(t, func(_ context.Context, req app.AddRequest, _ func(app.Event)) (app.Result, error) {
+		return addPreview(req), nil
+	}))
+	paste := func(text string) {
+		t.Helper()
+		updated, cmd := m.Update(tea.PasteMsg{Content: text})
+		m = updated.(dashboardModel)
+		if cmd != nil {
+			t.Fatal("paste executed a command")
+		}
+	}
+	m, _ = dashboardKey(m, 'd', "d")
+	m, _ = importControl(m, 'u')
+	m, _ = dashboardKey(m, 't', "team/")
+	paste("\x1b[31mapi\x1b[0m\x00")
+	if got := m.addRun.editFolder; got != "team/api" {
+		t.Fatalf("pasted folder = %q, want team/api", got)
+	}
+	m, _ = dashboardKey(m, tea.KeyEnter, "")
+	paste("outside")
+	if got := m.addRun.editFolder; got != "team/api" {
+		t.Fatalf("paste outside editor changed folder to %q", got)
+	}
+	// A parent and leaf of 64 bytes each plus a slash fit exactly.
+	m, _ = dashboardKey(m, 'd', "d")
+	m, _ = importControl(m, 'u')
+	want := strings.Repeat("p", 64) + "/" + strings.Repeat("s", 64)
+	paste(want)
+	paste("x")
+	m, _ = dashboardKey(m, tea.KeyEnter, "")
+	m = reviewAdd(t, m)
+	if got := m.addRun.request.Folders["worker"]; got != want {
+		t.Fatalf("reviewed folder = %q, want %q", got, want)
+	}
+}

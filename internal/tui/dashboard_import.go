@@ -446,11 +446,20 @@ func importEdit(value *string, key tea.KeyPressMsg, limit int) {
 		if key.Mod.Contains(tea.ModCtrl) && !key.Mod.Contains(tea.ModAlt) {
 			return
 		}
-		if len(*value)+len(key.Text) <= limit {
-			*value += displayText(key.Text)
-		}
+		appendInputText(value, key.Text, limit)
 	}
 }
+
+func appendInputText(value *string, text string, limit int) {
+	remaining := limit - len(*value)
+	if len(text) > remaining {
+		return
+	}
+	if clean := displayText(text); len(clean) <= remaining {
+		*value += clean
+	}
+}
+
 func (m dashboardModel) importText(text string) dashboardModel {
 	run := m.importRun
 	if run == nil {

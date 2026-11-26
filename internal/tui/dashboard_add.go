@@ -31,6 +31,8 @@ const (
 	addResults
 )
 
+const maxAddFolderBytes = 129
+
 type dashboardAdd struct {
 	offline              bool
 	flat                 bool
@@ -113,7 +115,13 @@ func (m dashboardModel) previewAdd() (tea.Model, tea.Cmd) {
 		m.addRun.err = errors.New("select at least one repository with Space")
 		return m, nil
 	}
-	req := app.AddRequest{Workspace: m.addRun.workspace, Repositories: names, Offline: m.addRun.offline, DryRun: true, Flat: m.addRun.flat, Folders: maps.Clone(m.addRun.folders)}
+	folders := make(map[string]string)
+	for _, name := range names {
+		if folder, ok := m.addRun.folders[name]; ok {
+			folders[name] = folder
+		}
+	}
+	req := app.AddRequest{Workspace: m.addRun.workspace, Repositories: names, Offline: m.addRun.offline, DryRun: true, Flat: m.addRun.flat, Folders: folders}
 	m.addRun.request = req
 	m.addRun.phase, m.addRun.err, m.addRun.offset = addPlanning, nil, 0
 	m.addRun.preview = app.Result{}
@@ -316,7 +324,7 @@ func (m dashboardModel) addKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			run.folderID = ""
 		default:
-			importEdit(&run.editFolder, key, 129)
+			importEdit(&run.editFolder, key, maxAddFolderBytes)
 		}
 		return m, nil
 	}
