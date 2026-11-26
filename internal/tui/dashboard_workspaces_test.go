@@ -225,7 +225,7 @@ func TestDashboardRemovalResultsIncludeRecoveryAndContainerWarning(t *testing.T)
 	}
 }
 
-func TestDashboardWorkspaceRecoveryKeepsExplicitRoot(t *testing.T) {
+func TestDashboardWorkspaceRecoveryKeepsCapturedDirectory(t *testing.T) {
 	root := `D:\Other work\team's repositories`
 	m := workspaceDashboard(t, workspaceActionSource{remove: func(_ context.Context, req app.RemoveRequest, _ func(app.Event)) (app.Result, error) {
 		return workspacePreview(req.Workspace, "api", "web"), nil
@@ -240,10 +240,10 @@ func TestDashboardWorkspaceRecoveryKeepsExplicitRoot(t *testing.T) {
 	// Later observation changes must not retarget retained recovery instructions.
 	m.data.Root = "/different/root"
 	content := strings.Join(m.workspaceContent(), "\n")
-	if !strings.Contains(content, "bearforge --root ") || !strings.Contains(content, `D:\Other work\team`) || strings.Contains(content, "/different/root") {
+	if !strings.Contains(content, "Directory: "+root+"\n") || strings.Contains(content, "--root") || strings.Contains(content, "/different/root") {
 		t.Fatalf("recovery lost explicit root: %s", content)
 	}
-	for _, action := range []string{"operations show recovery123", "operations resume recovery123"} {
+	for _, action := range []string{"bearforge operations show recovery123", "bearforge operations resume recovery123"} {
 		if !strings.Contains(content, action) {
 			t.Errorf("missing %s", action)
 		}
@@ -256,14 +256,14 @@ func TestDashboardWorkspaceRecoveryKeepsExplicitRoot(t *testing.T) {
 		}
 		m, _ = dashboardKey(m, tea.KeyPgDown, "")
 	}
-	for _, want := range []string{"--root", "repositories", "recovery123", "Resume:"} {
+	for _, want := range []string{"Directory:", "repositories", "recovery123", "Resume:"} {
 		if !strings.Contains(seen.String(), want) {
 			t.Errorf("unreachable recovery %s", want)
 		}
 	}
 }
 
-func TestWorkspaceRecoveryRootQuotingIsLiteral(t *testing.T) {
+func TestWorkspaceShellArgumentQuotingIsLiteral(t *testing.T) {
 	value := `D:\Other work\team's $HOME; $(Get-Date)`
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
@@ -273,7 +273,7 @@ func TestWorkspaceRecoveryRootQuotingIsLiteral(t *testing.T) {
 	}
 	output, err := cmd.CombinedOutput()
 	if err != nil || string(output) != value {
-		t.Fatalf("root interpreted as shell code: %q, %v", output, err)
+		t.Fatalf("argument interpreted as shell code: %q, %v", output, err)
 	}
 }
 

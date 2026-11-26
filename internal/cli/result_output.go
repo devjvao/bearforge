@@ -184,11 +184,7 @@ func (o *options) renderHumanResult(r app.Result, terminal bool) error {
 		resultErr = errors.Join(resultErr, o.diagnostic("Error:", r.Problem.Message))
 	}
 	if r.OperationID != "" && r.Outcome == "partial" {
-		message := "Resume with: " + o.recoveryCommand("resume", r.OperationID)
-		if r.Command == "exec" {
-			message = "Inspect execution with: " + o.recoveryCommand("show", r.OperationID) + " (commands are never replayed)"
-		}
-		resultErr = errors.Join(resultErr, o.confirmationText("%s\n", message))
+		resultErr = errors.Join(resultErr, o.writePartialRecovery(r.Command, r.OperationID))
 	}
 	return resultErr
 }

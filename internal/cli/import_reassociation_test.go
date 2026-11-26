@@ -87,7 +87,8 @@ func TestImportResumeDryRunIncludesReplacementAccountAndRetainsOldGrant(t *testi
 	if err := journal.Save(op); err != nil {
 		t.Fatal(err)
 	}
-	output, err := authCommand(t, manager, "", "--root", managed, "--json", "--dry-run", "operations", "resume", op.ID, "--connection", "work")
+	t.Chdir(managed)
+	output, err := authCommand(t, manager, "", "--json", "--dry-run", "operations", "resume", op.ID, "--connection", "work")
 	if err != nil {
 		t.Fatalf("dry-run failed: %s %v", output, err)
 	}

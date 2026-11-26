@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -129,10 +131,49 @@ func decodeOperation(id, root string, r io.Reader) (*app.Operation, error) {
 	if op.ID != id {
 		return nil, domain.E("invalid", "operation identity mismatch")
 	}
+	// Older journals retain the root spelling supplied when they were created.
+	if op.Root != root && sameDirectoryEntries(op.Root, root) {
+		op.Root = root
+	}
 	if err := valid(&op, root); err != nil {
 		return nil, err
 	}
 	return &op, nil
+}
+
+// Compare each differing name within the store's known parent. This also
+// recognizes Windows DOS short names without following recorded ancestors.
+func sameDirectoryEntries(recorded, current string) bool {
+	if !filepath.IsAbs(recorded) || filepath.Clean(recorded) != recorded ||
+		!strings.EqualFold(filepath.VolumeName(recorded), filepath.VolumeName(current)) ||
+		strings.Count(recorded, string(filepath.Separator)) != strings.Count(current, string(filepath.Separator)) {
+		return false
+	}
+	if runtime.GOOS != "windows" && !strings.EqualFold(recorded, current) {
+		return false
+	}
+	for recorded != current {
+		parent, recordedParent := filepath.Dir(current), filepath.Dir(recorded)
+		if parent == current || recordedParent == recorded {
+			return strings.EqualFold(current, recorded)
+		}
+		name := filepath.Base(recorded)
+		if name != filepath.Base(current) {
+			if !filepath.IsLocal(name) {
+				return false
+			}
+			recordedInfo, err := os.Lstat(filepath.Join(parent, name))
+			if err != nil || !recordedInfo.IsDir() {
+				return false
+			}
+			currentInfo, err := os.Lstat(current)
+			if err != nil || !os.SameFile(recordedInfo, currentInfo) {
+				return false
+			}
+		}
+		current, recorded = parent, recordedParent
+	}
+	return true
 }
 
 func (s *Store) operationIDs() ([]string, error) {

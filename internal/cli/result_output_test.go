@@ -69,7 +69,7 @@ func TestResultFailuresKeepRecoveryAndStderr(t *testing.T) {
 			t.Fatalf("missing %q in %q", want, out.String())
 		}
 	}
-	for _, want := range []string{"child failed", "Error: execution failed", "Inspect execution with:", "--root", "operation-123", "commands are never replayed"} {
+	for _, want := range []string{"child failed", "Error: execution failed", "Inspect execution with:", "Directory: /storage root\n", "\nbearforge operations show operation-123\n", "commands are never replayed"} {
 		if !strings.Contains(errOut.String(), want) {
 			t.Fatalf("missing %q in %q", want, errOut.String())
 		}

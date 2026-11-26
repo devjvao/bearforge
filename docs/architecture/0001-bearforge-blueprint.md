@@ -114,10 +114,12 @@ Repository identity detection is conservative. Normalize supported provider coor
 
 ## 6. Filesystem and configuration
 
-The installation root defaults to `~/code`. Resolve the home directory through the OS, not literal shell tilde expansion. Support `--root`, then `BEARFORGE_ROOT`, then a local preferences default, in that order. Explicit root selection wins over current-directory discovery. Discovery walks ancestors for `.bearforge/catalog.yaml`; otherwise use the configured default.
+Resolve the process working directory to its physical path and walk its parents up to the filesystem or volume root. The first directory containing a real `.bearforge` directory is the installation root. A workspace manifest or first operation journal can exist before the catalog, so the marker is the directory itself. Continue the search only when the marker is missing. Report a file, symlink, reparse point or inspection error at the marker path. If the search finds no marker, use the physical working directory.
+
+Discovery reads the filesystem without creating state or changing the process working directory. Relative local sources for `repo add` resolve from the invocation directory. Help, version and completion work without opening a store. Scripts select the intended root by setting the command's working directory. Existing catalogs, workspaces and journals are usable in place by entering their original root, including `~/code` for installations that used the previous default.
 
 ```text
-~/code/
+<root>/
   .bearforge/
     catalog.yaml                 # shareable repository catalog and root defaults
     workspaces/
@@ -273,7 +275,7 @@ For attachment, pass the validated **short branch name**, after checking the exa
 
 ## 8. Command contract
 
-All commands accept `--root`, `--verbose`, `--quiet`, `--color=auto|always|never`, `--output=human|json|jsonl`, and `--no-input`. `--json` aliases `--output=json`. Reject verbose/quiet conflicts. Mutations accept `--dry-run`; destructive commands also accept `--yes`. `--yes` skips a confirmation, never a safety check. Provide `-j/--jobs` only where parallel work exists. Commands with live progress also accept `--ui=auto|plain|inline`; the separate `tui` command opens the full-window interface.
+All commands accept `--verbose`, `--quiet`, `--color=auto|always|never`, `--output=human|json|jsonl`, and `--no-input`. `--json` aliases `--output=json`. Reject verbose/quiet conflicts. Mutations accept `--dry-run`; destructive commands also accept `--yes`. `--yes` skips a confirmation, never a safety check. Provide `-j/--jobs` only where parallel work exists. Commands with live progress also accept `--ui=auto|plain|inline`; the separate `tui` command opens the full-window interface.
 
 ### Repository commands
 

@@ -88,15 +88,13 @@ func TestTerminalRawOutputsRemainUnadorned(t *testing.T) {
 		})
 	}
 	t.Run("workspace path", func(t *testing.T) {
-		root, err := filepath.EvalSymlinks(t.TempDir())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if code := Run(t.Context(), []string{"--root", root, "--no-input", "workspace", "create", "sample"}, strings.NewReader(""), io.Discard, io.Discard); code != 0 {
+		root := cliFixtureDir(t)
+		t.Chdir(root)
+		if code := Run(t.Context(), []string{"--no-input", "workspace", "create", "sample"}, strings.NewReader(""), io.Discard, io.Discard); code != 0 {
 			t.Fatalf("workspace fixture failed: %d", code)
 		}
 		view := captureTerminalOutput(t, 36, func(out *os.File) error {
-			if code := Run(t.Context(), []string{"--root", root, "--color=always", "workspace", "path", "sample"}, strings.NewReader(""), out, io.Discard); code != 0 {
+			if code := Run(t.Context(), []string{"--color=always", "workspace", "path", "sample"}, strings.NewReader(""), out, io.Discard); code != 0 {
 				t.Fatalf("workspace path failed: %d", code)
 			}
 			return nil

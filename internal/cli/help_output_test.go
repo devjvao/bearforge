@@ -51,7 +51,7 @@ func TestConfigureHelpPreservesPipedHelpForRootAndChildren(t *testing.T) {
 
 func TestHelpTextStylesHeadingsWithoutChangingLayout(t *testing.T) {
 	t.Parallel()
-	text := "Manage repositories\n\nUsage:\n  bearforge [command]\n\nAvailable Commands:\n  repo        Manage repositories\n\nFlags:\n  -h, --help  help\n\nGlobal Flags:\n  --root string\n\n  Additional help topics:\n  guide       Guide\n"
+	text := "Manage repositories\n\nUsage:\n  bearforge [command]\n\nAvailable Commands:\n  repo        Manage repositories\n\nFlags:\n  -h, --help  help\n\nGlobal Flags:\n  --output string\n\n  Additional help topics:\n  guide       Guide\n"
 	p := &colorprofile.Writer{Profile: colorprofile.TrueColor}
 	got := helpText(text, p)
 	if plain := ansi.Strip(got); plain != text {

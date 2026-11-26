@@ -24,6 +24,9 @@ func (m dashboardModel) operationsView() tea.View {
 	case operationsResults:
 		summary, controls = "Result: "+displayText(run.result.Outcome), "r retry | a stop tracking"
 	}
+	if (run.phase == operationsDetails || run.phase == operationsResults) && run.operation != nil && run.operation.Kind == "exec" {
+		controls = "a stop tracking"
+	}
 	lines := []string{m.styles.brand.Render("Bearforge / Operations"), "Root: " + displayText(run.root), m.styles.focus.Render(summary)}
 	if run.phase == operationsReview && run.action == "abandon" {
 		lines = append(lines, "Successful imports + files retained", "This operation cannot be resumed")
@@ -141,8 +144,11 @@ func (m dashboardModel) operationsContent() []string {
 			}
 		}
 	}
-	lines = append(lines, "", "Inspect: "+dashboardRecoveryCommand(run.root, "show", op.ID), "Resume: "+dashboardRecoveryCommand(run.root, "resume", op.ID))
-	if run.err != nil {
+	lines = append(lines, "")
+	lines = append(lines, dashboardRecoveryLines(run.root, op.ID, op.Kind != "exec")...)
+	if op.Kind == "exec" {
+		lines = append(lines, "Execution commands are never replayed.")
+	} else if run.err != nil {
 		lines = append(lines, "For credential repair, use bearforge auth login, then resume with --connection NAME and review its mapping.")
 	}
 	return lines

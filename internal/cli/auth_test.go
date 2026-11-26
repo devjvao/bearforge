@@ -44,17 +44,16 @@ func authCommand(t *testing.T, manager *auth.Manager, input string, args ...stri
 	return output.String() + diagnostics.String(), err
 }
 
-func TestAuthLocalStatusDoesNotCreateManagedRoot(t *testing.T) {
+func TestAuthLocalStatusDoesNotCreateManagedState(t *testing.T) {
 	base := cliFixtureDir(t)
 	manager := auth.NewManager(auth.Options{RegistryPath: filepath.Join(base, "auth", "connections.json"), Secrets: authTestSecrets{}})
-	managed := filepath.Join(base, "missing-root")
-	output, err := authCommand(t, manager, "", "--root", managed, "auth", "status", "--local")
+	managed := cliFixtureDir(t)
+	t.Chdir(managed)
+	output, err := authCommand(t, manager, "", "auth", "status", "--local")
 	if err != nil || !strings.Contains(output, "No saved connections") {
 		t.Fatalf("local status: %s, %v", output, err)
 	}
-	if _, err := os.Stat(managed); !os.IsNotExist(err) {
-		t.Fatal("auth status created the managed root")
-	}
+	assertNoCLIState(t, managed)
 	if _, err := os.Stat(filepath.Join(base, "auth")); !os.IsNotExist(err) {
 		t.Fatal("local status created the auth registry")
 	}
@@ -71,8 +70,10 @@ func TestAuthTokenLoginAndStatusNeverPrintSecret(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	base := cliFixtureDir(t)
+	managed := cliFixtureDir(t)
+	t.Chdir(managed)
 	manager := auth.NewManager(auth.Options{RegistryPath: filepath.Join(base, "auth", "connections.json"), Secrets: authTestSecrets{}, HTTPClient: server.Client()})
-	output, err := authCommand(t, manager, secret+"\n", "--root", filepath.Join(base, "missing"), "--json", "--no-input", "auth", "login", "--provider", "github", "--host", server.URL, "--api-url", server.URL, "--connection", "work", "--method", "token", "--token-stdin")
+	output, err := authCommand(t, manager, secret+"\n", "--json", "--no-input", "auth", "login", "--provider", "github", "--host", server.URL, "--api-url", server.URL, "--connection", "work", "--method", "token", "--token-stdin")
 	if err != nil {
 		t.Fatalf("login failed: %s, %v", output, err)
 	}
@@ -83,13 +84,11 @@ func TestAuthTokenLoginAndStatusNeverPrintSecret(t *testing.T) {
 	if json.Unmarshal([]byte(output), &result) != nil {
 		t.Fatalf("login output is not one JSON result: %s", output)
 	}
-	output, err = authCommand(t, manager, "", "--root", filepath.Join(base, "missing"), "--json", "auth", "status", "--local")
+	output, err = authCommand(t, manager, "", "--json", "auth", "status", "--local")
 	if err != nil || strings.Contains(output, secret) || !strings.Contains(output, "octocat") {
 		t.Fatalf("local saved status: %s, %v", output, err)
 	}
-	if _, err := os.Stat(filepath.Join(base, "missing")); !os.IsNotExist(err) {
-		t.Fatal("login created a managed root")
-	}
+	assertNoCLIState(t, managed)
 }
 
 func TestAuthLoginRequiresExplicitSecretInputWhenNoninteractive(t *testing.T) {
@@ -281,14 +280,13 @@ func TestAuthHiddenInputEditingCancellationAndNextPrompt(t *testing.T) {
 func TestImportResumeConnectionRepairValidatesSelectionWithoutWrites(t *testing.T) {
 	base := t.TempDir()
 	manager := auth.NewManager(auth.Options{RegistryPath: filepath.Join(base, "auth.json"), Secrets: authTestSecrets{}})
-	managed := filepath.Join(base, "missing-root")
-	_, err := authCommand(t, manager, "", "--root", managed, "--dry-run", "operations", "resume", "pending-operation", "--connection", "missing")
+	managed := cliFixtureDir(t)
+	t.Chdir(managed)
+	_, err := authCommand(t, manager, "", "--dry-run", "operations", "resume", "pending-operation", "--connection", "missing")
 	if !errors.Is(err, auth.ErrDisconnected) {
 		t.Fatalf("repair did not validate selected connection: %v", err)
 	}
-	if _, err := os.Stat(managed); !os.IsNotExist(err) {
-		t.Fatal("repair preview created the managed root")
-	}
+	assertNoCLIState(t, managed)
 }
 
 func TestAuthHumanOutputSanitizesProviderValues(t *testing.T) {

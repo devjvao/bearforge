@@ -1,11 +1,12 @@
 # Workspace dashboard
 
-Open the full-window dashboard to browse workspaces, inspect repositories and review workspace actions:
+For your first import or workspace, create or enter the directory where you want Bearforge to store its data. Once it contains `.bearforge`, you can open the dashboard from that directory or any managed worktree. See the [PowerShell and POSIX setup examples](onboarding.md#install-and-choose-a-root).
+
+Open the dashboard to browse workspaces, or give a workspace name to select it directly.
 
 ```sh
 bearforge tui
 bearforge tui audit-feature
-bearforge --root /path/to/code tui audit-feature
 ```
 
 Starting without a workspace selects the first workspace alphabetically. The dashboard inspects only the selected workspace. Repository details show actual/intended branches, staged/modified/untracked/conflicted counts, upstream and locally observed ahead/behind, detached/unborn HEAD, and per-repository errors. Observations are snapshots; external Git or editor activity can change state during inspection.
@@ -73,12 +74,12 @@ Lookup preserves local status, filters and selection, and keys remain usable dur
 
 Unfinished mutations block unrelated writes. Press `o` to open **Operations**, including when a partial import prevents other changes. Select an operation to inspect failed steps. Press `r` to review retrying or `a` to review stopping recovery tracking; only `y` executes either action. Retry reuses successful clones and retained directories. Stopping tracking retains registrations, files and Git effects, clears the write block, and prevents resuming that operation afterward.
 
-A retry that fails again remains available in Operations. Navigation, local refresh and inspection remain available while writes are blocked. Recovery commands in results retain the operation's root. Use the CLI when token replacement or manual repair is needed:
+A retry that fails again remains available in Operations. Navigation, local refresh and inspection remain available while writes are blocked. Results show the operation's directory alongside the recovery command, even after you select a different workspace. For CLI recovery, enter that directory in your shell, then inspect the operation before resuming it. An interrupted `exec` requires inspection and an explicit decision to abandon it.
 
 ```sh
-bearforge --root /path/to/code operations list
-bearforge --root /path/to/code operations show OPERATION_ID
-bearforge --root /path/to/code operations resume OPERATION_ID
+bearforge operations list
+bearforge operations show OPERATION_ID
+bearforge operations resume OPERATION_ID
 ```
 
 See [import recovery](onboarding.md#discover-and-import-several-repositories) for reviewing a replacement connection and [general recovery](onboarding.md#recovery-and-completion) for resume/abandon behavior. Recovering or abandoning workspace removal keeps that workspace selected while its manifest exists; otherwise refresh selects another available workspace.
@@ -89,6 +90,6 @@ At 90 columns and wider, workspace and repository panes appear side by side abov
 
 The palette adapts to light/dark backgrounds. Cyan indicates focus, green healthy states, amber attention and red failures. Explicit labels and focus/selection markers remain available without color. `--color=auto` follows terminal capabilities, `--color=always` forces color, and `--color=never` disables color and text emphasis. Any nonempty `NO_COLOR` value takes precedence over `--color=always`. Terminal font/background remain under your terminal's control; the dashboard adds no animation.
 
-`tui` requires terminal stdin/stdout/stderr, `--ui=auto`, human output and interactive input. It refuses JSON/JSONL, quiet/no-input/dry-run, CI and `TERM=dumb`; use `bearforge status WORKSPACE --json` for automation. `--root` and `BEARFORGE_ROOT` work as for other commands.
+`tui` requires terminal stdin/stdout/stderr, `--ui=auto`, human output and interactive input. It refuses JSON/JSONL, quiet/no-input/dry-run, CI and `TERM=dumb`. For automation, set the command's working directory to the managed root and use `bearforge status WORKSPACE --json`.
 
 Empty roots/workspaces have explicit empty states, and browsing creates no directories, locks or journals. `q` exits successfully; Ctrl-C cancels. Both display a stopping state while cancelling and draining active reads, provider requests and mutations, then restore the alternate screen and terminal.

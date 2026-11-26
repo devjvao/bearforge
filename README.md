@@ -42,6 +42,25 @@ for token permissions and company servers.
 
 ### Import repositories and create a workspace
 
+Enter the directory where you want Bearforge to keep repositories and workspaces.
+For a new installation, choose a directory outside any existing Bearforge root.
+
+**PowerShell**
+
+```powershell
+New-Item -ItemType Directory -Force -Path "$HOME/managed-code" | Out-Null
+Set-Location -LiteralPath "$HOME/managed-code"
+```
+
+**POSIX shell**
+
+```sh
+mkdir -p "$HOME/managed-code"
+cd "$HOME/managed-code"
+```
+
+From that directory, open the dashboard.
+
 ```sh
 bearforge tui
 ```
@@ -69,8 +88,13 @@ bearforge status feature-login
 bearforge tui feature-login
 ```
 
-Bearforge uses `~/code` by default. Set `BEARFORGE_ROOT` or pass `--root PATH` to
-choose another location.
+You can run these commands from a managed worktree too. Bearforge searches the
+current directory and its parents for the nearest `.bearforge` directory. If it
+finds none, it uses the current directory.
+
+When upgrading, enter your previous root (`~/code` for the old default). Your
+catalog, workspaces and operation journals are usable in place. In scripts and CI,
+set the command's working directory to that root.
 
 For everyday commands, run `bearforge --help` or `bearforge COMMAND --help`.
 

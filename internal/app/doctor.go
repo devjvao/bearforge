@@ -46,7 +46,7 @@ func (s *Service) Doctor(ctx context.Context, workspace string) (Result, error) 
 	if err == nil && !exists {
 		err = domain.E("not_found", "storage root does not exist")
 	}
-	d.record("root.exists", "", "", s.Store.RootPath(), err, "check --root or initialize it by registering a repository")
+	d.record("root.exists", "", "", s.Store.RootPath(), err, "enter the directory containing your Bearforge state, or initialize one by registering a repository")
 	var gitErr error
 	if s.Git == nil {
 		gitErr = domain.E("unavailable", "Git 2.40 or newer is unavailable")

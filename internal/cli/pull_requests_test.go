@@ -39,6 +39,7 @@ func (p cliPRProvider) Lookup(ctx context.Context, q domain.PullRequestQuery, re
 
 func TestPRListOutputsAndSelection(t *testing.T) {
 	root := cliExecRoot(t)
+	t.Chdir(root)
 	store := config.New(root)
 	c, rev, err := store.LoadCatalog()
 	if err != nil {
@@ -67,7 +68,7 @@ func TestPRListOutputsAndSelection(t *testing.T) {
 				return domain.PullRequestObservation{Query: q, ObservedAt: time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC), Cached: true, PullRequests: []domain.PullRequest{{Number: 42, Title: "safe\x1b[2J title", URL: "https://github.com/org/web/pull/42", State: "merged", Draft: true, SourceRepository: "fork/web", TargetRepository: "org/web", SourceBranch: "review", TargetBranch: "main", UpdatedAt: time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)}}}, nil
 			}}}
 			cmd := newRoot(o)
-			cmd.SetArgs([]string{"--root", root, "--output=" + mode, "pr", "list", "review", "--repo", "web", "--state", "closed", "--base", "main", "--refresh"})
+			cmd.SetArgs([]string{"--output=" + mode, "pr", "list", "review", "--repo", "web", "--state", "closed", "--base", "main", "--refresh"})
 			if err := cmd.ExecuteContext(t.Context()); err != nil {
 				t.Fatalf("execute: %v out=%s err=%s", err, out.String(), errOut.String())
 			}
@@ -149,11 +150,11 @@ func TestPRHumanOutputWrapsCompleteExternalValues(t *testing.T) {
 }
 
 func TestPRListCancellationExitCode(t *testing.T) {
-	root := cliExecRoot(t)
+	t.Chdir(cliExecRoot(t))
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	var out, errOut bytes.Buffer
-	if code := Run(ctx, []string{"--root", root, "--json", "pr", "list", "review"}, strings.NewReader(""), &out, &errOut); code != 130 {
+	if code := Run(ctx, []string{"--json", "pr", "list", "review"}, strings.NewReader(""), &out, &errOut); code != 130 {
 		t.Fatalf("code=%d out=%s err=%s", code, out.String(), errOut.String())
 	}
 	var result app.Result

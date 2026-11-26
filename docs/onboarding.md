@@ -8,23 +8,29 @@ For a published release, download the archive for your OS/architecture, `checksu
 
 To evaluate a source checkout, follow [the source build guide](development/README.md#build-from-source). The canonical module is `github.com/devjvao/bearforge`; the currently published `v0.2.0` tag predates that module-path change, so use a release archive or a checkout build for now.
 
-Choose a new root for managed data. PowerShell:
+Before your first import or workspace creation, enter the directory where you want Bearforge to store repositories and workspaces. To start a separate installation, choose a directory outside any existing Bearforge root.
+
+**PowerShell**
 
 ```powershell
-$env:BEARFORGE_ROOT = 'D:\Lab\bearforge-code'
-bearforge version
+New-Item -ItemType Directory -Force -Path "$HOME/managed-code" | Out-Null
+Set-Location -LiteralPath "$HOME/managed-code"
+bearforge repo list
 ```
 
-POSIX shell:
+**POSIX shell**
 
 ```sh
-export BEARFORGE_ROOT="$HOME/code"
-bearforge version
+mkdir -p "$HOME/managed-code"
+cd "$HOME/managed-code"
+bearforge repo list
 ```
 
-An explicit `--root PATH` overrides this environment variable. Otherwise Bearforge searches upward from the current directory for `.bearforge/catalog.yaml`, then falls back to `~/code`. Keep the same root selection when inspecting or recovering an operation.
+Bearforge uses the nearest directory containing a real `.bearforge` directory, starting in the current directory and walking up through its parents. If you entered through a symlink or Windows junction, Bearforge walks the parents of its target. This works from inside a managed worktree, including before the first catalog is written. If no marker exists, Bearforge uses the directory where you ran the command. Listing repositories and previewing a change leave an empty root untouched.
 
-Definitions live under `.bearforge`, bare repositories under `repos`, and worktrees under the workspace name. Workspace names must be portable directory names. Local source paths such as `./remote` are made absolute at registration so sync and recovery retain the same repository identity after directory changes.
+When upgrading, change to your previous root. For the former default, use `Set-Location -LiteralPath "$HOME/code"` in PowerShell or `cd "$HOME/code"` in a POSIX shell. If you used `--root` or `BEARFORGE_ROOT`, enter the directory you specified there. Your catalog, workspaces and operation journals are usable in place.
+
+Definitions live under `.bearforge`, bare repositories under `repos`, and worktrees under the workspace name. Workspace names must be portable directory names. For `repo add`, a local source such as `./remote` is relative to the directory where you run the command. Bearforge records its absolute path for sync and recovery and puts the managed clone under the discovered root.
 
 ## Configuration formats
 
@@ -173,7 +179,7 @@ bearforge operations resume OPERATION_ID --connection work-bitbucket
 
 An unfinished operation blocks unrelated writes until it is resumed or explicitly abandoned. In the dashboard, press `o` to open **Operations**, select the unfinished batch, and inspect its failed steps. Press `r` to review retrying, or `a` to review stopping recovery tracking; only `y` executes either action. Retry reuses successful clones and retained directories. Stopping tracking retains successful registrations, files, and Git effects, clears the write block, and prevents resuming that operation afterward. A retry that fails again remains available in Operations. Navigation, local refresh, and inspection remain available while writes are blocked.
 
-The repair preview is confirmed before changing the journal and resuming. Terminal progress starts only after that confirmation, so the review prompt owns terminal input. Successful clones are verified and reused during resume. Bearforge never deletes retained clone state to retry. Authentication-only repair remains available while an import is partial. The rooted CLI recovery commands remain available if token replacement or other manual repair is needed.
+The repair preview is confirmed before changing the journal and resuming. Terminal progress starts only after that confirmation, so the review prompt owns terminal input. Successful clones are verified and reused during resume. Bearforge never deletes retained clone state to retry. Authentication-only repair remains available while an import is partial. For token replacement or manual repair, enter the directory shown with the CLI recovery command.
 
 Recovering or abandoning a workspace removal keeps the current workspace selected while its manifest remains. If removal has deleted the manifest, refresh selects another available workspace, including when a later journal update fails.
 
@@ -344,6 +350,8 @@ Child stdin is closed by default. `--interactive` requires terminal streams, hum
 
 ## Output and automation
 
+Set the command's working directory to the intended Bearforge root in CI jobs and scheduled tasks. In a shell script, change to that directory before invoking Bearforge.
+
 `--output=json` emits one final result; `--output=jsonl` emits sequenced progress and a final result. Use `status WORKSPACE --check` for automation that must fail on worktree changes or drift, or `status WORKSPACE --json` for structured observations. Ahead/behind values describe locally fetched refs rather than a live server query.
 
 ```sh
@@ -404,6 +412,8 @@ bearforge repo restore api --operation RETIREMENT_OPERATION_ID --yes
 These retained directories are local recovery data, not an external backup. Keep an independent backup policy. If rename succeeds but metadata/journal replacement fails, inspect and explicitly resume; recovery probes the two paths and refuses changed refs or ambiguous state.
 
 ## Recovery and completion
+
+When returning in a new shell, enter the directory shown with the recovery command so Bearforge opens the journal for that operation.
 
 ```sh
 bearforge operations show OPERATION_ID

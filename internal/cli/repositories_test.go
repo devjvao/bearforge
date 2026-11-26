@@ -12,8 +12,9 @@ import (
 
 func TestRepositoryLifecycleCLIPreviewsConfirmsAndRestores(t *testing.T) {
 	source, store := dashboardAddFixture(t)
+	t.Chdir(store.RootPath())
 	var out, errOut bytes.Buffer
-	base := []string{"--root", store.Root, "--json", "repo", "remove", "api"}
+	base := []string{"--json", "repo", "remove", "api"}
 	code := Run(t.Context(), append(append([]string{}, base...), "--dry-run"), strings.NewReader(""), &out, &errOut)
 	if code != 0 {
 		t.Fatalf("preview: %d %s %s", code, out.String(), errOut.String())
@@ -41,13 +42,13 @@ func TestRepositoryLifecycleCLIPreviewsConfirmsAndRestores(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	code = Run(t.Context(), []string{"--root", store.Root, "--json", "repo", "retired"}, strings.NewReader(""), &out, &errOut)
+	code = Run(t.Context(), []string{"--json", "repo", "retired"}, strings.NewReader(""), &out, &errOut)
 	if code != 0 || !strings.Contains(out.String(), retired.OperationID) {
 		t.Fatalf("retired listing hides recovery identity: %d %s", code, out.String())
 	}
 	out.Reset()
 	errOut.Reset()
-	code = Run(t.Context(), []string{"--root", store.Root, "--json", "repo", "restore", "api", "--operation", retired.OperationID, "--yes"}, strings.NewReader(""), &out, &errOut)
+	code = Run(t.Context(), []string{"--json", "repo", "restore", "api", "--operation", retired.OperationID, "--yes"}, strings.NewReader(""), &out, &errOut)
 	if code != 0 {
 		t.Fatalf("restore: %d %s %s", code, out.String(), errOut.String())
 	}
