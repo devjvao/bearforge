@@ -653,7 +653,7 @@ func loadImportPicker(t *testing.T, work func(context.Context, app.ImportRequest
 			if s.Connection != "work" || s.GrantID != "grant" || s.Host != "github.com" {
 				t.Errorf("lost selected grant: %+v", s)
 			}
-			return []domain.RemoteRepository{{ID: "a", FullName: "org/api", HTTPSURL: "https://github.com/org/api.git"}, {ID: "b", FullName: "org/web", HTTPSURL: "https://github.com/org/web.git"}, {ID: "c", FullName: "org/old"}}, nil
+			return []domain.RemoteRepository{{ID: "a", Provider: s.Provider, FullName: "org/api", HTTPSURL: "https://github.com/org/api.git"}, {ID: "b", FullName: "org/web", HTTPSURL: "https://github.com/org/web.git"}, {ID: "c", FullName: "org/old"}}, nil
 		}, choices: func(_ context.Context, s domain.RepositorySource, rs []domain.RemoteRepository) ([]app.RepositoryImportChoice, error) {
 			return []app.RepositoryImportChoice{{ID: "api", Repository: rs[0], Source: s}, {ID: "web", Repository: rs[1], Source: s}, {ID: "old", Repository: rs[2], Source: s, Disabled: true, RetiredID: "old"}}, nil
 		}, importWork: work})
@@ -798,5 +798,27 @@ func TestDashboardImportOpensWithoutWorkspaceAndWaitsForLoad(t *testing.T) {
 	}
 	if !strings.Contains(m.View().Content, "Load") {
 		t.Fatal("source form missing explicit Load")
+	}
+}
+
+func TestDashboardImportGroupByOwner(t *testing.T) {
+	var requested app.ImportRequest
+	m := loadImportPicker(t, func(_ context.Context, r app.ImportRequest, _ func(app.Event)) (app.Result, error) {
+		requested = r
+		return importPreview(r), nil
+	})
+	m, _ = dashboardKey(m, ' ', " ")
+	m, _ = dashboardKey(m, 'p', "p")
+	m, cmd := dashboardKey(m, tea.KeyEnter, "")
+	if cmd == nil {
+		t.Fatal("missing folder preview")
+	}
+	m.Update(cmd())
+	if len(requested.Repositories) != 1 {
+		t.Fatal(requested)
+	}
+	r := requested.Repositories[0]
+	if r.Folder != strings.ToLower(r.Repository.FullName) {
+		t.Fatalf("owner folder differs from selected repository: %+v", r)
 	}
 }

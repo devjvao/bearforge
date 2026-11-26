@@ -182,7 +182,7 @@ func (s *Service) ReassociateImport(ctx context.Context, req ImportReassociation
 		}
 		step.ImportedRepository = &replacement
 		ids = append(ids, step.Repository)
-		path, err := s.repoPath(step.Repository)
+		path, err := s.RepositoryPath(replacement)
 		if err != nil {
 			return r, err
 		}

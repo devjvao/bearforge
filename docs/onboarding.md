@@ -32,6 +32,11 @@ When upgrading, change to your previous root. For the former default, use `Set-L
 
 Definitions live under `.bearforge`, bare repositories under `repos`, and worktrees under the workspace name. Workspace names must be portable directory names. For `repo add`, a local source such as `./remote` is relative to the directory where you run the command. Bearforge records its absolute path for sync and recovery and puts the managed clone under the discovered root.
 
+New Bitbucket Server and Data Center imports group folders by project key. For example, `TEST/Service1` gets the catalog ID `test-service1`, a bare clone at `repos/test/service1.git`, and a checkout at `review/test/service1` in the `review` workspace. The import picker also supports grouping by GitHub owner and Bitbucket Cloud project or workspace.
+
+For a local source or URL, `bearforge repo add test-service1 URL --folder test/service1` sets the same layout. Workspace add inherits the registered folder. Use `--flat` for `review/service1`, `--parent services` for `review/services/service1`, or `--folder-map test-service1=custom/service-one` for a specific destination. Use `--dry-run` to review the paths before adding worktrees. Existing catalogs and workspaces retain their recorded locations.
+
+
 ## Configuration formats
 
 The repository catalog uses `schema_version: 2` and records active and retired repository identities.

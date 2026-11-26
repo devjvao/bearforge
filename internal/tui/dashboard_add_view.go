@@ -41,7 +41,9 @@ func (m dashboardModel) addView() tea.View {
 	lines := []string{m.styles.brand.Render("Bearforge / Add repositories"), "Workspace: " + displayText(run.workspace), m.styles.focus.Render(summary)}
 	height := m.addViewportHeight()
 	var body []string
-	if run.phase == addPicking && len(m.addChoices()) > 0 {
+	if run.folderID != "" {
+		body = viewportLines(m.wrapAdd("Workspace folder for "+displayText(run.folderID)+" (leaf or parent/leaf): "+displayText(run.editFolder)), 0, m.detailWidth(), height)
+	} else if run.phase == addPicking && len(m.addChoices()) > 0 {
 		body = m.addPickerLines(height)
 	} else {
 		body = viewportLines(m.addWrappedContent(), run.offset, m.detailWidth(), height)
@@ -61,8 +63,10 @@ func (m dashboardModel) addFooter() []string {
 	first, second := "Esc back | q quit", "Ctrl-C cancel"
 	switch run.phase {
 	case addPicking:
-		first, second = "Space select | / filter", "Enter preview | Esc back | q quit"
-		if run.editing {
+		first, second = "Space select | / filter | p parent | d folder", "Enter preview | Esc back | q quit"
+		if run.folderID != "" {
+			first, second = "Enter save | Esc cancel", "Ctrl-U clear"
+		} else if run.editing {
 			first, second = "Type to filter; selections stay", "Enter apply | Esc clear | Ctrl-C cancel"
 		}
 		if run.err != nil && len(run.choices.Items) == 0 {
@@ -119,6 +123,14 @@ func (m dashboardModel) addPickerLines(height int) []string {
 func (m dashboardModel) addPickerIntroduction() []string {
 	run := m.addRun
 	lines := []string{m.styles.muted.Render("Branch default: " + displayText(run.choices.DefaultBranch))}
+	parentSetting := "on"
+	if run.flat {
+		parentSetting = "off"
+	}
+	lines = append(lines, "Use parent folder: "+parentSetting+" (p)")
+	if choices := m.addChoices(); run.index < len(choices) {
+		lines = append(lines, "Folder: "+displayText(run.addFolder(choices[run.index])))
+	}
 	if run.filter != "" || run.editing {
 		lines = append(lines, "Filter: "+displayText(run.filter))
 	}

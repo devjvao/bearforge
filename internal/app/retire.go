@@ -50,7 +50,7 @@ func cloneRepository(repo domain.Repository) domain.Repository {
 }
 
 func sameRepository(a, b domain.Repository) bool {
-	return a.ID == b.ID && a.Base == b.Base && maps.Equal(a.Remotes, b.Remotes) && maps.Equal(a.Provider, b.Provider)
+	return a.ID == b.ID && a.Folder == b.Folder && a.Base == b.Base && maps.Equal(a.Remotes, b.Remotes) && maps.Equal(a.Provider, b.Provider)
 }
 
 func (s *Service) unreferencedRepository(id string) ([]string, error) {
@@ -89,9 +89,9 @@ func (s *Service) unlinkedRepository(ctx context.Context, repo domain.Repository
 	return s.Git.Fingerprint(ctx, path)
 }
 
-func lifecycleParts(kind, id, retirement string) ([]string, []string) {
-	active := []string{"repos", id + ".git"}
-	trash := []string{".bearforge", "trash", retirement, id + ".git"}
+func lifecycleParts(kind string, repo domain.Repository, retirement string) ([]string, []string) {
+	active := folderParts("repos", repo.ID, repo.Folder, ".git")
+	trash := []string{".bearforge", "trash", retirement, repo.ID + ".git"}
 	if kind == "repo.restore" {
 		return trash, active
 	}
@@ -172,7 +172,7 @@ func (s *Service) repositoryLifecycle(ctx context.Context, kind, id, retirement,
 	if kind == "repo.retire" {
 		retirement = planID
 	}
-	source, target := lifecycleParts(kind, id, retirement)
+	source, target := lifecycleParts(kind, repo, retirement)
 	from, err := s.Store.SafePath(source...)
 	if err != nil {
 		return r, err
@@ -180,6 +180,11 @@ func (s *Service) repositoryLifecycle(ctx context.Context, kind, id, retirement,
 	to, err := s.Store.SafePath(target...)
 	if err != nil {
 		return r, err
+	}
+	if kind == "repo.restore" {
+		if err := s.checkFolderEntries(target); err != nil {
+			return r, err
+		}
 	}
 	if exists, err := s.Store.Exists(target...); err != nil {
 		return r, err

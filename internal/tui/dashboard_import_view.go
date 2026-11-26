@@ -8,6 +8,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/devjvao/bearforge/internal/app"
 )
 
 func (m dashboardModel) importView() tea.View {
@@ -26,7 +28,7 @@ func (m dashboardModel) importView() tea.View {
 	case importLoginForm:
 		help = "Tab/Up/Down field | Space provider | Ctrl-U clear | Enter login | Esc cancel"
 	case importPicking:
-		help = "Space select | / filter | e ID | Enter review | r reload | l login | c source | Esc close"
+		help = "Space select | / filter | e ID | p parent | d folder | Enter review | r reload | l login | c source | Esc close"
 	case importReview:
 		help = "y import | Esc selection | PgUp/PgDn scroll | Ctrl-C cancel"
 	case importExecuting:
@@ -65,6 +67,9 @@ func (m dashboardModel) importContent() []string {
 		if (run.phase == importPicking || run.phase == importWorkspaces) && run.source.Connection != "" {
 			lines = append(lines, "Check API access: bearforge auth status --connection "+workspaceShellQuote(run.source.Connection), "Press l from repository selection to repair this connection with shared login.")
 		}
+	}
+	if run.editingFolder {
+		return append(lines, "Clone folder (leaf or parent/leaf): "+displayText(run.editID), "Enter saves; Escape cancels.")
 	}
 	if run.editingID {
 		return append(lines, "Edit local ID (Ctrl-U clears): "+displayText(run.editID), "Enter saves; Escape cancels.")
@@ -215,6 +220,9 @@ func (m dashboardModel) importContent() []string {
 				clone = c.Repository.SSHURL
 			}
 			lines = append(lines, "", "Local ID: "+displayText(run.ids[importKey(c)]), "Visibility: "+visibility, displayText(c.Repository.Description), "URL: "+displayText(clone), "Default branch: "+displayText(branch))
+			key := importKey(c)
+			label, parent := app.ImportParent(c.Repository)
+			lines = append(lines, "Clone folder: "+displayText(app.ImportFolder(c.Repository, run.ids[key], run.folders[key])), "p toggles "+label+" folder "+displayText(parent)+"; d edits the destination.")
 			if c.RegisteredID != "" {
 				lines = append(lines, "Registered as: "+displayText(c.RegisteredID))
 			}

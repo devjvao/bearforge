@@ -73,7 +73,7 @@ func (s *Service) PullRequests(ctx context.Context, req PRRequest) (Result, erro
 		return r, domain.E("invalid", "jobs must be between 1 and 64")
 	}
 	r.Items = items
-	err = s.observePullRequests(ctx, req, c, r.Items)
+	err = s.observePullRequests(ctx, req, c, w, r.Items)
 	if req.DryRun {
 		r.Outcome = "planned"
 	}
@@ -86,7 +86,7 @@ func (s *Service) PullRequests(ctx context.Context, req PRRequest) (Result, erro
 // observePullRequests shares the catalog's job budget between local checks and
 // provider calls. Only the coordinator owns the host queues. Waiting queries
 // consume neither a worker nor any of the provider's per-lookup timeout.
-func (s *Service) observePullRequests(ctx context.Context, req PRRequest, c domain.Catalog, items []Item) error {
+func (s *Service) observePullRequests(ctx context.Context, req PRRequest, c domain.Catalog, w domain.Workspace, items []Item) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -121,7 +121,7 @@ func (s *Service) observePullRequests(ctx context.Context, req PRRequest, c doma
 			next++
 			active++
 			go func() {
-				q, err := s.preparePullRequest(ctx, req, c, &items[i])
+				q, err := s.preparePullRequest(ctx, req, c, w.Repositories[items[i].Repository].Folder, &items[i])
 				recordError(i, err)
 				preparations <- prepared{i, q}
 			}()
@@ -168,7 +168,7 @@ func (s *Service) observePullRequests(ctx context.Context, req PRRequest, c doma
 	return err
 }
 
-func (s *Service) preparePullRequest(ctx context.Context, req PRRequest, c domain.Catalog, item *Item) (*domain.PullRequestQuery, error) {
+func (s *Service) preparePullRequest(ctx context.Context, req PRRequest, c domain.Catalog, folder string, item *Item) (*domain.PullRequestQuery, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -180,7 +180,7 @@ func (s *Service) preparePullRequest(ctx context.Context, req PRRequest, c domai
 	if err != nil {
 		return nil, err
 	}
-	item.Path, err = s.treePath(req.Workspace, item.Repository)
+	item.Path, err = s.treePath(req.Workspace, item.Repository, folder)
 	if err != nil {
 		return nil, err
 	}

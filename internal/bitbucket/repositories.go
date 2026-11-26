@@ -119,7 +119,7 @@ func (c *Client) ListRepositories(ctx context.Context, source domain.RepositoryS
 			return nil
 		}
 		seen[id] = true
-		results = append(results, domain.RemoteRepository{Provider: s.Provider, Host: s.Host, APIURL: s.APIURL, ID: id, Namespace: namespace, Name: name, FullName: full, Description: entry.Description, DefaultBranch: entry.MainBranch.Name, Private: private, Archived: entry.Archived, HTTPSURL: https, SSHURL: ssh})
+		results = append(results, domain.RemoteRepository{Provider: s.Provider, Host: s.Host, APIURL: s.APIURL, ID: id, ProjectKey: entry.Project.Key, Namespace: namespace, Name: name, FullName: full, Description: entry.Description, DefaultBranch: entry.MainBranch.Name, Private: private, Archived: entry.Archived, HTTPSURL: https, SSHURL: ssh})
 		return nil
 	})
 	if err != nil {

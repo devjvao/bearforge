@@ -93,6 +93,8 @@ type dashboardImport struct {
 	workspaces           []domain.ProviderWorkspace
 	selected             map[string]bool
 	ids                  map[string]string
+	folders              map[string]string
+	editingFolder        bool
 	index, field, offset int
 	filter, editID       string
 	editing, editingID   bool
@@ -169,6 +171,13 @@ func importSourceFor(c auth.Connection) domain.RepositorySource {
 	}
 	return domain.RepositorySource{Provider: provider, Host: host, APIURL: c.APIURL, GitURL: c.GitURL, Connection: c.Name, GrantID: c.GrantID}
 }
+func (r *dashboardImport) setFolder(key, folder string) {
+	if r.folders == nil {
+		r.folders = map[string]string{}
+	}
+	r.folders[key] = folder
+}
+
 func importKey(c app.RepositoryImportChoice) string {
 	r := c.Repository
 	identity := r.ID
@@ -208,7 +217,7 @@ func (m dashboardModel) previewImport() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		ids[folded] = true
-		req.Repositories = append(req.Repositories, app.ImportRepository{ID: id, Repository: c.Repository, Source: c.Source, Transport: run.transport})
+		req.Repositories = append(req.Repositories, app.ImportRepository{ID: id, Repository: c.Repository, Source: c.Source, Transport: run.transport, Folder: run.folders[key]})
 	}
 	if len(req.Repositories) == 0 {
 		run.err = errors.New("select at least one repository with Space")
@@ -355,6 +364,7 @@ func (m dashboardModel) updateImport(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if run.choicesSource != run.discoverySource {
 					run.selected = map[string]bool{}
 					run.ids = map[string]string{}
+					run.folders = nil
 				}
 				run.choicesSource = run.discoverySource
 				run.choicesValid = run.source == run.discoverySource
@@ -460,7 +470,7 @@ func (m dashboardModel) importText(text string) dashboardModel {
 }
 func (m dashboardModel) importFormTarget() *string {
 	run := m.importRun
-	if run.editingID {
+	if run.editingID || run.editingFolder {
 		return &run.editID
 	}
 	if run.editing {
@@ -486,7 +496,8 @@ func (m dashboardModel) importKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	run := m.importRun
 	name := importKeyName(key)
 	if name == "esc" && run.phase != importExecuting {
-		if run.editingID {
+		if run.editingID || run.editingFolder {
+			run.editingFolder = false
 			run.editingID = false
 			return m, nil
 		}
@@ -509,21 +520,26 @@ func (m dashboardModel) importKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.closeImport()
 	}
-	if run.editing || run.editingID {
+	if run.editing || run.editingID || run.editingFolder {
 		if name == "enter" {
-			if run.editingID {
+			if run.editingID || run.editingFolder {
 				rows := m.importChoices()
 				if run.index < len(rows) {
-					run.ids[importKey(rows[run.index])] = run.editID
+					key := importKey(rows[run.index])
+					if run.editingFolder {
+						run.setFolder(key, run.editID)
+					} else {
+						run.ids[key] = run.editID
+					}
 				}
-				run.editingID = false
+				run.editingID, run.editingFolder = false, false
 			} else {
 				run.editing = false
 			}
 			return m, nil
 		}
-		if run.editingID {
-			importEdit(&run.editID, key, 128)
+		if run.editingID || run.editingFolder {
+			importEdit(&run.editID, key, 129)
 		} else {
 			importEdit(&run.filter, key, 256)
 			run.index = 0
@@ -676,6 +692,24 @@ func (m dashboardModel) importKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				key := importKey(rows[run.index])
 				run.selected[key] = !run.selected[key]
 				run.err = nil
+			}
+		case "p", "d":
+			if run.index >= len(rows) || rows[run.index].Disabled {
+				return m, nil
+			}
+			c := rows[run.index]
+			key := importKey(c)
+			folder := app.ImportFolder(c.Repository, run.ids[key], run.folders[key])
+			if name == "d" {
+				run.editID, run.editingFolder = folder, true
+			} else {
+				grouped := app.GroupedImportFolder(c.Repository)
+				if folder == grouped {
+					_, leaf, _ := strings.Cut(grouped, "/")
+					run.setFolder(key, leaf)
+				} else {
+					run.setFolder(key, grouped)
+				}
 			}
 		case "e":
 			if run.index < len(rows) && !rows[run.index].Disabled {

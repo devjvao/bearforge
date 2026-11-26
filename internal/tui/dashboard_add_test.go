@@ -457,3 +457,22 @@ func TestDashboardAddSanitizesPreviewAndResultDiagnostics(t *testing.T) {
 	}
 	inspect(m)
 }
+
+func TestDashboardAddReviewsFolderOverrides(t *testing.T) {
+	var requested app.AddRequest
+	m := openAddPicker(t, addDashboard(t, func(_ context.Context, req app.AddRequest, _ func(app.Event)) (app.Result, error) {
+		requested = req
+		return addPreview(req), nil
+	}))
+	m, _ = dashboardKey(m, tea.KeyDown, "")
+	m, _ = dashboardKey(m, ' ', " ")
+	m, _ = dashboardKey(m, 'p', "p")
+	m, _ = dashboardKey(m, 'd', "d")
+	m, _ = importControl(m, 'u')
+	m, _ = dashboardKey(m, 's', "services/alternate")
+	m, _ = dashboardKey(m, tea.KeyEnter, "")
+	m = reviewAdd(t, m)
+	if !requested.Flat || requested.Folders["web"] != "services/alternate" || m.addRun.request.Folders["web"] != requested.Folders["web"] {
+		t.Fatalf("folder review: %+v", requested)
+	}
+}

@@ -28,10 +28,11 @@ func addCommands(root *cobra.Command, o *options) {
 		parent.AddCommand(c)
 		return c
 	}
-	var refFormat string
+	var refFormat, repoFolder string
 	repoAdd := command(repo, "add NAME URL", "Register and clone a bare repository", cobra.ExactArgs(2), true, true, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
-		return s.AddRepositoryWithFormat(ctx, a[0], a[1], refFormat, o.dry)
+		return s.AddRepositoryAt(ctx, a[0], a[1], refFormat, repoFolder, o.dry)
 	})
+	repoAdd.Flags().StringVar(&repoFolder, "folder", "", "Clone destination under repos (leaf or parent/leaf, without .git)")
 	repoAdd.Flags().StringVar(&refFormat, "ref-format", "auto", "Reference storage: auto, files, reftable")
 	command(repo, "list", "List registered repositories", cobra.NoArgs, false, false, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
 		r := app.NewResult("repo.list")
@@ -53,7 +54,7 @@ func addCommands(root *cobra.Command, o *options) {
 		if _, ok := c.Repositories[a[0]]; !ok {
 			return r, domain.E("not_found", "repository not found")
 		}
-		p, err := s.Store.SafePath("repos", a[0]+".git")
+		p, err := s.RepositoryPath(c.Repositories[a[0]])
 		if err != nil {
 			return r, err
 		}
@@ -77,11 +78,16 @@ func addCommands(root *cobra.Command, o *options) {
 		c.Flags().StringVar(&branch, "branch", "", "Default branch name")
 	}
 	var branch, base, track string
-	var overrides map[string]string
+	var overrides, folders map[string]string
+	var parent string
+	var flat bool
 	add := command(workspace, "add WORKSPACE REPO...", "Materialize repositories as worktrees", cobra.MinimumNArgs(2), true, true, func(ctx context.Context, s *app.Service, a []string) (app.Result, error) {
-		return s.AddRepositories(ctx, app.AddRequest{Workspace: a[0], Repositories: a[1:], Branch: branch, Base: base, Tracking: track, BranchMap: overrides, DryRun: o.dry})
+		return s.AddRepositories(ctx, app.AddRequest{Workspace: a[0], Repositories: a[1:], Branch: branch, Base: base, Tracking: track, BranchMap: overrides, Folders: folders, Flat: flat, Parent: parent, DryRun: o.dry})
 	})
 	add.Flags().StringVar(&branch, "branch", "", "Branch for selected repositories")
+	add.Flags().BoolVar(&flat, "flat", false, "Place worktrees directly inside the workspace")
+	add.Flags().StringVar(&parent, "parent", "", "Place worktrees under this parent folder")
+	add.Flags().StringToStringVar(&folders, "folder-map", nil, "Workspace destination overrides (repo=leaf or repo=parent/leaf)")
 	add.Flags().StringVar(&base, "base", "", "Starting ref for new branches")
 	add.Flags().StringVar(&track, "track", "", "Tracking: none, same-name, preserve")
 	add.Flags().StringToStringVar(&overrides, "branch-map", nil, "Repository branch overrides (repo=branch)")

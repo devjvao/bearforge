@@ -80,7 +80,7 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (result Result, ret
 		if err != nil {
 			return r, err
 		}
-		path, err := s.treePath(w.Name, id)
+		path, err := s.treePath(w.Name, id, w.Repositories[id].Folder)
 		if err != nil {
 			return r, err
 		}
@@ -92,7 +92,7 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (result Result, ret
 			return r, err
 		}
 		r.Items = append(r.Items, Item{Repository: id, Workspace: w.Name, Path: path, Branch: status.Branch, Start: status.Head, Outcome: "not_run"})
-		steps = append(steps, Step{Repository: id, Branch: status.Branch, Start: status.Head, State: "planned"})
+		steps = append(steps, Step{Repository: id, Folder: w.Repositories[id].Folder, Branch: status.Branch, Start: status.Head, State: "planned"})
 	}
 	if req.DryRun {
 		r.Outcome = "planned"
@@ -246,7 +246,7 @@ func (s *Service) verifyExecTarget(ctx context.Context, workspace, id, expectedP
 	if err != nil {
 		return err
 	}
-	path, err := s.treePath(workspace, id)
+	path, err := s.treePath(workspace, id, w.Repositories[id].Folder)
 	if err != nil {
 		return err
 	}

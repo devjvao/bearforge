@@ -226,6 +226,11 @@ func valid(op *app.Operation, root string) error {
 			return err
 		}
 	}
+	if op.Repository != nil {
+		if err := domain.ValidateFolder(op.Repository.ID, op.Repository.Folder); err != nil {
+			return err
+		}
+	}
 	if op.Remote != "" {
 		if err := domain.ValidateURL(op.Remote); err != nil {
 			return err
@@ -254,7 +259,7 @@ func valid(op *app.Operation, root string) error {
 		if err := app.ValidateRefFormat(step.RequestedRefFormat); err != nil {
 			return err
 		}
-		if err := domain.ValidateID(step.Repository); err != nil {
+		if err := domain.ValidateFolder(step.Repository, step.Folder); err != nil {
 			return err
 		}
 		if step.Branch != "" {

@@ -7,6 +7,7 @@ import (
 
 type RepositoryChoice struct {
 	Repository  string
+	Folder      string
 	Base        string
 	InWorkspace bool
 }
@@ -37,7 +38,7 @@ func (s *Service) RepositoryChoices(ctx context.Context, workspace string) (Repo
 			return choices, err
 		}
 		_, mapped := w.Repositories[id]
-		choices.Items = append(choices.Items, RepositoryChoice{Repository: id, Base: repository.Base, InWorkspace: mapped})
+		choices.Items = append(choices.Items, RepositoryChoice{Repository: id, Folder: repository.Folder, Base: repository.Base, InWorkspace: mapped})
 	}
 	sort.Slice(choices.Items, func(i, j int) bool { return choices.Items[i].Repository < choices.Items[j].Repository })
 	return choices, ctx.Err()

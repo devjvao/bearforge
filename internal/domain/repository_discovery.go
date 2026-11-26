@@ -11,6 +11,7 @@ type RepositorySource struct {
 // An empty DefaultBranch explicitly means unknown; providers need not expose it
 // in repository-list responses. Callers must not infer a branch name from it.
 type RemoteRepository struct {
+	ProjectKey                                            string `json:"project_key,omitempty"`
 	Provider, Host, APIURL, ID, Namespace, Name, FullName string
 	Description, DefaultBranch, HTTPSURL, SSHURL          string
 	Private, Archived                                     bool

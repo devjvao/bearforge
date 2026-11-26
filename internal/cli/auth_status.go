@@ -81,6 +81,7 @@ func (o *options) authenticationStatus(ctx context.Context, connection, reposito
 		}
 	}
 	slices.Sort(ids)
+	service := app.New(store, nil, nil)
 	for _, id := range ids {
 		repo := catalog.Repositories[id]
 		if connection != "" && repo.Provider["connection"] != connection {
@@ -119,7 +120,7 @@ func (o *options) authenticationStatus(ctx context.Context, connection, reposito
 		git, gitErr := gitcli.New()
 		var repoPath string
 		if gitErr == nil {
-			repoPath, gitErr = store.SafePath("repos", id+".git")
+			repoPath, gitErr = service.RepositoryPath(repo)
 		}
 		if gitErr == nil {
 			gitErr = git.VerifyBare(ctx, repoPath)

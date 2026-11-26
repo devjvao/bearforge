@@ -15,6 +15,7 @@ import (
 
 // ImportRepository is an explicit discovery selection and its editable local ID.
 type ImportRepository struct {
+	Folder     string `json:"folder,omitempty"`
 	ID         string
 	Repository domain.RemoteRepository
 	Source     domain.RepositorySource
@@ -94,7 +95,7 @@ func (s *Service) RepositoryImportChoices(ctx context.Context, source domain.Rep
 				err = domain.E("conflict", "proposed local ID %s is shared; edit the selected IDs", choice.ID)
 			}
 			if err == nil {
-				err = s.importDestination(repo.ID)
+				err = s.importDestination(c, repo)
 			}
 		}
 		choice.Problem = ProblemFor(err)
@@ -103,12 +104,68 @@ func (s *Service) RepositoryImportChoices(ctx context.Context, source domain.Rep
 	return choices, nil
 }
 
+// ImportParent identifies the provider namespace available for folder grouping.
+func ImportParent(r domain.RemoteRepository) (label, parent string) {
+	namespace, _, _ := strings.Cut(r.FullName, "/")
+	switch r.Provider {
+	case "bitbucket-server":
+		label = "project"
+	case "bitbucket":
+		if r.ProjectKey != "" {
+			namespace = r.ProjectKey
+			label = "project"
+		} else {
+			label = "workspace"
+		}
+	case "github":
+		label = "owner"
+	default:
+		return "", ""
+	}
+	return label, portableImportName(namespace)
+}
+
 func proposedImportID(r domain.RemoteRepository) string {
+	leaf := importLeaf(r)
+	if r.Provider != "bitbucket-server" {
+		return leaf
+	}
+	_, parent := ImportParent(r)
+	id := parent + "-" + leaf
+	if len(id) > 64 {
+		digest := sha256.Sum256([]byte(id))
+		id = strings.TrimRight(id[:55], ".") + "-" + hex.EncodeToString(digest[:4])
+	}
+	return id
+}
+
+// ImportFolder computes the selected folder shown in the import picker and review.
+func ImportFolder(r domain.RemoteRepository, id, override string) string {
+	if override != "" {
+		return override
+	}
+	if r.Provider == "bitbucket-server" {
+		return GroupedImportFolder(r)
+	}
+	return id
+}
+
+// GroupedImportFolder returns the suggested project, workspace, or owner folder.
+func GroupedImportFolder(r domain.RemoteRepository) string {
+	_, parent := ImportParent(r)
+	return parent + "/" + importLeaf(r)
+}
+
+func importLeaf(r domain.RemoteRepository) string {
 	name := r.Name
 	if name == "" {
 		parts := strings.Split(r.FullName, "/")
 		name = parts[len(parts)-1]
 	}
+	return portableImportName(name)
+}
+
+func portableImportName(name string) string {
 	var b strings.Builder
 	for _, ch := range strings.ToLower(name) {
 		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || strings.ContainsRune("._-", ch) {
@@ -179,11 +236,14 @@ func (s *Service) ImportRepositories(ctx context.Context, req ImportRequest) (Re
 			return r, domain.E("conflict", "repository is retired as %s; use repo restore", retired)
 		}
 		for _, previous := range steps {
+			if folderConflict(domain.FolderName(repo.ID, repo.Folder)+".git", domain.FolderName(previous.Repository, previous.ImportedRepository.Folder)+".git") {
+				return r, domain.E("conflict", "selection contains overlapping clone folders")
+			}
 			if repositoriesEquivalent(*previous.ImportedRepository, repo) {
 				return r, domain.E("conflict", "selection contains the same remote repository twice")
 			}
 		}
-		if err := s.importDestination(repo.ID); err != nil {
+		if err := s.importDestination(c, repo); err != nil {
 			return r, err
 		}
 		if err := s.validateImportCredentials(ctx, repo, false); err != nil {
@@ -196,7 +256,7 @@ func (s *Service) ImportRepositories(ctx context.Context, req ImportRequest) (Re
 	r.PlanDigest = importPlanDigest(s.Store.RootPath(), revision, selection, steps)
 	r.Data = ImportPlan{Root: s.Store.RootPath(), CatalogRevision: revision, Repositories: selection, Steps: steps}
 	for _, step := range steps {
-		path, _ := s.repoPath(step.Repository)
+		path, _ := s.RepositoryPath(*step.ImportedRepository)
 		r.Items = append(r.Items, Item{Repository: step.Repository, Path: path, Outcome: "planned"})
 	}
 	if req.DryRun {
@@ -224,28 +284,24 @@ func importPlanDigest(root, revision string, selection []ImportRepository, steps
 	return hex.EncodeToString(h[:])
 }
 
-func (s *Service) importDestination(id string) error {
-	p, err := s.repoPath(id)
+func (s *Service) importDestination(c domain.Catalog, repo domain.Repository) error {
+	if err := checkRepositoryFolder(c, repo); err != nil {
+		return err
+	}
+	path, err := s.RepositoryPath(repo)
 	if err != nil {
 		return err
 	}
-	exists, err := s.Store.Exists("repos", id+".git")
+	parts := folderParts("repos", repo.ID, repo.Folder, ".git")
+	if err := s.checkFolderEntries(parts); err != nil {
+		return err
+	}
+	exists, err := s.Store.Exists(parts...)
 	if err != nil {
 		return err
 	}
 	if exists {
-		return domain.E("conflict", "unregistered destination already exists: %s", p)
-	}
-	if reader, ok := s.Store.(directoryReader); ok {
-		entries, err := reader.ReadDirectory("repos")
-		if err != nil {
-			return err
-		}
-		for _, entry := range entries {
-			if strings.EqualFold(entry.Name, id+".git") {
-				return domain.E("conflict", "case-equivalent import destination already exists: %s", entry.Name)
-			}
-		}
+		return domain.E("conflict", "unregistered destination already exists: %s", path)
 	}
 	return nil
 }
@@ -299,7 +355,11 @@ func normalizeImport(selected ImportRepository) (ImportRepository, domain.Reposi
 			delete(provider, key)
 		}
 	}
-	repo := domain.Repository{ID: selected.ID, Remotes: map[string]string{"origin": remote}, Base: r.DefaultBranch, Provider: provider}
+	folder := ImportFolder(r, selected.ID, selected.Folder)
+	if folder == selected.ID {
+		folder = ""
+	}
+	repo := domain.Repository{ID: selected.ID, Folder: folder, Remotes: map[string]string{"origin": remote}, Base: r.DefaultBranch, Provider: provider}
 	if err := ValidateImportedRepository(repo); err != nil {
 		return selected, empty, err
 	}
@@ -310,7 +370,7 @@ func normalizeImport(selected ImportRepository) (ImportRepository, domain.Reposi
 // ValidateImportedRepository checks only the new import snapshot; legacy
 // catalog and journal metadata remains readable without these additive fields.
 func ValidateImportedRepository(repo domain.Repository) error {
-	if err := domain.ValidateID(repo.ID); err != nil {
+	if err := domain.ValidateFolder(repo.ID, repo.Folder); err != nil {
 		return err
 	}
 	p := repo.Provider

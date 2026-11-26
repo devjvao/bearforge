@@ -146,7 +146,8 @@ func (s *Service) applyImportWithJobs(ctx context.Context, op *Operation, jobs i
 					ack = err
 					stop(err, true)
 				} else if request.starting {
-					ack = s.Store.EnsureDir("repos")
+					parts := folderParts("repos", request.step.Repository, request.step.ImportedRepository.Folder, ".git")
+					ack = s.ensureFolderParent(parts)
 					if ack != nil {
 						stop(ack, false)
 					}
@@ -205,7 +206,7 @@ func (s *Service) applyImportWithJobs(ctx context.Context, op *Operation, jobs i
 func (s *Service) prepareImportTask(ctx context.Context, op *Operation, index int) (importTask, error) {
 	step := op.Steps[index]
 	repo := *step.ImportedRepository
-	path, err := s.repoPath(repo.ID)
+	path, err := s.RepositoryPath(repo)
 	if err != nil {
 		return importTask{}, err
 	}
@@ -232,7 +233,14 @@ func (s *Service) prepareImportTask(ctx context.Context, op *Operation, index in
 	if active != "" || retired != "" {
 		return task, domain.E("conflict", "import identity %s is already registered or retired", repo.ID)
 	}
-	task.exists, err = s.Store.Exists("repos", repo.ID+".git")
+	if err := checkRepositoryFolder(catalog, repo); err != nil {
+		return task, err
+	}
+	parts := folderParts("repos", repo.ID, repo.Folder, ".git")
+	if err := s.checkFolderEntries(parts); err != nil {
+		return task, err
+	}
+	task.exists, err = s.Store.Exists(parts...)
 	if err == nil && task.exists && step.State == "planned" {
 		err = domain.E("conflict", "destination appeared before import %s started", repo.ID)
 	}

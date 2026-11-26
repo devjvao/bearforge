@@ -91,6 +91,7 @@ type Operation struct {
 }
 
 type Step struct {
+	Folder                     string                 `json:"folder,omitempty"`
 	RepositoryBefore           *domain.Repository     `json:"repository_before,omitempty"`
 	RepositoryAfter            *domain.Repository     `json:"repository_after,omitempty"`
 	ImportedRepository         *domain.Repository     `json:"imported_repository,omitempty"`
@@ -247,23 +248,8 @@ func unique(names []string) []string {
 	sort.Strings(out)
 	return out
 }
-func (s *Service) repoPath(id string) (string, error) {
-	if err := domain.ValidateID(id); err != nil {
-		return "", err
-	}
-	return s.Store.SafePath("repos", id+".git")
-}
-func (s *Service) treePath(workspace, id string) (string, error) {
-	if err := domain.ValidateID(workspace); err != nil {
-		return "", err
-	}
-	if err := domain.ValidateID(id); err != nil {
-		return "", err
-	}
-	return s.Store.SafePath(workspace, id)
-}
 func (s *Service) checkRepository(ctx context.Context, r domain.Repository) (string, error) {
-	p, err := s.repoPath(r.ID)
+	p, err := s.RepositoryPath(r)
 	if err != nil {
 		return "", err
 	}

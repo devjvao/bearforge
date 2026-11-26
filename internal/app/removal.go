@@ -59,7 +59,7 @@ func (s *Service) RemoveRepositories(ctx context.Context, req RemoveRequest) (Re
 		if err != nil {
 			return r, err
 		}
-		path, err := s.treePath(w.Name, id)
+		path, err := s.treePath(w.Name, id, m.Folder)
 		if err != nil {
 			return r, err
 		}
@@ -70,7 +70,7 @@ func (s *Service) RemoveRepositories(ctx context.Context, req RemoveRequest) (Re
 		if err != nil {
 			return r, err
 		}
-		steps = append(steps, Step{Repository: id, Branch: status.Branch, Start: status.Head, Base: m.Base, State: "planned"})
+		steps = append(steps, Step{Repository: id, Folder: m.Folder, Branch: status.Branch, Start: status.Head, Base: m.Base, State: "planned"})
 		r.Items = append(r.Items, Item{Repository: id, Workspace: w.Name, Path: path, Branch: status.Branch, Base: m.Base, Start: status.Head, Outcome: "planned"})
 	}
 	if req.Whole {
@@ -141,11 +141,15 @@ func (s *Service) applyRemove(ctx context.Context, op *Operation) (Result, error
 		if err != nil {
 			return finish(err)
 		}
-		path, err := s.treePath(op.Workspace, step.Repository)
+		path, err := s.treePath(op.Workspace, step.Repository, step.Folder)
 		if err != nil {
 			return finish(err)
 		}
-		exists, err := s.Store.Exists(op.Workspace, step.Repository)
+		parts := folderParts(op.Workspace, step.Repository, step.Folder, "")
+		if mapped, ok := w.Repositories[step.Repository]; ok && mapped.Folder != step.Folder {
+			return finish(domain.E("conflict", "workspace mapping destination changed"))
+		}
+		exists, err := s.Store.Exists(parts...)
 		if err != nil {
 			return finish(err)
 		}
@@ -186,6 +190,9 @@ func (s *Service) applyRemove(ctx context.Context, op *Operation) (Result, error
 					return finish(domain.E("conflict", "missing worktree is still registered with Git"))
 				}
 			}
+		}
+		if err := s.cleanupFolderParent(parts); err != nil {
+			return finish(err)
 		}
 		delete(w.Repositories, step.Repository)
 		if err := s.Store.SaveWorkspace(w, rev); err != nil {
@@ -249,7 +256,7 @@ func (s *Service) finishRemoval(op *Operation, r Result, active string, err erro
 		case step.Repository == active:
 			outcome = "failed"
 		}
-		path, _ := s.treePath(op.Workspace, step.Repository)
+		path, _ := s.treePath(op.Workspace, step.Repository, step.Folder)
 		item := Item{Repository: step.Repository, Workspace: op.Workspace, Path: path, Branch: step.Branch, Start: step.Start, Outcome: outcome}
 		if step.Repository == active {
 			item.Problem = ProblemFor(err)
