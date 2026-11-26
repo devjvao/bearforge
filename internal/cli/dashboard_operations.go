@@ -19,6 +19,12 @@ func (s dashboardService) ResumeOperation(ctx context.Context, id string, observ
 	return service.Resume(ctx, id)
 }
 
+func (s dashboardService) ReviewRemovalRecovery(ctx context.Context, id, digest string, observe func(app.Event)) (app.Result, error) {
+	service := *s.Service
+	service.Observe = observe
+	return service.ReviewRemovalRecovery(ctx, id, digest)
+}
+
 func (s dashboardService) AbandonOperation(ctx context.Context, id string) (app.Result, error) {
 	return s.Service.Abandon(ctx, id)
 }

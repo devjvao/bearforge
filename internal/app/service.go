@@ -100,6 +100,7 @@ type Step struct {
 	RemovalMode                string                 `json:"removal_mode,omitempty"`
 	WorktreeID                 string                 `json:"worktree_id,omitempty"`
 	MissingHistoryPreserved    bool                   `json:"missing_history_preserved,omitempty"`
+	RemovalDirectory           string                 `json:"removal_directory,omitempty"`
 	RepositoryBefore           *domain.Repository     `json:"repository_before,omitempty"`
 	RepositoryAfter            *domain.Repository     `json:"repository_after,omitempty"`
 	ImportedRepository         *domain.Repository     `json:"imported_repository,omitempty"`
@@ -128,6 +129,7 @@ type Problem struct {
 }
 type Item struct {
 	RemovalMode    string                         `json:"removal_mode,omitempty"`
+	RetainedPath   string                         `json:"retained_path,omitempty"`
 	RefFormat      string                         `json:"ref_format,omitempty"`
 	Check          string                         `json:"check,omitempty"`
 	Repository     string                         `json:"repository,omitempty"`

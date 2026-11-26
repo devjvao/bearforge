@@ -10,6 +10,22 @@ import (
 	"github.com/devjvao/bearforge/internal/app"
 )
 
+func removalResultPath(item app.Item) string {
+	if item.Outcome == "planned" {
+		return "Proposed recovery path: " + displayText(item.RetainedPath)
+	}
+	return "Retained files: " + displayText(item.RetainedPath)
+}
+
+func hasRetainedDirectory(plan app.Result) bool {
+	for _, item := range plan.Items {
+		if item.RemovalMode == "keep_registered_files" {
+			return true
+		}
+	}
+	return false
+}
+
 func (m dashboardModel) workspaceView() tea.View {
 	run := m.workspaceRun
 	summary := "Enter workspace details"
@@ -83,6 +99,9 @@ func (m dashboardModel) workspaceContent() []string {
 			return append(lines, m.styles.outcome(item.Outcome), "Path: "+displayText(item.Path), "Default branch: "+displayText(item.Branch), "Creates an empty workspace; no repositories are added.", "Press y to confirm this exact plan.")
 		}
 		lines = append(lines, fmt.Sprintf("Remove %d repository worktree(s).", len(run.names)), "Local branches and history are preserved.")
+		if run.remove.MoveUnverified || hasRetainedDirectory(run.preview) {
+			lines = append(lines, "m toggles moving older checkouts with a missing Git link. If the checkout was moved elsewhere, cancel and repair it there.")
+		}
 		if run.action == workspaceRemoveAll {
 			lines = append(lines, "Remove the workspace definition and its empty directory.", "Unrelated container files will be retained.")
 		} else {
@@ -95,6 +114,9 @@ func (m dashboardModel) workspaceContent() []string {
 			}
 			lines = append(lines, "", m.styles.title.Render(displayText(item.Repository)), "Path: "+displayText(item.Path), "Branch: "+displayText(item.Branch), "HEAD: "+displayText(item.Start))
 			if advice := app.MissingRemovalAdvice(item.RemovalMode); advice != "" {
+				if item.RetainedPath != "" {
+					lines = append(lines, "Retain files at: "+displayText(item.RetainedPath))
+				}
 				lines = append(lines, advice)
 			}
 		}
@@ -131,6 +153,9 @@ func (m dashboardModel) workspaceContent() []string {
 				}
 			}
 			for _, item := range run.result.Items {
+				if item.Repository == id && item.RetainedPath != "" {
+					lines = append(lines, removalResultPath(item))
+				}
 				if item.Repository == id && item.Problem != nil {
 					lines = append(lines, m.styles.bad.Render("Error: "+displayText(item.Problem.Message)))
 				}

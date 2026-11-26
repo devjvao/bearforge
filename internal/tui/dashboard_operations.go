@@ -18,6 +18,10 @@ type DashboardRecoverer interface {
 	AbandonOperation(context.Context, string) (app.Result, error)
 }
 
+type removalRecoveryReviewer interface {
+	ReviewRemovalRecovery(context.Context, string, string, func(app.Event)) (app.Result, error)
+}
+
 type operationsPhase uint8
 
 const (
@@ -38,6 +42,7 @@ type dashboardOperations struct {
 	index, offset int
 	action        string
 	operation     *app.Operation
+	recovery      app.Result
 	result        app.Result
 	err           error
 	states        map[string]string
@@ -47,6 +52,7 @@ type dashboardOperations struct {
 type dashboardOperationLoadedMsg struct {
 	id        uint64
 	operation *app.Operation
+	recovery  app.Result
 	err       error
 }
 type dashboardOperationDoneMsg struct {
@@ -96,7 +102,13 @@ func (m dashboardModel) inspectOperation(action string) (tea.Model, tea.Cmd) {
 		}
 		defer release()
 		op, err := source.InspectOperation(ctx, operationID)
-		return dashboardOperationLoadedMsg{id: id, operation: op, err: err}
+		msg := dashboardOperationLoadedMsg{id: id, operation: op, err: err}
+		if err == nil && op != nil && action == "resume" && (op.Kind == "workspace.remove" || op.Kind == "workspace.remove-repo") {
+			if reviewer, ok := source.(removalRecoveryReviewer); ok {
+				msg.recovery, msg.err = reviewer.ReviewRemovalRecovery(ctx, operationID, "", nil)
+			}
+		}
+		return msg
 	}
 }
 
@@ -122,13 +134,16 @@ func (m dashboardModel) confirmOperation() (tea.Model, tea.Cmd) {
 	m.operationID++
 	id, operationID, action, ctx, reader, progress := m.operationID, run.operation.ID, run.action, run.ctx, m.reader, run.progress
 	source := reader.source.(DashboardRecoverer)
+	digest := run.recovery.PlanDigest
 	work := func() tea.Msg {
 		defer close(progress.done)
 		release, err := reader.acquire(ctx)
 		result := app.Result{}
 		if err == nil {
 			defer release()
-			if action == "resume" {
+			if action == "resume" && digest != "" {
+				result, err = source.(removalRecoveryReviewer).ReviewRemovalRecovery(ctx, operationID, digest, progress.observe)
+			} else if action == "resume" {
 				result, err = source.ResumeOperation(ctx, operationID, progress.observe)
 			} else {
 				result, err = source.AbandonOperation(ctx, operationID)
@@ -160,6 +175,7 @@ func (m dashboardModel) updateOperations(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		run.phase, run.operation, run.err = operationsDetails, v.operation, v.err
+		run.recovery = v.recovery
 		if run.err == nil && (v.operation == nil || v.operation.ID != run.entries[run.index].ID || v.operation.Root != run.root) {
 			run.err = errors.New("operation scope changed; close and refresh before recovery")
 		}

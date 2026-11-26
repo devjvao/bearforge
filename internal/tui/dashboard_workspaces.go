@@ -121,7 +121,7 @@ func (m dashboardModel) openWorkspace(action workspaceAction) (tea.Model, tea.Cm
 func (m dashboardModel) previewWorkspace() (tea.Model, tea.Cmd) {
 	run := m.workspaceRun
 	run.create = app.CreateWorkspaceRequest{Name: run.workspace, Branch: run.branch, DryRun: true}
-	run.remove = app.RemoveRequest{Workspace: run.workspace, Repositories: slices.Clone(run.names), Whole: run.action == workspaceRemoveAll, DryRun: true}
+	run.remove = app.RemoveRequest{Workspace: run.workspace, Repositories: slices.Clone(run.names), Whole: run.action == workspaceRemoveAll, DryRun: true, MoveUnverified: run.remove.MoveUnverified}
 	run.phase, run.err, run.offset, run.preview = workspacePlanning, nil, 0, app.Result{}
 	m.workspaceID++
 	return m, m.workspaceCommand(false)
@@ -263,7 +263,7 @@ func validateWorkspacePreview(run *dashboardWorkspace, result app.Result) error 
 			seen[""] = true
 			continue
 		}
-		if !slices.Contains(run.names, item.Repository) || seen[item.Repository] || item.Workspace != run.workspace || item.Path == "" || (item.Start == "" && item.RemovalMode != "missing") {
+		if !slices.Contains(run.names, item.Repository) || seen[item.Repository] || item.Workspace != run.workspace || item.Path == "" || (item.Start == "" && item.RemovalMode != "missing" && item.RetainedPath == "") {
 			return errors.New("the preview does not match the selected repositories; reopen removal")
 		}
 		seen[item.Repository] = true
@@ -341,6 +341,11 @@ func (m dashboardModel) workspaceKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if run.phase == workspaceReview {
 		switch name {
+		case "m":
+			if run.action != workspaceCreate && (run.remove.MoveUnverified || hasRetainedDirectory(run.preview)) {
+				run.remove.MoveUnverified = !run.remove.MoveUnverified
+				return m.previewWorkspace()
+			}
 		case "y", "Y":
 			return m.confirmWorkspace()
 		case "r":

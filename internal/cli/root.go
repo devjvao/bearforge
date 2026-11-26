@@ -276,6 +276,11 @@ func (o *options) render(r app.Result) error {
 				return err
 			}
 		}
+		if item.RetainedPath != "" {
+			if _, err := fmt.Fprintf(o.out, "\tretained=%s", item.RetainedPath); err != nil {
+				return err
+			}
+		}
 		if advice := app.MissingRemovalAdvice(item.RemovalMode); item.Outcome == "planned" && advice != "" {
 			if _, err := fmt.Fprintf(o.out, "\t%s", advice); err != nil {
 				return err
@@ -345,6 +350,11 @@ func (o *options) confirm(ctx context.Context, plan app.Result) error {
 				}
 			}
 			if advice := app.MissingRemovalAdvice(item.RemovalMode); advice != "" {
+				if item.RetainedPath != "" {
+					if err := o.confirmationText("Retain files at %s\n", item.RetainedPath); err != nil {
+						return err
+					}
+				}
 				if err := o.confirmationText("%s\n", advice); err != nil {
 					return err
 				}

@@ -12,26 +12,21 @@ import (
 	"github.com/devjvao/bearforge/internal/pathmatch"
 )
 
-// RegisteredWorktreeID finds the administrative directory by its Git back-pointer.
-// Git chooses a suffix when worktrees share a basename.
-func (c *Client) RegisteredWorktreeID(ctx context.Context, bare, path string) (string, error) {
-	id, _, err := c.inspectMissingRegistration(ctx, bare, path)
-	return id, err
-}
-
 // A UTF-8 back-pointer fits even an extended-length Windows path.
 const maxGitdirBytes = 128 << 10
 
-func (c *Client) inspectMissingRegistration(ctx context.Context, bare, path string) (string, []string, error) {
+// FindWorktreeRegistration identifies the administrative directory by its Git
+// back-pointer, including suffixes Git adds when worktrees share a basename.
+func (c *Client) FindWorktreeRegistration(ctx context.Context, bare, path string) (string, error) {
 	parent := filepath.Join(bare, "worktrees")
 	root, err := os.OpenRoot(parent)
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 	defer root.Close()
 	entries, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 	want := filepath.Join(path, ".git")
 	var found string
@@ -42,7 +37,7 @@ func (c *Client) inspectMissingRegistration(ctx context.Context, bare, path stri
 		dir := filepath.Join(parent, entry.Name())
 		b, err := readPrivateFile(root, filepath.Join(entry.Name(), "gitdir"), maxGitdirBytes)
 		if err != nil {
-			return "", nil, err
+			return "", err
 		}
 		if b == nil {
 			continue
@@ -56,14 +51,29 @@ func (c *Client) inspectMissingRegistration(ctx context.Context, bare, path stri
 			continue
 		}
 		if found != "" {
-			return "", nil, domain.E("conflict", "multiple Git registrations point to %s", path)
+			return "", domain.E("conflict", "multiple Git registrations point to %s", path)
 		}
 		found = entry.Name()
 	}
 	if found == "" {
-		return "", nil, domain.E("conflict", "cannot identify the Git registration for %s", path)
+		return "", domain.E("conflict", "cannot identify the Git registration for %s", path)
 	}
-	admin := filepath.Join(parent, found)
+	return found, nil
+}
+
+// RegisteredWorktreeID returns the registration only if its private Git state
+// can safely be released after the checkout loses its Git link.
+func (c *Client) RegisteredWorktreeID(ctx context.Context, bare, path string) (string, error) {
+	id, _, err := c.inspectMissingRegistration(ctx, bare, path)
+	return id, err
+}
+
+func (c *Client) inspectMissingRegistration(ctx context.Context, bare, path string) (string, []string, error) {
+	found, err := c.FindWorktreeRegistration(ctx, bare, path)
+	if err != nil {
+		return "", nil, err
+	}
+	admin := filepath.Join(bare, "worktrees", found)
 	// Git skips its submodule checks when the working directory is gone.
 	// Deleting this registration would also delete its private object stores.
 	if _, err := os.Lstat(filepath.Join(admin, "modules")); err == nil {

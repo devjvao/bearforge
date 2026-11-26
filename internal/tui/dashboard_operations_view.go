@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/devjvao/bearforge/internal/app"
 )
 
 func (m dashboardModel) operationsView() tea.View {
@@ -96,6 +97,12 @@ func (m dashboardModel) operationsContent() []string {
 	lines = append(lines, "Operation: "+displayText(op.ID), "Kind: "+displayText(op.Kind), "Recorded state: "+displayText(op.State))
 	if run.phase == operationsReview {
 		if run.action == "resume" {
+			for _, item := range run.recovery.Items {
+				lines = append(lines, displayText(item.Repository)+" — "+displayText(item.Path), app.MissingRemovalAdvice(item.RemovalMode))
+				if item.RetainedPath != "" {
+					lines = append(lines, "Retain files at: "+displayText(item.RetainedPath))
+				}
+			}
 			lines = append(lines, "Retry unfinished steps; successful work is verified and reused.", "The original operation and credential bindings are retained.")
 		} else {
 			lines = append(lines, "Stop recovery tracking. All files and successful imports are retained.", "This operation cannot be resumed after it is abandoned.")
@@ -139,6 +146,9 @@ func (m dashboardModel) operationsContent() []string {
 			lines = append(lines, "Error: "+displayText(run.result.Problem.Message))
 		}
 		for _, item := range run.result.Items {
+			if item.RetainedPath != "" {
+				lines = append(lines, displayText(item.Repository)+" ? "+removalResultPath(item))
+			}
 			if item.Problem != nil {
 				lines = append(lines, displayText(item.Repository)+": "+displayText(item.Problem.Message))
 			}
