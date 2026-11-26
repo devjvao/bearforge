@@ -75,6 +75,7 @@ func lookupFixtureResponse(t *testing.T, w http.ResponseWriter, r *http.Request)
 
 func TestPRListProductionDispatchMixedProviders(t *testing.T) {
 	root := cliExecRoot(t)
+	t.Chdir(root)
 	var requests atomic.Int32
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
@@ -89,7 +90,7 @@ func TestPRListProductionDispatchMixedProviders(t *testing.T) {
 		for _, mode := range []string{"human", "json", "jsonl"} {
 			t.Run(kind+"/"+mode, func(t *testing.T) {
 				var out, errOut bytes.Buffer
-				code := Run(t.Context(), []string{"--root", root, "--output=" + mode, "pr", "list", "review", "--base", "main"}, strings.NewReader(""), &out, &errOut)
+				code := Run(t.Context(), []string{"--output=" + mode, "pr", "list", "review", "--base", "main"}, strings.NewReader(""), &out, &errOut)
 				if code != 0 || errOut.Len() != 0 {
 					t.Fatalf("production lookup: code=%d out=%s err=%s", code, out.String(), errOut.String())
 				}
@@ -130,7 +131,7 @@ func TestPRListProductionDispatchMixedProviders(t *testing.T) {
 		}
 		before := requests.Load()
 		var out, errOut bytes.Buffer
-		code := Run(t.Context(), []string{"--root", root, "--json", "--dry-run", "pr", "list", "review"}, strings.NewReader(""), &out, &errOut)
+		code := Run(t.Context(), []string{"--json", "--dry-run", "pr", "list", "review"}, strings.NewReader(""), &out, &errOut)
 		if after := requests.Load(); code != 0 || after != before || !strings.Contains(out.String(), `"provider":"`+kind+`"`) {
 			t.Fatalf("dry-run contacted API or lost route: %d %d %s %s", before, after, out.String(), errOut.String())
 		}

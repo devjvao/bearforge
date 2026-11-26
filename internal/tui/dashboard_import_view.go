@@ -289,10 +289,8 @@ func (m dashboardModel) importContent() []string {
 			}
 		}
 		if run.result.OperationID != "" {
-			lines = append(lines, "", "Inspect: "+dashboardRecoveryCommand(run.root, "show", run.result.OperationID))
-			if run.err != nil || run.result.Outcome == "partial" {
-				lines = append(lines, "Resume: "+dashboardRecoveryCommand(run.root, "resume", run.result.OperationID))
-			}
+			lines = append(lines, "")
+			lines = append(lines, dashboardRecoveryLines(run.root, run.result.OperationID, run.err != nil || run.result.Outcome == "partial")...)
 		}
 		if run.err != nil {
 			command := "bearforge auth status"

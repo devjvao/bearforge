@@ -46,7 +46,8 @@ func importConfirmationFixture(t *testing.T) (*auth.Manager, *config.Store, *app
 
 func TestImportResumeRequiresConfirmationBeforeReassociation(t *testing.T) {
 	manager, store, op := importConfirmationFixture(t)
-	_, err := authCommand(t, manager, "", "--root", store.RootPath(), "--no-input", "operations", "resume", op.ID, "--connection", "work")
+	t.Chdir(store.RootPath())
+	_, err := authCommand(t, manager, "", "--no-input", "operations", "resume", op.ID, "--connection", "work")
 	if err == nil || !strings.Contains(err.Error(), "confirmation") {
 		t.Fatalf("repair did not require approval: %v", err)
 	}

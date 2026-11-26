@@ -239,7 +239,7 @@ func TestDashboardSmallTerminalCanReachEveryDetailLine(t *testing.T) {
 		seen.WriteString(m.View().Content)
 		m, _ = dashboardKey(m, tea.KeyPgDown, "")
 	}
-	for _, want := range []string{"Details: api", "Path: /code/alpha/api", "Actual: main", "Staged: 0", "Upstream: (none)", "HEAD: deadbeef", "Unfinished: workspace.add", "Inspect: bearforge --root '/code'", "operations show pending123"} {
+	for _, want := range []string{"Details: api", "Path: /code/alpha/api", "Actual: main", "Staged: 0", "Upstream: (none)", "HEAD: deadbeef", "Unfinished: workspace.add", "Directory: /code", "Inspect: bearforge operations", "pending123"} {
 		if !strings.Contains(seen.String(), want) {
 			t.Errorf("detail line cannot be reached by scrolling: %q", want)
 		}
@@ -280,7 +280,7 @@ func TestDashboardNarrowTerminalCanReachFullDetailValues(t *testing.T) {
 	content := strings.ReplaceAll(seen.String(), " ", "")
 	for _, want := range []string{
 		"Conflicts:7",
-		"Inspect:bearforge--root'/code'operationsshowabcdef0123456789abcdef0123456789",
+		"Directory:/code", "Inspect:bearforgeoperationsshowabcdef0123456789abcdef0123456789",
 		"diagnostictail",
 		"HEAD:0123456789abcdef0123456789abcdefdeadbeef",
 	} {

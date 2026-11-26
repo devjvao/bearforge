@@ -26,7 +26,8 @@ func TestAuthStatusRejectsMismatchedExplicitSelectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := auth.NewManager(auth.Options{RegistryPath: registryPath, Secrets: authTestSecrets{}})
-	store := config.New(filepath.Join(cliFixtureDir(t), "code"))
+	store := config.New(cliFixtureDir(t))
+	t.Chdir(store.RootPath())
 	for _, provider := range []map[string]string{{"connection": "first", "grant_id": "first-grant"}, {}, {"token_env": "STATUS_FIXTURE_TOKEN"}} {
 		catalog, revision, err := store.LoadCatalog()
 		if err != nil {
@@ -36,7 +37,7 @@ func TestAuthStatusRejectsMismatchedExplicitSelectors(t *testing.T) {
 		if err := store.SaveCatalog(catalog, revision); err != nil {
 			t.Fatal(err)
 		}
-		output, err := authCommand(t, manager, "", "--root", store.RootPath(), "--json", "auth", "status", "--local", "--repo", "api", "--connection", "second")
+		output, err := authCommand(t, manager, "", "--json", "auth", "status", "--local", "--repo", "api", "--connection", "second")
 		var problem *domain.Error
 		if !errors.As(err, &problem) || problem.Code != "invalid" {
 			t.Fatalf("explicit repository silently skipped: provider=%v, output=%s, err=%v", provider, output, err)
@@ -68,8 +69,9 @@ func TestAuthStatusUsesRegisteredRepositoryGitConfiguration(t *testing.T) {
 	if err := store.SaveCatalog(catalog, revision); err != nil {
 		t.Fatal(err)
 	}
+	t.Chdir(bare)
 	manager := auth.NewManager(auth.Options{RegistryPath: filepath.Join(base, "auth.json"), Secrets: authTestSecrets{}})
-	output, err := authCommand(t, manager, "", "--root", store.RootPath(), "--json", "auth", "status", "--repo", "api")
+	output, err := authCommand(t, manager, "", "--json", "auth", "status", "--repo", "api")
 	if err == nil {
 		t.Fatal("unsupported API provider unexpectedly succeeded")
 	}
@@ -81,7 +83,7 @@ func TestAuthStatusUsesRegisteredRepositoryGitConfiguration(t *testing.T) {
 	}
 	// Drift must be reported rather than probing an unreviewed local origin.
 	dashboardGit(t, "-C", bare, "remote", "set-url", "origin", "https://other.invalid/team/api.git")
-	output, _ = authCommand(t, manager, "", "--root", store.RootPath(), "--json", "auth", "status", "--repo", "api")
+	output, _ = authCommand(t, manager, "", "--json", "auth", "status", "--repo", "api")
 	if err := json.Unmarshal([]byte(output), &result); err != nil || result.Data.Repositories[0].GitRead != "unavailable" || !strings.Contains(result.Data.Repositories[0].Detail, "Git read check failed") {
 		t.Fatalf("origin drift was not visible: %s, %v", output, err)
 	}

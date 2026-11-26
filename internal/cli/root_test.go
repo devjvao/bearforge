@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -16,15 +14,14 @@ import (
 	"github.com/devjvao/bearforge/internal/app"
 )
 
-func TestHelpDoesNotCreateRoot(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "missing")
+func TestHelpDoesNotCreateState(t *testing.T) {
+	root := cliFixtureDir(t)
+	t.Chdir(root)
 	var out, errOut bytes.Buffer
-	if code := Run(context.Background(), []string{"--root", root, "--help"}, bytes.NewBuffer(nil), &out, &errOut); code != 0 {
+	if code := Run(context.Background(), []string{"--help"}, bytes.NewBuffer(nil), &out, &errOut); code != 0 {
 		t.Fatalf("%d: %s", code, errOut.String())
 	}
-	if _, err := os.Stat(root); !os.IsNotExist(err) {
-		t.Fatal("help created root")
-	}
+	assertNoCLIState(t, root)
 }
 
 func TestConfirmationCancellation(t *testing.T) {
@@ -45,8 +42,10 @@ func TestConfirmationCancellation(t *testing.T) {
 	}
 }
 func TestJSONFailure(t *testing.T) {
+	root := cliFixtureDir(t)
+	t.Chdir(root)
 	var out, errOut bytes.Buffer
-	code := Run(context.Background(), []string{"--root", t.TempDir(), "--json", "workspace", "show", "missing"}, bytes.NewBuffer(nil), &out, &errOut)
+	code := Run(context.Background(), []string{"--json", "workspace", "show", "missing"}, bytes.NewBuffer(nil), &out, &errOut)
 	if code == 0 {
 		t.Fatal("expected failure")
 	}
@@ -54,32 +53,36 @@ func TestJSONFailure(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
 		t.Fatalf("invalid JSON: %s: %v", out.String(), err)
 	}
+	assertNoCLIState(t, root)
 }
 func TestInlineRefusesPipe(t *testing.T) {
+	root := cliFixtureDir(t)
+	t.Chdir(root)
 	var out, errOut bytes.Buffer
-	if code := Run(context.Background(), []string{"--root", t.TempDir(), "--ui=inline", "repo", "list"}, bytes.NewBuffer(nil), &out, &errOut); code != 2 {
+	if code := Run(context.Background(), []string{"--ui=inline", "repo", "list"}, bytes.NewBuffer(nil), &out, &errOut); code != 2 {
 		t.Fatalf("got %d", code)
 	}
+	assertNoCLIState(t, root)
 }
 
-func TestTUIHelpDoesNotCreateRoot(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "missing")
+func TestTUIHelpDoesNotCreateState(t *testing.T) {
+	root := cliFixtureDir(t)
+	t.Chdir(root)
 	var out, errOut bytes.Buffer
-	code := Run(t.Context(), []string{"--root", path, "tui", "--help"}, bytes.NewBuffer(nil), &out, &errOut)
+	code := Run(t.Context(), []string{"tui", "--help"}, bytes.NewBuffer(nil), &out, &errOut)
 	if code != 0 || !strings.Contains(out.String(), "tui [WORKSPACE]") || !strings.Contains(out.String(), "s syncs") {
 		t.Fatalf("dashboard help unavailable: code=%d out=%s err=%s", code, out.String(), errOut.String())
 	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("dashboard help created root: %v", err)
-	}
+	assertNoCLIState(t, root)
 }
 
 func TestTUIRejectsNoninteractiveModesWithoutTerminalControl(t *testing.T) {
 	for _, flags := range [][]string{{}, {"--json"}, {"--output=jsonl"}, {"--quiet"}, {"--no-input"}, {"--ui=plain"}, {"--dry-run"}} {
 		t.Run(strings.Join(flags, " "), func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "missing")
+			root := cliFixtureDir(t)
+			t.Chdir(root)
 			var out, errOut bytes.Buffer
-			args := append([]string{"--root", path, "tui"}, flags...)
+			args := append([]string{"tui"}, flags...)
 			code := Run(t.Context(), args, bytes.NewBuffer(nil), &out, &errOut)
 			if code != 2 {
 				t.Fatalf("expected usage refusal, got %d: %s %s", code, out.String(), errOut.String())
@@ -90,9 +93,7 @@ func TestTUIRejectsNoninteractiveModesWithoutTerminalControl(t *testing.T) {
 			if strings.ContainsAny(out.String()+errOut.String(), "\x1b\u009b") {
 				t.Fatal("rejected command took over terminal")
 			}
-			if _, err := os.Stat(path); !os.IsNotExist(err) {
-				t.Fatalf("rejected dashboard created root: %v", err)
-			}
+			assertNoCLIState(t, root)
 			if slices.Contains(flags, "--json") || slices.Contains(flags, "--output=jsonl") {
 				var doc map[string]any
 				if err := json.Unmarshal(out.Bytes(), &doc); err != nil {

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -28,7 +27,7 @@ import (
 )
 
 type options struct {
-	root, output, ui, color                 string
+	output, ui, color                       string
 	json, quiet, verbose, noInput, dry, yes bool
 	jobs                                    int
 	in                                      io.Reader
@@ -89,7 +88,6 @@ func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 func newRoot(o *options) *cobra.Command {
 	root := &cobra.Command{Use: "bearforge", Short: "Manage shared Git repositories and workspaces", SilenceUsage: true, SilenceErrors: true}
 	f := root.PersistentFlags()
-	f.StringVar(&o.root, "root", "", "Storage root (default: ~/code)")
 	f.BoolVar(&o.json, "json", false, "Emit one JSON result")
 	f.StringVar(&o.output, "output", "human", "Output: human, json, jsonl")
 	f.StringVar(&o.ui, "ui", "auto", "Progress: auto, plain, inline")
@@ -136,31 +134,13 @@ func (o *options) interactive() bool {
 	return o.output == "human" && !o.noInput && !o.quiet && os.Getenv("CI") == "" && os.Getenv("TERM") != "dumb" && isTerminal(o.in) && isTerminal(o.out) && isTerminal(o.errOut)
 }
 func (o *options) store() (*config.Store, error) {
-	root := o.root
-	if root == "" {
-		root = os.Getenv("BEARFORGE_ROOT")
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, err
 	}
-	if root == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return nil, err
-		}
-		for p := cwd; ; p = filepath.Dir(p) {
-			if _, err := os.Stat(filepath.Join(p, ".bearforge", "catalog.yaml")); err == nil {
-				root = p
-				break
-			}
-			if filepath.Dir(p) == p {
-				break
-			}
-		}
-	}
-	if root == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
-		}
-		root = filepath.Join(home, "code")
+	root, err := config.DiscoverRoot(cwd)
+	if err != nil {
+		return nil, err
 	}
 	return config.New(root), nil
 }
@@ -329,14 +309,8 @@ func (o *options) render(r app.Result) error {
 			return err
 		}
 	}
-	if r.OperationID != "" && (r.Outcome == "partial") {
-		if r.Command == "exec" {
-			_, err := fmt.Fprintln(o.errOut, "Inspect execution with:", o.recoveryCommand("show", r.OperationID), "(commands are never replayed)")
-			return err
-		}
-		if _, err := fmt.Fprintln(o.errOut, "Resume with:", o.recoveryCommand("resume", r.OperationID)); err != nil {
-			return err
-		}
+	if r.OperationID != "" && r.Outcome == "partial" {
+		return o.writePartialRecovery(r.Command, r.OperationID)
 	}
 	return nil
 }

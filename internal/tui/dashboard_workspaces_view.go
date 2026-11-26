@@ -145,10 +145,8 @@ func (m dashboardModel) workspaceContent() []string {
 		}
 		if run.result.OperationID != "" {
 			id := displayText(run.result.OperationID)
-			lines = append(lines, "", "Operation: "+id, "Inspect: "+dashboardRecoveryCommand(run.root, "show", id))
-			if run.err != nil || run.result.Outcome == "partial" {
-				lines = append(lines, "Resume: "+dashboardRecoveryCommand(run.root, "resume", id))
-			}
+			lines = append(lines, "", "Operation: "+id)
+			lines = append(lines, dashboardRecoveryLines(run.root, id, run.err != nil || run.result.Outcome == "partial")...)
 		}
 	}
 	return lines
@@ -166,11 +164,16 @@ func (m dashboardModel) workspaceProgressAction() string {
 	return string(m.workspaceRun.action)
 }
 
-func dashboardRecoveryCommand(root, action, id string) string {
-	return "bearforge --root " + workspaceShellQuote(displayText(root)) + " operations " + action + " " + displayText(id)
+func dashboardRecoveryLines(root, id string, resumable bool) []string {
+	id = displayText(id)
+	lines := []string{"Directory: " + displayText(root), "Inspect: bearforge operations show " + id}
+	if resumable {
+		lines = append(lines, "Resume: bearforge operations resume "+id)
+	}
+	return lines
 }
 
-// Quote for PowerShell on Windows and a POSIX shell elsewhere, keeping paths
+// Quote for PowerShell on Windows and a POSIX shell elsewhere, keeping arguments
 // with spaces, quotes or shell metacharacters literal in copied commands.
 func workspaceShellQuote(value string) string {
 	if runtime.GOOS == "windows" {

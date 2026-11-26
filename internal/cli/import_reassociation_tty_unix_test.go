@@ -17,6 +17,7 @@ func TestImportResumeConfirmationPrecedesTerminalProgress(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	t.Setenv("NO_COLOR", "1")
 	manager, store, op := importConfirmationFixture(t)
+	t.Chdir(store.RootPath())
 	master, terminal, err := pty.Open()
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +52,7 @@ func TestImportResumeConfirmationPrecedesTerminalProgress(t *testing.T) {
 	}()
 	o := &options{in: terminal, out: terminal, errOut: terminal, authManager: manager}
 	command := newRoot(o)
-	command.SetArgs([]string{"--root", store.RootPath(), "--color=never", "operations", "resume", op.ID, "--connection", "work"})
+	command.SetArgs([]string{"--color=never", "operations", "resume", op.ID, "--connection", "work"})
 	done := make(chan error, 1)
 	go func() { done <- command.ExecuteContext(ctx) }()
 	select {

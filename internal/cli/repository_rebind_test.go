@@ -20,6 +20,7 @@ import (
 
 func TestRepositoryRebindCLIReviewsThenRepairsExistingRepositories(t *testing.T) {
 	root := cliExecRoot(t)
+	t.Chdir(root)
 	requests := 0
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -82,7 +83,7 @@ func TestRepositoryRebindCLIReviewsThenRepairsExistingRepositories(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"--root", root, "--json", "--no-input", "repo", "rebind", "api", "web", "--connection", connection.Name}
+	args := []string{"--json", "--no-input", "repo", "rebind", "api", "web", "--connection", connection.Name}
 	output, err := authCommand(t, manager, "", append(args, "--dry-run")...)
 	if err != nil {
 		t.Fatalf("rebind preview: %s %v", output, err)

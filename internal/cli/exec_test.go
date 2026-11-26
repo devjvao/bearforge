@@ -40,14 +40,14 @@ func cliExecRoot(t *testing.T) string {
 }
 
 func TestExecCLIJSONPreservesLiteralArguments(t *testing.T) {
-	root := cliExecRoot(t)
+	t.Chdir(cliExecRoot(t))
 	t.Setenv("BEARFORGE_CLI_EXEC_HELPER", "1")
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
 	args := []string{"one argument", "a;b", "$HOME", ""}
-	command := append([]string{"--root", root, "--output=json", "exec", "review", "--repo", "web", "--", executable, "-test.run=^TestCLIExecHelper$", "--"}, args...)
+	command := append([]string{"--output=json", "exec", "review", "--repo", "web", "--", executable, "-test.run=^TestCLIExecHelper$", "--"}, args...)
 	var out, errOut bytes.Buffer
 	code := Run(t.Context(), command, strings.NewReader(""), &out, &errOut)
 	if code != 0 {
@@ -71,8 +71,9 @@ func TestExecCLIJSONPreservesLiteralArguments(t *testing.T) {
 
 func TestExecCLIShellSyntaxAndDryRun(t *testing.T) {
 	root := cliExecRoot(t)
+	t.Chdir(root)
 	var out, errOut bytes.Buffer
-	code := Run(t.Context(), []string{"--root", root, "--json", "exec", "review", "--repo", "api", "echo one argument"}, strings.NewReader(""), &out, &errOut)
+	code := Run(t.Context(), []string{"--json", "exec", "review", "--repo", "api", "echo one argument"}, strings.NewReader(""), &out, &errOut)
 	if code != 0 {
 		t.Fatalf("single expression failed: %d, %s, %s", code, out.String(), errOut.String())
 	}
@@ -86,7 +87,7 @@ func TestExecCLIShellSyntaxAndDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code = Run(t.Context(), []string{"--root", root, "--json", "--dry-run", "exec", "review", "--", "does-not-exist", "argument"}, strings.NewReader(""), &out, &errOut)
+	code = Run(t.Context(), []string{"--json", "--dry-run", "exec", "review", "--", "does-not-exist", "argument"}, strings.NewReader(""), &out, &errOut)
 	if code != 0 {
 		t.Fatalf("dry-run executed command: %d, %s", code, out.String())
 	}
@@ -100,9 +101,9 @@ func TestExecCLIShellSyntaxAndDryRun(t *testing.T) {
 }
 
 func TestExecCLIJSONLEmitsOrderedOutputAndFinalResult(t *testing.T) {
-	root := cliExecRoot(t)
+	t.Chdir(cliExecRoot(t))
 	var out, errOut bytes.Buffer
-	code := Run(t.Context(), []string{"--root", root, "--output=jsonl", "exec", "review", "--repo", "api", "echo child-output"}, strings.NewReader(""), &out, &errOut)
+	code := Run(t.Context(), []string{"--output=jsonl", "exec", "review", "--repo", "api", "echo child-output"}, strings.NewReader(""), &out, &errOut)
 	if code != 0 {
 		t.Fatalf("jsonl: %d, %s", code, errOut.String())
 	}

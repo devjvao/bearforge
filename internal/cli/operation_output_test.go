@@ -16,7 +16,7 @@ import (
 )
 
 func TestHumanOperationOutputOrganizesStepsWithoutJournalInternals(t *testing.T) {
-	operation := &app.Operation{ID: "pending-import", Root: "D:/team's code", Kind: "repo.import", State: "partial", Error: "transfer interrupted", Steps: []app.Step{
+	operation := &app.Operation{ID: "pending-import", Root: "D:/team's code/" + strings.Repeat("long path/", 10), Kind: "repo.import", State: "partial", Error: "transfer interrupted", Steps: []app.Step{
 		{Repository: "api", State: "succeeded", RefFormat: "files"},
 		{Repository: "web", State: "failed", RefFormat: "reftable", Error: "read access unavailable", ImportedRepository: &domain.Repository{Provider: map[string]string{"grant_id": "opaque-internal-grant"}}},
 	}}
@@ -31,6 +31,11 @@ func TestHumanOperationOutputOrganizesStepsWithoutJournalInternals(t *testing.T)
 	for _, want := range []string{"Operation", "pending-import", "repo.import", "partial", "Steps", "REPOSITORY", "STATE", "api", "succeeded", "web", "failed", "reftable", "read access unavailable", "operations resume pending-import", "operations abandon pending-import --yes"} {
 		if !strings.Contains(compactResultText(view), compactResultText(want)) {
 			t.Errorf("organized operation output lost %q: %s", want, view)
+		}
+	}
+	for _, line := range []string{"Directory: " + operation.Root, "bearforge operations resume pending-import", "bearforge operations abandon pending-import --yes"} {
+		if !strings.Contains(view, "\n"+line+"\n") {
+			t.Errorf("missing standalone recovery line %q: %s", line, view)
 		}
 	}
 	for _, internal := range []string{"imported_repository", "grant_id", "opaque-internal-grant", `"steps"`} {
@@ -53,7 +58,7 @@ func TestOperationAndRepairLayoutsPreserveAllRowsAtEveryWidth(t *testing.T) {
 		for _, profile := range []colorprofile.Profile{colorprofile.ASCII, colorprofile.TrueColor} {
 			t.Run(fmt.Sprintf("width=%d/profile=%v", width, profile), func(t *testing.T) {
 				p := &colorprofile.Writer{Profile: profile}
-				operationView := operationResultDocument(p, result, width)
+				operationView := operationResultDocument(p, result, width, true)
 				repairView := importReassociationDocument(p, plan, width)
 				assertResultLinesFit(t, operationView, width)
 				assertResultLinesFit(t, repairView, width)
@@ -103,7 +108,7 @@ func TestOperationListShowsAllEntriesAndFinishedState(t *testing.T) {
 	p := &colorprofile.Writer{Profile: colorprofile.ASCII}
 	result := app.NewResult("operations.list")
 	result.Data = []app.Operation{}
-	if view := operationResultDocument(p, result, 80); !strings.Contains(view, "No recorded operations") {
+	if view := operationResultDocument(p, result, 80, true); !strings.Contains(view, "No recorded operations") {
 		t.Fatalf("missing empty state: %s", view)
 	}
 	operations := []app.Operation{}
@@ -111,14 +116,14 @@ func TestOperationListShowsAllEntriesAndFinishedState(t *testing.T) {
 		operations = append(operations, app.Operation{ID: fmt.Sprintf("operation-%02d", index), Kind: "repo.import", State: "complete", Root: "D:/code"})
 	}
 	result.Data = operations
-	view := operationResultDocument(p, result, 80)
-	for _, want := range []string{"25 recorded", "0 unfinished", "operation-00", "operation-24", "--root 'D:/code'"} {
+	view := operationResultDocument(p, result, 80, true)
+	for _, want := range []string{"25 recorded", "0 unfinished", "operation-00", "operation-24", "Directory: D:/code", "\nbearforge operations show ID"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("operation list lost %q: %s", want, view)
 		}
 	}
 	result.Data = &app.Operation{ID: "finished", State: "complete"}
-	if view := operationResultDocument(p, result, 80); strings.Contains(view, "operations resume") || strings.Contains(view, "operations abandon") {
+	if view := operationResultDocument(p, result, 80, true); strings.Contains(view, "operations resume") || strings.Contains(view, "operations abandon") {
 		t.Fatalf("finished operation offers recovery: %s", view)
 	}
 }
@@ -128,7 +133,7 @@ func TestLegacyRepositoryOperationPreservesRemoteAtNarrowWidths(t *testing.T) {
 	result := app.NewResult("operations.show")
 	result.Data = &app.Operation{ID: "legacy-clone", Root: "D:/code", Kind: "repo.add", State: "partial", Remote: remote}
 	for _, width := range []int{36, 80} {
-		view := operationResultDocument(&colorprofile.Writer{Profile: colorprofile.ASCII}, result, width)
+		view := operationResultDocument(&colorprofile.Writer{Profile: colorprofile.ASCII}, result, width, true)
 		assertResultLinesFit(t, view, width)
 		if !strings.Contains(view, "Remote") || !strings.Contains(compactResultText(view), compactResultText(remote)) {
 			t.Errorf("width %d lost legacy remote identity: %s", width, view)

@@ -22,8 +22,9 @@ func recoveryOutputHeading(p *colorprofile.Writer, title string) string {
 }
 
 func (o *options) renderOperationResult(result app.Result) error {
-	p := o.presentation(o.out, isTerminal(o.out))
-	view := operationResultDocument(p, result, outputWidth(o.out))
+	terminal := isTerminal(o.out)
+	p := o.presentation(o.out, terminal)
+	view := operationResultDocument(p, result, outputWidth(o.out), terminal)
 	if _, err := fmt.Fprintln(p, view); err != nil {
 		return err
 	}
@@ -33,7 +34,7 @@ func (o *options) renderOperationResult(result app.Result) error {
 	return nil
 }
 
-func operationResultDocument(p *colorprofile.Writer, result app.Result, width int) string {
+func operationResultDocument(p *colorprofile.Writer, result app.Result, width int, terminal bool) string {
 	if width <= 0 {
 		width = 80
 	}
@@ -60,12 +61,7 @@ func operationResultDocument(p *colorprofile.Writer, result app.Result, width in
 			rows = append(rows, []string{operation.ID, operation.Kind, workspace, operation.State, strconv.Itoa(len(operation.Steps))})
 		}
 		sections = append(sections, fmt.Sprintf("%d recorded | %d unfinished", len(operations), unfinished), renderResultRows(p, []string{"ID", "COMMAND", "WORKSPACE", "STATE", "STEPS"}, rows, width))
-		root := repositoryListText(operations[0].Root)
-		inspect := "bearforge operations show ID"
-		if root != "" {
-			inspect = (&options{activeRoot: root}).recoveryCommand("show", "ID")
-		}
-		sections = append(sections, "Inspect: "+inspect)
+		sections = append(sections, recoveryInstructions(operations[0].Root, "Inspect:", recoveryCommand("show", "ID")))
 	case *app.Operation:
 		if data == nil {
 			sections = append(sections, "No operation details available.")
@@ -75,7 +71,11 @@ func operationResultDocument(p *colorprofile.Writer, result app.Result, width in
 	case app.Operation:
 		sections = append(sections, operationDetailDocument(p, data, result.Outcome == "planned", width))
 	}
-	return terminalDocument(strings.Join(sections, "\n\n"), width)
+	document := strings.Join(sections, "\n\n")
+	if terminal {
+		return terminalDocument(document, width)
+	}
+	return document
 }
 
 func operationDetailDocument(p *colorprofile.Writer, operation app.Operation, planned bool, width int) string {
@@ -189,18 +189,17 @@ func operationDetailDocument(p *colorprofile.Writer, operation app.Operation, pl
 		sections = append(sections, recoveryOutputHeading(p, "Failure details"), strings.Join(failures, "\n"))
 	}
 	if operation.State != "complete" && operation.State != "abandoned" {
-		root := &options{activeRoot: repositoryListText(operation.Root)}
-		id := repositoryListText(operation.ID)
+		id := operation.ID
 		recovery := []string{}
 		if operation.Kind == "exec" {
 			recovery = append(recovery, "Commands are never rerun by recovery. Inspect results before stopping tracking.")
 		} else {
-			recovery = append(recovery, "Retry: "+root.recoveryCommand("resume", id))
+			recovery = append(recovery, "Retry:", recoveryCommand("resume", id))
 		}
-		recovery = append(recovery, "Stop tracking: "+root.recoveryCommand("abandon", id)+" --yes", "Stopping tracking retains files and successful work; this operation cannot be resumed afterward.")
-		sections = append(sections, recoveryOutputHeading(p, "Recovery"), strings.Join(recovery, "\n"))
+		recovery = append(recovery, "Stop tracking:", recoveryCommand("abandon", id)+" --yes", "Stopping tracking retains files and successful work; this operation cannot be resumed afterward.")
+		sections = append(sections, recoveryOutputHeading(p, "Recovery"), recoveryInstructions(operation.Root, recovery...))
 	} else if operation.State == "abandoned" {
 		sections = append(sections, "Recovery tracking stopped; files and Git effects are retained.")
 	}
-	return terminalDocument(strings.Join(sections, "\n\n"), width)
+	return strings.Join(sections, "\n\n")
 }

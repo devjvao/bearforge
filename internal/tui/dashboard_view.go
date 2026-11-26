@@ -211,8 +211,8 @@ func (m dashboardModel) appendNotices(lines []string) []string {
 		lines = append(lines, m.styles.warn.Render("Warning: "+displayText(problem.Message)))
 	}
 	for _, op := range m.data.PendingOperations {
-		lines = append(lines, m.styles.warn.Render("Unfinished: "+displayText(op.Kind)+" ["+displayText(op.State)+"] "+displayText(op.Workspace)),
-			"Inspect: "+dashboardRecoveryCommand(m.data.Root, "show", op.ID))
+		lines = append(lines, m.styles.warn.Render("Unfinished: "+displayText(op.Kind)+" ["+displayText(op.State)+"] "+displayText(op.Workspace)))
+		lines = append(lines, dashboardRecoveryLines(m.data.Root, op.ID, false)...)
 	}
 	return lines
 }

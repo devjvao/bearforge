@@ -78,7 +78,8 @@ func (o *options) writeImportReassociationReview(plan app.ImportReassociationPla
 
 func (o *options) renderImportReassociation(result app.Result) error {
 	plan := result.Data.(app.ImportReassociationPlan)
-	p := o.presentation(o.out, isTerminal(o.out))
+	terminal := isTerminal(o.out)
+	p := o.presentation(o.out, terminal)
 	if plan.OperationID == "" {
 		plan.OperationID = result.OperationID
 	}
@@ -86,13 +87,17 @@ func (o *options) renderImportReassociation(result app.Result) error {
 	if result.Command == "repo.rebind" {
 		sections = append(sections, "Existing clones, refs, and worktrees are retained.")
 		if result.OperationID != "" && (result.Outcome == "partial" || result.Outcome == "failed") {
-			sections = append(sections, "Resume with: "+o.recoveryCommand("resume", result.OperationID))
+			sections = append(sections, recoveryInstructions(plan.Root, "Resume with:", recoveryCommand("resume", result.OperationID)))
 		}
 	}
 	if result.PlanDigest != "" {
 		sections = append(sections, terminalRecords(p, [][]string{{"Plan", result.PlanDigest}}, outputWidth(o.out)))
 	}
-	if _, err := fmt.Fprintln(p, terminalDocument(strings.Join(sections, "\n\n"), outputWidth(o.out))); err != nil {
+	document := strings.Join(sections, "\n\n")
+	if terminal {
+		document = terminalDocument(document, outputWidth(o.out))
+	}
+	if _, err := fmt.Fprintln(p, document); err != nil {
 		return err
 	}
 	if result.Problem != nil {

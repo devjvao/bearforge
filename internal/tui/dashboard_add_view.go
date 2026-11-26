@@ -205,10 +205,8 @@ func (m dashboardModel) addContent() []string {
 		}
 		if run.result.OperationID != "" {
 			id := displayText(run.result.OperationID)
-			lines = append(lines, "", "Operation: "+id, "Inspect: "+dashboardRecoveryCommand(run.root, "show", id))
-			if run.err != nil || run.result.Outcome == "partial" {
-				lines = append(lines, "Resume: "+dashboardRecoveryCommand(run.root, "resume", id))
-			}
+			lines = append(lines, "", "Operation: "+id)
+			lines = append(lines, dashboardRecoveryLines(run.root, id, run.err != nil || run.result.Outcome == "partial")...)
 		}
 		return lines
 	}

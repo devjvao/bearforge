@@ -156,6 +156,23 @@ func TestDashboardOperationsRemainUsableAtMinimumSize(t *testing.T) {
 	}
 }
 
+func TestDashboardInterruptedExecShowsInspectionWithoutRetry(t *testing.T) {
+	m, source := recoveryModel(t)
+	source.operation.Kind = "exec"
+	m = inspectRecovery(t, m)
+	m.width, m.height = 200, 100
+	m.data.Root = "/other"
+	view := m.View().Content
+	for _, want := range []string{"Directory: " + source.operation.Root, "bearforge operations show " + source.operation.ID, "commands are never replayed"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("exec recovery lost %q: %s", want, view)
+		}
+	}
+	if strings.Contains(view, "operations resume") || strings.Contains(view, "r retry") {
+		t.Fatalf("exec recovery offered a retry: %s", view)
+	}
+}
+
 func TestDashboardReadOnlySourceKeepsRecoveryFallback(t *testing.T) {
 	m := loadedDashboard(t)
 	m.data.PendingOperations = []app.OperationSummary{{ID: "old123", State: "partial"}}
@@ -277,7 +294,7 @@ func TestDashboardOperationsAbandonRequiresReviewAndRetainsSuccesses(t *testing.
 	}
 }
 
-func TestDashboardOperationsFailedResumeKeepsRecoveryAndRootedCommands(t *testing.T) {
+func TestDashboardOperationsFailedResumeKeepsCapturedDirectory(t *testing.T) {
 	m, source := recoveryModel(t)
 	source.resumeErr = errors.New("selected grant is disconnected")
 	m = inspectRecovery(t, m)
@@ -289,7 +306,7 @@ func TestDashboardOperationsFailedResumeKeepsRecoveryAndRootedCommands(t *testin
 	m = recoveryReply(t, updated.(dashboardModel), refresh)
 	m.width, m.height = 200, 100
 	content := m.View().Content
-	if len(m.data.PendingOperations) != 1 || !strings.Contains(content, "selected grant is disconnected") || !strings.Contains(content, "bearforge --root "+workspaceShellQuote(m.data.Root)+" operations resume import123") {
+	if len(m.data.PendingOperations) != 1 || !strings.Contains(content, "selected grant is disconnected") || !strings.Contains(content, "Directory: "+m.data.Root) || !strings.Contains(content, "bearforge operations resume import123") {
 		t.Fatalf("failure lost recovery state or root: %s", content)
 	}
 }
