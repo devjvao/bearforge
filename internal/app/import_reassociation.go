@@ -171,7 +171,7 @@ func (s *Service) ReassociateImport(ctx context.Context, req ImportReassociation
 		if err := ValidateImportedRepository(replacement); err != nil {
 			return r, err
 		}
-		if err := s.validateImportCredentials(ctx, replacement, false); err != nil {
+		if err := s.validateTransferCredentials(ctx, importCredentialRequest(replacement), false); err != nil {
 			return r, err
 		}
 		if registered, ok := c.Repositories[step.Repository]; ok {
@@ -262,7 +262,7 @@ func (s *Service) bindImportStep(ctx context.Context, step Step, path string) er
 			return lastConflict
 		}
 	}
-	return s.bindImport(ctx, repo, path)
+	return s.bindTransferConnection(ctx, path, importCredentialRequest(repo))
 }
 
 // reviewedImportBindings contains only nonsecret bindings approved for this
