@@ -18,6 +18,68 @@ func (recloneWithoutRemoteAccess) PlanClone(context.Context, string, string, str
 	return "", errors.New("attempted an unscoped transfer")
 }
 
+type recloneTestTransport struct {
+	*importGit
+	client *gitcli.Client
+}
+
+func (g recloneTestTransport) PrepareReclone(ctx context.Context, path string, repo domain.Repository, operation string) error {
+	return g.client.PrepareReclone(ctx, path, repo, operation)
+}
+
+func TestRecloneSSHDoesNotRequireAPICredentials(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		origin   string
+		provider map[string]string
+	}{
+		{"imported connection", "ssh://git@github.com/team/api.git", map[string]string{"transport": "ssh", "connection": "work", "grant_id": "grant"}},
+		{"rebound connection", "git@github.com:team/api.git", map[string]string{"connection": "work", "grant_id": "grant"}},
+		{"explicit API token", "ssh://git@github.com/team/api.git", map[string]string{"transport": "ssh", "token_env": "BEARFORGE_MISSING_API_TOKEN"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			s, store, source := fixture(t)
+			if _, err := s.AddRepository(ctx, "api", source, false); err != nil {
+				t.Fatal(err)
+			}
+			catalog, revision, err := store.LoadCatalog()
+			if err != nil {
+				t.Fatal(err)
+			}
+			repo := catalog.Repositories["api"]
+			repo.Remotes["origin"], repo.Provider = tc.origin, tc.provider
+			catalog.Repositories["api"] = repo
+			if err := store.SaveCatalog(catalog, revision); err != nil {
+				t.Fatal(err)
+			}
+			bare := filepath.Join(store.Root, "repos", "api.git")
+			if err := os.Rename(bare, filepath.Join(t.TempDir(), "backup.git")); err != nil {
+				t.Fatal(err)
+			}
+			client := s.Git.(*gitcli.Client)
+			transfer := &importGit{Git: client, local: source}
+			s.Git = recloneTestTransport{transfer, client}
+			s.GitForConnection = func(domain.CredentialRequest) (app.Git, error) {
+				return nil, errors.New("SSH does not use an HTTPS transfer client")
+			}
+			s.BindConnection = func(context.Context, string, domain.CredentialRequest) error {
+				return errors.New("SSH does not persist an HTTPS helper")
+			}
+			plan, err := s.RecloneRepository(ctx, "api", true, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.RecloneRepository(ctx, "api", false, plan.PlanDigest); err != nil {
+				t.Fatal(err)
+			}
+			if len(transfer.attempts) != 1 || transfer.attempts[0] != tc.origin {
+				t.Fatalf("unexpected transport destinations: %v", transfer.attempts)
+			}
+		})
+	}
+}
+
 func TestRecloneRestoresReboundOriginAuthentication(t *testing.T) {
 	s, store, bare, resolver := rebindFixture(t, false)
 	ctx := t.Context()
@@ -89,6 +151,7 @@ func checkRecloneBindingResume(t *testing.T, legacy bool) {
 		t.Fatal(err)
 	}
 	repo := catalog.Repositories["api"]
+	repo.Remotes["origin"] = "https://github.com/team/api.git"
 	repo.Remotes["offline"] = filepath.Join(t.TempDir(), "unavailable")
 	repo.Provider = map[string]string{"transport": "https", "connection": "work", "grant_id": "grant"}
 	catalog.Repositories["api"] = repo
@@ -100,6 +163,9 @@ func checkRecloneBindingResume(t *testing.T, legacy bool) {
 		t.Fatal(err)
 	}
 	s.Credentials = &importResolver{grant: "grant"}
+	s.GitForConnection = func(domain.CredentialRequest) (app.Git, error) {
+		return &importGit{Git: s.Git, local: origin}, nil
+	}
 	bindingErr := errors.New("binding temporarily unavailable")
 	attempts := 0
 	s.BindConnection = func(context.Context, string, domain.CredentialRequest) error {

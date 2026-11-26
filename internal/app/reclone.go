@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strings"
 
 	"github.com/devjvao/bearforge/internal/domain"
 )
@@ -153,6 +154,18 @@ func (s *Service) applyReclone(ctx context.Context, op *Operation) (Result, erro
 	return finish(nil)
 }
 
+// Reclone uses the saved connection only for its scoped HTTPS Git helper.
+// SSH agents and ordinary Git credentials are independent of provider API tokens.
+func (s *Service) recloneCredentialRequest(repo domain.Repository) (domain.CredentialRequest, error) {
+	if !strings.HasPrefix(repo.Remotes["origin"], "https://") || repo.Provider["connection"] == "" || repo.Provider["token_env"] != "" {
+		return domain.CredentialRequest{}, nil
+	}
+	if repo.Provider["transport"] == "https" {
+		return importCredentialRequest(repo), nil
+	}
+	return s.registeredCredentialRequest(repo)
+}
+
 func (s *Service) stageReclone(ctx context.Context, op *Operation, step *Step, repo domain.Repository, stage string, exists bool) error {
 	prepare, ok := s.Git.(interface {
 		PrepareReclone(context.Context, string, domain.Repository, string) error
@@ -177,13 +190,9 @@ func (s *Service) stageReclone(ctx context.Context, op *Operation, step *Step, r
 			step.State = "transferred"
 		}
 	}
-	credentials := importCredentialRequest(repo)
-	if repo.Provider["transport"] == "" && (credentials.Connection != "" || credentials.TokenEnv != "") {
-		var err error
-		credentials, err = s.registeredCredentialRequest(repo)
-		if err != nil {
-			return err
-		}
+	credentials, err := s.recloneCredentialRequest(repo)
+	if err != nil {
+		return err
 	}
 	if step.State != "transferred" {
 		if err := s.validateTransferCredentials(ctx, credentials, true); err != nil {
