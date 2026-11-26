@@ -126,8 +126,11 @@ func filesHistory(root *os.Root) ([]string, error) {
 	return tips, nil
 }
 
-func (c *Client) preserveRootTips(ctx context.Context, bare, operation, repo string, tips []string) error {
+func (c *Client) preserveRootTips(ctx context.Context, bare, operation, repo string, tips []string, protected map[string]bool) error {
 	for _, oid := range tips {
+		if protected[oid] {
+			continue
+		}
 		kind, err := c.Run(ctx, bare, "--no-replace-objects", "cat-file", "-t", oid)
 		if err != nil {
 			return err

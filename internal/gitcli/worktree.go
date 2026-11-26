@@ -261,10 +261,11 @@ func (c *Client) PreserveHistory(ctx context.Context, bare, path, operation, rep
 	if err != nil {
 		return err
 	}
-	return c.preserveTips(ctx, bare, operation, repo, status.Head, b)
+	_, err = c.preserveTips(ctx, bare, operation, repo, status.Head, b)
+	return err
 }
 
-func (c *Client) preserveTips(ctx context.Context, bare, operation, repo, head string, reflog []byte) error {
+func (c *Client) preserveTips(ctx context.Context, bare, operation, repo, head string, reflog []byte) (map[string]bool, error) {
 	tips := append([]string{head}, strings.Fields(string(reflog))...)
 	seen := map[string]bool{}
 	for i, tip := range tips {
@@ -272,9 +273,9 @@ func (c *Client) preserveTips(ctx context.Context, bare, operation, repo, head s
 			continue
 		}
 		seen[tip] = true
-		refs, err := c.Run(ctx, bare, "for-each-ref", "--format=%(refname)", "--contains="+tip)
+		refs, err := c.Run(ctx, bare, "--no-replace-objects", "for-each-ref", "--format=%(refname)", "--contains="+tip)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if len(refs) > 0 {
 			continue
@@ -282,23 +283,23 @@ func (c *Client) preserveTips(ctx context.Context, bare, operation, repo, head s
 		name := fmt.Sprintf("bearforge/recovery/%s/%s/reflog-%d", operation, repo, i)
 		exists, err := c.BranchExists(ctx, bare, name)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if exists {
 			got, err := c.Resolve(ctx, bare, "refs/heads/"+name)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if got != tip {
-				return domain.E("conflict", "recovery ref already exists with a different commit")
+				return nil, domain.E("conflict", "recovery ref already exists with a different commit")
 			}
 			continue
 		}
 		if _, err := c.Run(ctx, bare, "branch", "--no-track", name, tip); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return seen, nil
 }
 
 func (c *Client) Remove(ctx context.Context, bare, path string) error {

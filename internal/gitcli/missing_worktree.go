@@ -213,10 +213,11 @@ func (c *Client) ReleaseMissingWorktree(ctx context.Context, bare, path, id, bra
 	if err != nil {
 		return err
 	}
-	if err := c.preserveTips(ctx, bare, operation, repo, head, log); err != nil {
+	protected, err := c.preserveTips(ctx, bare, operation, repo, head, log)
+	if err != nil {
 		return err
 	}
-	if err := c.preserveRootTips(ctx, bare, operation, repo, tips); err != nil {
+	if err := c.preserveRootTips(ctx, bare, operation, repo, tips, protected); err != nil {
 		return err
 	}
 	current, err := check()
