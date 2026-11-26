@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/devjvao/bearforge/internal/domain"
@@ -13,10 +14,15 @@ import (
 // RegisteredWorktreeID finds the administrative directory by its Git back-pointer.
 // Git chooses a suffix when worktrees share a basename.
 func (c *Client) RegisteredWorktreeID(ctx context.Context, bare, path string) (string, error) {
+	id, _, err := c.inspectMissingRegistration(ctx, bare, path)
+	return id, err
+}
+
+func (c *Client) inspectMissingRegistration(ctx context.Context, bare, path string) (string, []string, error) {
 	parent := filepath.Join(bare, "worktrees")
 	entries, err := os.ReadDir(parent)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	want := filepath.Join(path, ".git")
 	var found string
@@ -30,7 +36,7 @@ func (c *Client) RegisteredWorktreeID(ctx context.Context, bare, path string) (s
 			continue
 		}
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		back := filepath.FromSlash(strings.TrimSuffix(strings.TrimSuffix(string(b), "\n"), "\r"))
 		if !filepath.IsAbs(back) {
@@ -41,57 +47,74 @@ func (c *Client) RegisteredWorktreeID(ctx context.Context, bare, path string) (s
 			continue
 		}
 		if found != "" {
-			return "", domain.E("conflict", "multiple Git registrations point to %s", path)
+			return "", nil, domain.E("conflict", "multiple Git registrations point to %s", path)
 		}
 		found = entry.Name()
 	}
 	if found == "" {
-		return "", domain.E("conflict", "cannot identify the Git registration for %s", path)
+		return "", nil, domain.E("conflict", "cannot identify the Git registration for %s", path)
 	}
 	admin := filepath.Join(parent, found)
 	// Git skips its submodule checks when the working directory is gone.
 	// Deleting this registration would also delete its private object stores.
 	if _, err := os.Lstat(filepath.Join(admin, "modules")); err == nil {
-		return "", domain.E("unsafe_removal", "missing checkout %s retains submodule metadata at %s; recover its submodule repositories before removing the registration", path, filepath.Join(admin, "modules"))
+		return "", nil, domain.E("unsafe_removal", "missing checkout %s retains submodule metadata at %s; recover its submodule repositories before removing the registration", path, filepath.Join(admin, "modules"))
 	} else if !os.IsNotExist(err) {
-		return "", err
+		return "", nil, err
 	}
 	// The missing directory can still have recoverable staged blobs and
 	// operation state in Git's private per-worktree metadata.
 	for _, name := range operationStateNames {
 		if _, err := os.Lstat(filepath.Join(admin, name)); err == nil {
-			return "", domain.E("unsafe_removal", "missing checkout %s has unfinished Git state (%s); recover its registration before removal", path, name)
+			return "", nil, domain.E("unsafe_removal", "missing checkout %s has unfinished Git state (%s); recover its registration before removal", path, name)
 		} else if !os.IsNotExist(err) {
-			return "", err
+			return "", nil, err
 		}
 	}
-	if err := c.checkPrivateWorktreeRefs(ctx, bare, admin); err != nil {
-		return "", err
+	format, err := c.ReferenceFormat(ctx, bare)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := c.checkPrivateWorktreeRefs(ctx, bare, admin, format); err != nil {
+		return "", nil, err
 	}
 	_, err = c.Run(ctx, bare, "--git-dir="+admin, "--work-tree="+bare, "diff", "--cached", "--quiet", "--no-ext-diff", "--ignore-submodules=none", "HEAD", "--")
 	if isExit(err, 1) {
-		return "", domain.E("unsafe_removal", "missing checkout %s has staged changes in its Git index; recover the index before removing the registration", path)
+		return "", nil, domain.E("unsafe_removal", "missing checkout %s has staged changes in its Git index; recover the index before removing the registration", path)
 	}
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return found, nil
+	tips, err := c.missingRootTips(ctx, bare, admin, format)
+	if err != nil {
+		return "", nil, err
+	}
+	return found, tips, nil
 }
 
 // The shared repository does not retain this worktree's private refs or their
 // logs after Git removes its registration.
-func (c *Client) checkPrivateWorktreeRefs(ctx context.Context, bare, admin string) error {
+func (c *Client) checkPrivateWorktreeRefs(ctx context.Context, bare, admin, format string) error {
 	refused := func(name string) error {
 		return domain.E("unsafe_removal", "private Git history remains in %s (%s); recover it before removing the registration", admin, name)
 	}
-	format, err := c.ReferenceFormat(ctx, bare)
-	if err != nil {
-		return err
+	activeRoots := []string{"AUTO_MERGE", "BISECT_EXPECTED_REV", "MERGE_AUTOSTASH", "NOTES_MERGE_PARTIAL", "NOTES_MERGE_REF"}
+	active := func(ref string) bool {
+		return !strings.Contains(ref, "/") && ((strings.HasSuffix(ref, "_HEAD") && ref != "FETCH_HEAD" && ref != "ORIG_HEAD") || slices.Contains(activeRoots, ref))
 	}
 	if format == "files" {
+		entries, err := os.ReadDir(admin)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if active(entry.Name()) {
+				return refused(entry.Name())
+			}
+		}
 		// Git 2.40 lacks "reflog list", and for-each-ref omits dangling
 		// symbolic refs and orphaned logs. These directories are per-worktree.
-		for _, relative := range []string{"refs", "logs/refs"} {
+		for _, relative := range []string{"refs", "logs"} {
 			root := filepath.Join(admin, relative)
 			err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 				if path == root && os.IsNotExist(err) {
@@ -99,6 +122,9 @@ func (c *Client) checkPrivateWorktreeRefs(ctx context.Context, bare, admin strin
 				}
 				if err != nil {
 					return err
+				}
+				if relative == "logs" && (path == filepath.Join(root, "HEAD") || path == filepath.Join(root, "ORIG_HEAD")) {
+					return nil
 				}
 				if !entry.IsDir() {
 					return refused(path)
@@ -112,19 +138,25 @@ func (c *Client) checkPrivateWorktreeRefs(ctx context.Context, bare, admin strin
 		return nil
 	}
 	private := []string{"refs/worktree", "refs/bisect", "refs/rewritten"}
-	args := []string{"--git-dir=" + admin, "for-each-ref", "--count=1", "--format=%(refname)"}
+	args := []string{"--git-dir=" + admin, "for-each-ref", "--include-root-refs", "--format=%(refname)", "*_HEAD"}
+	args = append(args, activeRoots...)
 	refs, err := c.Run(ctx, bare, append(args, private...)...)
 	if err != nil {
 		return err
 	}
-	if name := strings.TrimSpace(string(refs)); name != "" {
-		return refused(name)
+	for _, name := range strings.Fields(string(refs)) {
+		if active(name) || strings.HasPrefix(name, "refs/") {
+			return refused(name)
+		}
 	}
 	logs, err := c.Run(ctx, bare, "--git-dir="+admin, "reflog", "list")
 	if err != nil {
 		return err
 	}
-	for name := range strings.SplitSeq(string(logs), "\n") {
+	for _, name := range strings.Fields(string(logs)) {
+		if active(name) {
+			return refused(name)
+		}
 		for _, prefix := range private {
 			if strings.HasPrefix(name, prefix+"/") {
 				return refused(name)
@@ -138,23 +170,23 @@ func (c *Client) checkPrivateWorktreeRefs(ctx context.Context, bare, admin strin
 // directory is gone. The logical worktrees/<id>/HEAD ref addresses its reflog
 // in both files and reftable repositories.
 func (c *Client) ReleaseMissingWorktree(ctx context.Context, bare, path, id, branch, head, operation, repo string) error {
-	check := func() error {
+	check := func() ([]string, error) {
 		if _, err := os.Lstat(path); !os.IsNotExist(err) {
 			if err != nil {
-				return err
+				return nil, err
 			}
-			return domain.E("conflict", "checkout %s reappeared; review removal again", path)
+			return nil, domain.E("conflict", "checkout %s reappeared; review removal again", path)
 		}
-		current, err := c.RegisteredWorktreeID(ctx, bare, path)
+		current, tips, err := c.inspectMissingRegistration(ctx, bare, path)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if current != id {
-			return domain.E("conflict", "worktree registration changed")
+			return nil, domain.E("conflict", "worktree registration changed")
 		}
 		trees, err := c.Worktrees(ctx, bare)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		for _, tree := range trees {
 			candidate := filepath.Clean(tree.Path)
@@ -162,13 +194,17 @@ func (c *Client) ReleaseMissingWorktree(ctx context.Context, bare, path, id, bra
 				continue
 			}
 			if tree.Locked || tree.Bare || tree.Head != head || tree.Branch != branch {
-				return domain.E("conflict", "worktree registration changed; review removal again")
+				return nil, domain.E("conflict", "worktree registration changed; review removal again")
 			}
-			return nil
+			return tips, nil
 		}
-		return domain.E("conflict", "worktree registration disappeared")
+		return nil, domain.E("conflict", "worktree registration disappeared")
 	}
-	if err := check(); err != nil {
+	tips, err := check()
+	if err != nil {
+		return err
+	}
+	if err := c.preserveRootTips(ctx, bare, operation, repo, tips); err != nil {
 		return err
 	}
 	ref := "worktrees/" + id + "/HEAD"
@@ -179,8 +215,12 @@ func (c *Client) ReleaseMissingWorktree(ctx context.Context, bare, path, id, bra
 	if err := c.preserveTips(ctx, bare, operation, repo, head, log); err != nil {
 		return err
 	}
-	if err := check(); err != nil {
+	current, err := check()
+	if err != nil {
 		return err
+	}
+	if !slices.Equal(tips, current) {
+		return domain.E("conflict", "private worktree history changed; review removal again")
 	}
 	_, err = c.Run(ctx, bare, "worktree", "remove", "--", path)
 	return err
