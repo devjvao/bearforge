@@ -58,7 +58,7 @@ func (s *Service) applyImportWithJobs(ctx context.Context, op *Operation, jobs i
 		if err := ValidateImportStep(step); err != nil {
 			return s.finish(op, r, err)
 		}
-		if err := s.validateImportCredentials(ctx, *step.ImportedRepository, true); err != nil {
+		if err := s.validateTransferCredentials(ctx, importCredentialRequest(*step.ImportedRepository), true); err != nil {
 			return s.finish(op, r, err)
 		}
 	}
@@ -214,7 +214,7 @@ func (s *Service) prepareImportTask(ctx context.Context, op *Operation, index in
 	if err != nil {
 		return importTask{}, err
 	}
-	git, err := s.importGit(repo)
+	git, err := s.transferGit(importCredentialRequest(repo))
 	if err != nil {
 		return importTask{}, err
 	}
