@@ -113,7 +113,7 @@ func (s *Service) applyReclone(ctx context.Context, op *Operation) (Result, erro
 			return finish(domain.E("conflict", "replacement repository has a different operation identity"))
 		}
 	} else {
-		if step.State == "succeeded" || (step.State == "publishing" && !exists) {
+		if step.State == "succeeded" || ((step.State == "publishing" || step.State == "transferred") && !exists) {
 			return finish(domain.E("conflict", "reclone disappeared during publication"))
 		}
 		if exists && step.State == "planned" {
@@ -173,16 +173,34 @@ func (s *Service) stageReclone(ctx context.Context, op *Operation, step *Step, r
 		if err := scoped.verifyInterruptedClone(ctx, stage, repo.Remotes["origin"]); err != nil {
 			return err
 		}
+		// Older journals recorded a single started phase. A matching marker
+		// proves remote preparation already completed for this operation.
+		marker, err := git.Config(ctx, stage, "bearforge.recloneOperation")
+		if err != nil {
+			return err
+		}
+		if marker != "" {
+			if marker != op.ID {
+				return domain.E("conflict", "staged repository has a different operation identity")
+			}
+			step.State = "transferred"
+		}
 	}
-	if err := s.Store.EnsureDir(".bearforge", "staging"); err != nil {
-		return err
-	}
-	step.State = "started"
-	if err := s.Journal.Save(op); err != nil {
-		return err
-	}
-	if err := scoped.transferClone(ctx, step, repo.Remotes["origin"], stage, exists, func(Step) error { return s.Journal.Save(op) }); err != nil {
-		return err
+	if step.State != "transferred" {
+		if err := s.Store.EnsureDir(".bearforge", "staging"); err != nil {
+			return err
+		}
+		step.State = "started"
+		if err := s.Journal.Save(op); err != nil {
+			return err
+		}
+		if err := scoped.transferClone(ctx, step, repo.Remotes["origin"], stage, exists, func(Step) error { return s.Journal.Save(op) }); err != nil {
+			return err
+		}
+		step.State = "transferred"
+		if err := s.Journal.Save(op); err != nil {
+			return err
+		}
 	}
 	if err := prepare.PrepareReclone(ctx, stage, repo, op.ID); err != nil {
 		return err

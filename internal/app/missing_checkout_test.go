@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -157,6 +158,53 @@ func TestMissingCheckoutPreservesStagedWork(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "staged") {
 		t.Fatalf("expected recoverable index changes to block removal: %v", err)
 	}
+}
+
+func TestMissingCheckoutRetainsSubmoduleRepository(t *testing.T) {
+	s, store := missingFixture(t)
+	ctx := t.Context()
+	path := filepath.Join(store.Root, "review", "api")
+	bare := filepath.Join(store.Root, "repos", "api.git")
+	catalog, _, err := store.LoadCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := catalog.Repositories["api"].Remotes["origin"]
+	prGit(t, path, "-c", "protocol.file.allow=always", "submodule", "add", origin, "lib")
+	prGit(t, path, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "add the submodule")
+	prGit(t, filepath.Join(path, "lib"), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "local-only submodule commit")
+	tip, err := s.Git.Resolve(ctx, filepath.Join(path, "lib"), "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := s.Git.Resolve(ctx, path, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	git := s.Git.(interface {
+		ReleaseMissingWorktree(context.Context, string, string, string, string, string, string, string) error
+	})
+	// Obtain the private Git directory from the worktree's gitfile before
+	// introducing the fault. Linked worktree IDs can differ from the basename.
+	data, err := os.ReadFile(filepath.Join(path, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := filepath.FromSlash(strings.TrimSpace(strings.TrimPrefix(string(data), "gitdir: ")))
+	id := filepath.Base(admin)
+	if err := os.Rename(path, filepath.Join(t.TempDir(), "moved")); err != nil {
+		t.Fatal(err)
+	}
+	req := app.RemoveRequest{Workspace: "review", Repositories: []string{"api"}, DryRun: true}
+	if _, err := s.RemoveRepositories(ctx, req); err == nil || !strings.Contains(err.Error(), "submodule") {
+		t.Errorf("preview failed to protect private submodule: %v", err)
+	}
+	if err := git.ReleaseMissingWorktree(ctx, bare, path, id, "review", head, "test-release", "api"); err == nil || !strings.Contains(err.Error(), "submodule") {
+		t.Errorf("release failed to protect private submodule: %v", err)
+	}
+	// The module's core.worktree points at the missing checkout. Read its
+	// retained refs and objects with an explicit existing working directory.
+	prGit(t, bare, "--git-dir="+filepath.Join(admin, "modules", "lib"), "--work-tree="+bare, "merge-base", "--is-ancestor", tip, "HEAD")
 }
 
 func TestMissingSharedStoreDiagnosed(t *testing.T) {
