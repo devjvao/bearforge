@@ -32,6 +32,9 @@ func (m dashboardModel) workspaceView() tea.View {
 	switch run.phase {
 	case workspacePlanning:
 		summary = "Preparing a read-only preview..."
+		if run.action.updatesBranches() {
+			summary = "Checking local and remote branches..."
+		}
 	case workspaceReview:
 		summary = "Review the plan; y confirms"
 		if run.err != nil {
@@ -89,6 +92,9 @@ func (m dashboardModel) workspaceContent() []string {
 		}
 		return append(lines, name, branch, "Leave branch blank to use the name.", "Creates an empty workspace. Add repositories afterward with a.")
 	case workspacePlanning:
+		if run.action.updatesBranches() {
+			return append(lines, "Looking up the latest branch tips for "+displayText(run.names[0])+".")
+		}
 		return append(lines, "Checking destination, definitions and Git state...", "This preview creates no files, refs or journals.")
 	case workspaceReview:
 		if run.err != nil {
@@ -97,6 +103,26 @@ func (m dashboardModel) workspaceContent() []string {
 		if run.action == workspaceCreate {
 			item := run.preview.Items[0]
 			return append(lines, m.styles.outcome(item.Outcome), "Path: "+displayText(item.Path), "Default branch: "+displayText(item.Branch), "Creates an empty workspace; no repositories are added.", "Press y to confirm this exact plan.")
+		}
+		if run.action.updatesBranches() {
+			item := run.preview.Items[0]
+			baseLabel := "Default branch: "
+			if run.action == workspaceRebase {
+				baseLabel = "Rebase onto: "
+			}
+			lines = append(lines, displayText(item.Repository), "Checkout: "+displayText(item.Path),
+				"Current branch: "+displayText(item.Branch), baseLabel+displayText(item.Base))
+			if item.ExpectedBranch != "" && item.Branch != item.ExpectedBranch {
+				lines = append(lines, "Workspace mapping: "+displayText(item.ExpectedBranch)+". This action applies to the checked-out branch.")
+			}
+			if item.Tracking != "" {
+				lines = append(lines, "Tracking: "+displayText(item.Tracking))
+			}
+			lines = append(lines, worktreeUpdateActions(run.preview)...)
+			if run.action == workspaceRebase {
+				lines = append(lines, "Rebasing can change local commit IDs. Publishing is a separate step.")
+			}
+			return append(lines, "Press y to apply the reviewed plan.")
 		}
 		lines = append(lines, fmt.Sprintf("Remove %d repository worktree(s).", len(run.names)), "Local branches and history are preserved.")
 		if run.remove.MoveUnverified || hasRetainedDirectory(run.preview) {
@@ -122,6 +148,9 @@ func (m dashboardModel) workspaceContent() []string {
 		}
 		return append(lines, "", "Press y to confirm this exact plan.")
 	case workspaceExecuting, workspaceResults:
+		if run.action.updatesBranches() && run.phase == workspaceResults && run.err == nil {
+			lines = append(lines, worktreeUpdateActions(run.result)...)
+		}
 		if run.phase == workspaceExecuting {
 			completed, failed := 0, 0
 			for _, id := range run.names {
@@ -184,6 +213,10 @@ func (m dashboardModel) workspaceContent() []string {
 
 func (m dashboardModel) workspaceProgressAction() string {
 	switch m.workspaceRun.action {
+	case workspaceRebase:
+		return "Updating and rebasing the selected branch"
+	case workspaceUpdate:
+		return "Updating local branches"
 	case workspaceCreate:
 		return "Creating workspace"
 	case workspaceRemoveRepo:
@@ -192,6 +225,20 @@ func (m dashboardModel) workspaceProgressAction() string {
 		return "Removing workspace"
 	}
 	return string(m.workspaceRun.action)
+}
+
+func worktreeUpdateActions(result app.Result) []string {
+	plan, ok := result.Data.(app.WorktreeUpdatePlan)
+	if !ok {
+		return nil
+	}
+	var lines []string
+	for _, action := range []string{plan.FeatureAction, plan.DefaultAction, plan.RebaseAction} {
+		if action != "" {
+			lines = append(lines, displayText(action))
+		}
+	}
+	return lines
 }
 
 func dashboardRecoveryLines(root, id string, resumable bool) []string {

@@ -77,10 +77,11 @@ func (m dashboardModel) repositoryLines(height int) []string {
 			prefix = "> "
 		}
 		line := prefix + padded(displayText(item.Repository), repoWidth) + " "
+		base := padded(baseCountLabel(item), baseColumnWidth)
 		if width >= 60 {
-			line += padded(displayText(branchLabel(item)), branchWidth) + " " + m.styles.outcome(item.Outcome)
+			line += padded(displayText(branchLabel(item)), branchWidth) + " " + base + " " + m.styles.outcome(item.Outcome)
 		} else {
-			line += m.styles.outcome(item.Outcome) + " " + displayText(branchLabel(item))
+			line += base + " " + m.styles.outcome(item.Outcome) + " " + displayText(branchLabel(item))
 		}
 		if i == m.repoIndex {
 			line = m.selectedLine(line, width, m.focus == 1)
@@ -96,8 +97,15 @@ func (m dashboardModel) repositoryLines(height int) []string {
 	}
 	title = m.paneTitle(title, m.focus == 1)
 	empty = m.styles.muted.Render(empty)
-	if width >= 60 && height >= 4 {
-		columns := "  " + padded("Repository", repoWidth) + " " + padded("Branch", branchWidth) + " Health"
+	if width >= 36 && height >= 4 {
+		columns := "  " + padded("Repository", repoWidth) + " "
+		if width >= 60 {
+			columns += padded("Branch", branchWidth) + " "
+		}
+		columns += padded("Base ↑/↓", baseColumnWidth) + " Health"
+		if width < 60 {
+			columns += " / Branch"
+		}
 		lines := pagedListLines(title, m.repositoryCount(), m.repoIndex, height-1, empty, rowAt)
 		return append([]string{lines[0], m.styles.muted.Render(columns)}, lines[1:]...)
 	}
@@ -120,13 +128,31 @@ func (m dashboardModel) selectedLine(line string, width int, focused bool) strin
 	return m.styles.focus.Render(clipped(line, width))
 }
 
+// The details pane shows the exact counts when a table value exceeds 999.
+const baseColumnWidth = 11
+
+func baseCountLabel(item app.Item) string {
+	if item.Status == nil || item.Status.BaseDivergence == nil {
+		return "unknown"
+	}
+	shortCount := func(n int) string {
+		if n > 999 {
+			return "999+"
+		}
+		return fmt.Sprint(n)
+	}
+	d := item.Status.BaseDivergence
+	return "↑" + shortCount(d.Ahead) + " ↓" + shortCount(d.Behind)
+}
+
 func (m dashboardModel) repositoryColumns() (int, int) {
 	width := m.repositoryContentWidth()
 	if width < 60 {
-		return min(18, max(10, width/3)), 0
+		return min(16, max(8, width/4)), 0
 	}
-	repoWidth := min(26, max(16, (width-22)/2))
-	return repoWidth, width - repoWidth - 22
+	available := width - 22 - baseColumnWidth - 1
+	repoWidth := min(26, max(13, available/2))
+	return repoWidth, available - repoWidth
 }
 
 func branchLabel(item app.Item) string {
@@ -193,6 +219,15 @@ func (m dashboardModel) detailContent() []string {
 			head = "(unborn)"
 		}
 		lines = append(lines, "HEAD: "+displayText(head))
+		base := displayText(s.BaseRef)
+		if base == "" {
+			base = "(unresolved)"
+		}
+		if d := s.BaseDivergence; d != nil {
+			lines = append(lines, fmt.Sprintf("Base (local): %s  Ahead: %d  Behind: %d", base, d.Ahead, d.Behind))
+		} else {
+			lines = append(lines, "Base (local): "+base+"  Divergence: unknown")
+		}
 	}
 	if item.Problem != nil {
 		lines = append(lines, m.styles.bad.Render("Error: "+displayText(item.Problem.Message)))

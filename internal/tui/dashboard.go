@@ -344,6 +344,12 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "s":
 			m.invalidatePullRequests()
 			return m.startSync()
+		case "b":
+			m.invalidatePullRequests()
+			return m.openWorkspace(workspaceRebase)
+		case "u":
+			m.invalidatePullRequests()
+			return m.openWorkspace(workspaceUpdate)
 		case "a":
 			m.invalidatePullRequests()
 			return m.openAdd()

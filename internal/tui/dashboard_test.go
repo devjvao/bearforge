@@ -235,11 +235,11 @@ func TestDashboardSmallTerminalCanReachEveryDetailLine(t *testing.T) {
 	m.data.Items[0].Status.Head = "deadbeef"
 	m.data.PendingOperations = []app.OperationSummary{{ID: "pending123", Kind: "workspace.add", State: "partial"}}
 	var seen strings.Builder
-	for range 12 {
+	for range len(m.detailLines()) {
 		seen.WriteString(m.View().Content)
 		m, _ = dashboardKey(m, tea.KeyPgDown, "")
 	}
-	for _, want := range []string{"Details: api", "Path: /code/alpha/api", "Actual: main", "Staged: 0", "Upstream: (none)", "HEAD: deadbeef", "Unfinished: workspace.add", "Directory: /code", "Inspect: bearforge operations", "pending123"} {
+	for _, want := range []string{"Details: api", "Path: /code/alpha/api", "Actual: main", "Staged: 0", "Upstream: (none)", "Base (local)", "HEAD: deadbeef", "Unfinished: workspace.add", "Directory: /code", "Inspect: bearforge operations", "pending123"} {
 		if !strings.Contains(seen.String(), want) {
 			t.Errorf("detail line cannot be reached by scrolling: %q", want)
 		}

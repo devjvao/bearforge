@@ -52,6 +52,7 @@ type Git interface {
 	SetUpstream(context.Context, string, string, string) error
 	HasSubmodules(context.Context, string, string) (bool, error)
 	Inspect(context.Context, string) (domain.Status, error)
+	CompareBase(context.Context, string, string, string) (domain.Divergence, error)
 	CheckRemoval(context.Context, string, string) error
 	PreserveHistory(context.Context, string, string, string, string) error
 	Remove(context.Context, string, string) error

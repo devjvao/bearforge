@@ -149,6 +149,13 @@ func (m dashboardModel) footerLines() []string {
 	if _, ok := m.reader.source.(DashboardRecoverer); ok {
 		footer = actionHelp("o operations | q quit | i import | s sync | a add | Tab panes | r refresh | v view", m.width, m.styles)
 	}
+	if _, ok := m.reader.source.(dashboardWorktreeUpdater); ok && m.focus == 1 && m.repositoryCount() > 0 {
+		if m.width < 70 {
+			actions = keyboardHelp(actionBindings("p PRs", "P refresh", "u update", "b rebase", "PgUp/PgDn", "^C"), m.width, " ", m.styles)
+		} else {
+			actions = actionHelp("p PRs | P refresh | u update | b rebase | PgUp/PgDn details | n new | d/D remove", m.width, m.styles)
+		}
+	}
 	return []string{actions, footer}
 }
 

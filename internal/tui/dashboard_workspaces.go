@@ -20,6 +20,10 @@ type DashboardWorkspaceActions interface {
 	RemoveRepositories(context.Context, app.RemoveRequest, func(app.Event)) (app.Result, error)
 }
 
+type dashboardWorktreeUpdater interface {
+	UpdateWorktree(context.Context, app.UpdateWorktreeRequest) (app.Result, error)
+}
+
 type workspacePhase uint8
 
 const (
@@ -36,7 +40,13 @@ const (
 	workspaceCreate     workspaceAction = "Create workspace"
 	workspaceRemoveRepo workspaceAction = "Remove repository"
 	workspaceRemoveAll  workspaceAction = "Remove workspace"
+	workspaceRebase     workspaceAction = "Rebase current branch"
+	workspaceUpdate     workspaceAction = "Update local branches"
 )
+
+func (action workspaceAction) updatesBranches() bool {
+	return action == workspaceRebase || action == workspaceUpdate
+}
 
 type dashboardWorkspace struct {
 	ctx               context.Context
@@ -75,7 +85,11 @@ func (m dashboardModel) workspaceActionBusy() bool {
 }
 
 func (m dashboardModel) openWorkspace(action workspaceAction) (tea.Model, tea.Cmd) {
-	if _, ok := m.reader.source.(DashboardWorkspaceActions); !ok || m.loading || m.loadErr != nil ||
+	_, available := m.reader.source.(DashboardWorkspaceActions)
+	if action.updatesBranches() {
+		_, available = m.reader.source.(dashboardWorktreeUpdater)
+	}
+	if !available || m.loading || m.loadErr != nil ||
 		len(m.data.PendingOperations) > 0 || (m.syncRun != nil && m.syncRun.running) ||
 		(m.addRun != nil && m.addRun.phase != addResults) || m.workspaceActionBusy() {
 		return m, nil
@@ -85,7 +99,7 @@ func (m dashboardModel) openWorkspace(action workspaceAction) (tea.Model, tea.Cm
 	}
 	names := []string{}
 	switch action {
-	case workspaceRemoveRepo:
+	case workspaceRemoveRepo, workspaceRebase, workspaceUpdate:
 		if m.focus != 1 || m.repoIndex >= m.repositoryCount() {
 			return m, nil
 		}
@@ -131,6 +145,13 @@ func (m dashboardModel) workspaceCommand(execute bool) tea.Cmd {
 	id, run, reader := m.workspaceID, m.workspaceRun, m.reader
 	ctx, action, create, remove := run.ctx, run.action, run.create, run.remove
 	remove.Repositories = slices.Clone(remove.Repositories)
+	var update app.UpdateWorktreeRequest
+	if action.updatesBranches() {
+		update = app.UpdateWorktreeRequest{
+			Workspace: run.workspace, Repository: run.names[0], UpdateOnly: action == workspaceUpdate,
+			DryRun: !execute, ExpectedPlan: run.preview.PlanDigest,
+		}
+	}
 	progress := run.progress
 	var observe func(app.Event)
 	if execute {
@@ -138,7 +159,6 @@ func (m dashboardModel) workspaceCommand(execute bool) tea.Cmd {
 		remove.DryRun, remove.ExpectedPlan = false, run.preview.PlanDigest
 		observe = progress.observe
 	}
-	source := reader.source.(DashboardWorkspaceActions)
 	return func() tea.Msg {
 		if execute {
 			defer close(progress.done)
@@ -147,10 +167,13 @@ func (m dashboardModel) workspaceCommand(execute bool) tea.Cmd {
 		release, err := reader.acquire(ctx)
 		if err == nil {
 			defer release()
-			if action == workspaceCreate {
-				result, err = source.CreateWorkspace(ctx, create, observe)
-			} else {
-				result, err = source.RemoveRepositories(ctx, remove, observe)
+			switch action {
+			case workspaceRebase, workspaceUpdate:
+				result, err = reader.source.(dashboardWorktreeUpdater).UpdateWorktree(ctx, update)
+			case workspaceCreate:
+				result, err = reader.source.(DashboardWorkspaceActions).CreateWorkspace(ctx, create, observe)
+			default:
+				result, err = reader.source.(DashboardWorkspaceActions).RemoveRepositories(ctx, remove, observe)
 			}
 		}
 		if execute {
@@ -239,6 +262,16 @@ func (m dashboardModel) updateWorkspace(msg tea.Msg) (tea.Model, tea.Cmd) {
 func validateWorkspacePreview(run *dashboardWorkspace, result app.Result) error {
 	if result.PlanDigest == "" {
 		return errors.New("the preview is incomplete; retry before confirming")
+	}
+	if run.action.updatesBranches() {
+		if len(result.Items) != 1 || len(run.names) != 1 {
+			return errors.New("the branch update preview must identify the selected repository")
+		}
+		item := result.Items[0]
+		if item.Repository != run.names[0] || item.Workspace != run.workspace || item.Branch == "" || item.Base == "" || item.Start == "" || item.Path == "" {
+			return errors.New("the branch update preview does not match the selection; reopen it")
+		}
+		return nil
 	}
 	if run.action == workspaceCreate {
 		branch := run.branch

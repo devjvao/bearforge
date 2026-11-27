@@ -21,6 +21,7 @@ type Client struct {
 	globalConfig  string
 	noSystem      bool
 	commandConfig []string
+	offline       bool
 }
 type CommandError struct {
 	ExitCode  int
@@ -76,6 +77,10 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 }
 
 func (c *Client) Run(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	return c.runWithEnv(ctx, dir, nil, args...)
+}
+
+func (c *Client) runWithEnv(ctx context.Context, dir string, env []string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
 	defer cancel()
 	prefix := []string{"--no-pager", "--no-optional-locks"}
@@ -97,12 +102,17 @@ func (c *Client) Run(ctx context.Context, dir string, args ...string) ([]byte, e
 		cmd.Env = append(cmd.Env, entry)
 	}
 	cmd.Env = append(cmd.Env, "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never", "LC_ALL=C")
+	if c.offline {
+		// Disallow transport even on Git versions without GIT_NO_LAZY_FETCH.
+		cmd.Env = append(cmd.Env, "GIT_NO_LAZY_FETCH=1", "GIT_ALLOW_PROTOCOL=")
+	}
 	if c.globalConfig != "" {
 		cmd.Env = append(cmd.Env, "GIT_CONFIG_GLOBAL="+c.globalConfig)
 	}
 	if c.noSystem {
 		cmd.Env = append(cmd.Env, "GIT_CONFIG_NOSYSTEM=1")
 	}
+	cmd.Env = append(cmd.Env, env...)
 	out := &limitedBuffer{limit: 16 << 20}
 	stderr := &limitedBuffer{limit: 16 << 10}
 	cmd.Stdout = out
@@ -444,6 +454,7 @@ func (c *Client) RefExists(ctx context.Context, path, ref string) (bool, error) 
 }
 
 func (c *Client) DefaultBase(ctx context.Context, path, remote string) (string, error) {
+	c = c.localOnly()
 	if err := domain.ValidateRemoteName(remote); err != nil {
 		return "", err
 	}

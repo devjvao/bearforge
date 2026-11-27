@@ -8,7 +8,14 @@ import (
 	"github.com/devjvao/bearforge/internal/domain"
 )
 
+func (c *Client) localOnly() *Client {
+	local := *c
+	local.offline = true
+	return &local
+}
+
 func (c *Client) Inspect(ctx context.Context, path string) (domain.Status, error) {
+	c = c.localOnly()
 	s := domain.Status{Path: path}
 	b, err := c.Run(ctx, path, "status", "--porcelain=v2", "-z", "--branch", "--untracked-files=normal")
 	if err != nil {
@@ -67,4 +74,42 @@ func (c *Client) Inspect(ctx context.Context, path string) (domain.Status, error
 		}
 	}
 	return s, nil
+}
+
+// CompareBase counts commits unique to each side of the locally available
+// history. Pin the checkout to the same HEAD observed by porcelain status.
+func (c *Client) CompareBase(ctx context.Context, bare, head, base string) (domain.Divergence, error) {
+	var d domain.Divergence
+	if !domain.ValidCommitID(head) {
+		return d, domain.E("invalid", "expected the observed HEAD commit ID")
+	}
+	c = c.localOnly()
+	if strings.HasPrefix(base, "refs/") {
+		// Revision lookup can substitute a same-named tag for a missing ref.
+		// Pin the exact ref, then skip the graph walk for identical tips.
+		out, err := c.Run(ctx, bare, "show-ref", "--verify", "--hash", "--", base)
+		if err != nil {
+			return d, err
+		}
+		base = strings.TrimSpace(string(out))
+	}
+	if !domain.ValidCommitID(base) {
+		return d, domain.E("invalid", "expected a full base ref or commit ID")
+	}
+	if head == base {
+		return d, nil
+	}
+	out, err := c.Run(ctx, bare, "rev-list", "--left-right", "--count", "--end-of-options", head+"..."+base+"^{commit}", "--")
+	if err != nil {
+		return d, err
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) == 2 {
+		ahead, aErr := strconv.Atoi(fields[0])
+		behind, bErr := strconv.Atoi(fields[1])
+		if aErr == nil && bErr == nil && ahead >= 0 && behind >= 0 {
+			return domain.Divergence{Ahead: ahead, Behind: behind}, nil
+		}
+	}
+	return d, domain.E("git_failed", "malformed Git divergence counts")
 }
