@@ -77,7 +77,7 @@ The preview checks the remote tips and uses local history to verify ancestry. If
 
 The **Base** column uses locally cached remote refs. If Git already has the target commit through another branch, a workspace update can fast-forward the local branch while that column still shows an older comparison. Press `s` to refresh the remote refs.
 
-Let other Git commands that write to the selected checkouts finish before confirming. Workspace updates lock the checked-out branch while installing its reviewed Git tree. Use the single-repository `u` action if your project depends on Git’s `post-merge` hook. If another command changes workspace membership, retry shows which repositories were removed and lets you review the remaining selections. A branch with multiple configured upstream merge refs requires an individual choice of upstream before Bearforge can update it.
+Let Git commands that write to selected checkouts finish before confirming. Also finish any worktree creation or branch switch involving a selected default branch. Git can register a new worktree independently of a branch update. Bearforge checks reservations before publishing a default branch and again afterward. If another checkout claims that branch during publication, inspect its status before retrying. Workspace updates lock the checked-out branch while installing its reviewed Git tree. Use the single-repository `u` action if your project depends on Git’s `post-merge` hook. If workspace membership changes, retry shows which repositories were removed and lets you review the remaining selections. A branch configured with distinct upstream merge refs requires a choice of upstream before Bearforge can update it.
 
 Select a repository and press `u` to review fast-forward updates to its current branch and local default branch. Press `b` to also rebase the current feature branch onto the repository default. Both previews show which branches will move. Press `y` to apply the reviewed update locally. Rebasing can change the IDs of commits already on the feature branch. Publishing those commits is a separate Git operation.
 
@@ -107,7 +107,7 @@ If the ref write still fails, fix the reported Git error first. Enter the report
 git symbolic-ref HEAD
 git rev-parse REVIEWED_FULL_REF
 git diff-index --cached --quiet --ignore-submodules=none TARGET_COMMIT --
-git diff-files --quiet --ignore-submodules=none --
+git -c diff.autoRefreshIndex=true diff --quiet --no-ext-diff --no-textconv --ignore-submodules=none --
 ```
 
 Continue only if the first command shows the reviewed full ref, the second shows the old commit, and both comparisons exit successfully. With other Git writers stopped, finish the ref move with `git update-ref --no-deref -m "finish reviewed workspace update" REVIEWED_FULL_REF TARGET_COMMIT OLD_COMMIT`. Git checks the old commit again. The command writes only that ref and its reflog. If any check differs, inspect `git status` and the reflog and preserve the current edits.

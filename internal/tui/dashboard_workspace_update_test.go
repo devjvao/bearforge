@@ -111,8 +111,12 @@ func TestWorkspaceUpdateSelectionAndPartialRetry(t *testing.T) {
 	}
 	messages := runDashboardCommands(t, apply)
 	for m.workspaceRun.phase != workspaceResults {
-		model, _ := m.Update(dashboardMessage(t, messages))
+		model, refresh := m.Update(dashboardMessage(t, messages))
 		m = model.(dashboardModel)
+		if m.workspaceRun.phase == workspaceResults && refresh != nil {
+			model, _ = m.Update(refresh())
+			m = model.(dashboardModel)
+		}
 	}
 	if len(applications) != 1 || !slices.Equal(applications[0], []string{"api", "web"}) {
 		t.Fatalf("applied %v, want only the two checked eligible rows", applications)
@@ -363,8 +367,12 @@ func TestWorkspaceUpdateRetryRetainsBlockedRowsAcrossSyncAndSubsetApply(t *testi
 	m, apply := dashboardKey(m, 'y', "y")
 	msgs = runDashboardCommands(t, apply)
 	for m.workspaceRun.phase != workspaceResults {
-		next, _ = m.Update(dashboardMessage(t, msgs))
+		next, refresh := m.Update(dashboardMessage(t, msgs))
 		m = next.(dashboardModel)
+		if m.workspaceRun.phase == workspaceResults && refresh != nil {
+			next, _ = m.Update(refresh())
+			m = next.(dashboardModel)
+		}
 	}
 	if rows := m.workspaceRun.unfinishedUpdates(); !slices.Equal(rows, []string{"web"}) {
 		t.Fatalf("subset apply dropped blocked members: %v", rows)
@@ -380,9 +388,9 @@ func TestWorkspaceUpdateRetryRetainsBlockedRowsAcrossSyncAndSubsetApply(t *testi
 	}
 }
 
-func TestWorkspaceUpdateDetailsPreserveMultilineCommands(t *testing.T) {
+func TestWorkspaceUpdateDetailsDirectToCopyableCommands(t *testing.T) {
 	text := updateRowDetails(app.WorkspaceUpdateRow{Repository: "api", Detail: "Fetch manually:\ngit fetch origin main\ngit fetch other topic"})
-	if !strings.Contains(text, "\ngit fetch origin main\ngit fetch other topic") {
-		t.Fatalf("fetch commands ran together: %q", text)
+	if strings.Contains(text, "git fetch ") || strings.Count(text, "--dry-run") != 1 || !strings.Contains(text, "Fetch manually:") {
+		t.Fatalf("missing pointer to copyable CLI commands: %q", text)
 	}
 }

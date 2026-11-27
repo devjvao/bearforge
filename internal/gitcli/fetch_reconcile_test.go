@@ -40,6 +40,9 @@ func runFetchTestGit(realGit string) int {
 	fmt.Fprintln(log, command)
 	log.Close()
 	mode := os.Getenv("BEARFORGE_TEST_GIT_MODE")
+	if mode == "orphan-ref-ack" {
+		return runOrphanOutputGit(command)
+	}
 	if command == "rev-parse" && mode == "block-worktree-probe" {
 		time.Sleep(time.Minute) // The client command deadline kills this helper.
 		return 99

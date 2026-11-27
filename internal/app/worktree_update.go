@@ -32,7 +32,12 @@ type worktreeUpdater interface {
 
 type reviewedCheckoutUpdater interface {
 	CheckReviewedCheckout(ctx context.Context, path, old, target string) error
-	FastForwardReviewedCheckout(ctx context.Context, bare, path, branch, old, target string) error
+	FastForwardReviewedCheckoutWithIntent(ctx context.Context, bare, path, branch, old, target string, checkIntent func() error) error
+}
+
+type reviewedBranchUpdater interface {
+	CheckDirectBranch(ctx context.Context, bare, branch string) error
+	AdvanceReviewedBranch(ctx context.Context, bare, branch, old, tip string, checkIntent func() error) error
 }
 
 type updateTarget struct {
@@ -49,6 +54,7 @@ type worktreeUpdate struct {
 	LocalBase, SkipDefault                          string
 	UpdateOnly                                      bool
 	advisoryBase                                    bool
+	batch                                           bool
 	baseLookupErr                                   error
 }
 
@@ -80,7 +86,7 @@ func (s *Service) UpdateWorktree(ctx context.Context, req UpdateWorktreeRequest)
 }
 
 // The caller holds the mutation lock for the duration of a confirmed update.
-func (s *Service) executeWorktreeUpdate(ctx context.Context, req UpdateWorktreeRequest, g worktreeUpdater, p worktreeUpdate, expected *fastForwardTargets) (Result, error) {
+func (s *Service) executeWorktreeUpdate(ctx context.Context, req UpdateWorktreeRequest, g worktreeUpdater, p worktreeUpdate, expected *reviewedWorkspaceMoves) (Result, error) {
 	r := NewResult("workspace.update-worktree")
 	item := Item{Workspace: req.Workspace, Repository: req.Repository, Path: p.Path, Branch: p.Branch, ExpectedBranch: p.MappedBranch, Base: p.Base.label(), Start: p.Head, Outcome: "planned"}
 	if p.Upstream.Name != "" {
@@ -117,7 +123,7 @@ func (s *Service) executeWorktreeUpdate(ctx context.Context, req UpdateWorktreeR
 		r.Outcome = "planned"
 		return r, nil
 	}
-	if expected != nil && actions.fastForwardTargets != *expected {
+	if expected != nil && actions.fastForwardTargets != expected.targets {
 		return failedWorktreeUpdate(r, domain.E("conflict", "the fast-forward targets changed; review the update again"))
 	}
 	status, err := g.CheckUpdateWorktree(ctx, p.Bare, p.Path, p.Branch)
@@ -134,7 +140,7 @@ func (s *Service) executeWorktreeUpdate(ctx context.Context, req UpdateWorktreeR
 			if !ok {
 				return failedWorktreeUpdate(r, domain.E("unavailable", "the Git adapter cannot fast-forward a reviewed checkout"))
 			}
-			err = reviewed.FastForwardReviewedCheckout(ctx, p.Bare, p.Path, p.Branch, current, actions.featureFF)
+			err = reviewed.FastForwardReviewedCheckoutWithIntent(ctx, p.Bare, p.Path, p.Branch, current, actions.featureFF, expected.checkIntent)
 		} else {
 			err = g.UpdateCheckedOutBranch(ctx, p.Bare, p.Path, p.Branch, current, actions.featureFF, false)
 		}
@@ -155,10 +161,21 @@ func (s *Service) executeWorktreeUpdate(ctx context.Context, req UpdateWorktreeR
 		}
 	}
 	if actions.baseFF != "" {
-		if err := s.Git.AdvanceBranch(ctx, p.Bare, p.Base.Name, p.LocalBase, actions.baseFF); err != nil {
+		if expected != nil {
+			reviewed, ok := g.(reviewedBranchUpdater)
+			if !ok {
+				return failedWorktreeUpdate(r, domain.E("unavailable", "the Git adapter cannot advance a reviewed local branch"))
+			}
+			err = reviewed.AdvanceReviewedBranch(ctx, p.Bare, p.Base.Name, p.LocalBase, actions.baseFF, expected.checkIntent)
+		} else {
+			err = s.Git.AdvanceBranch(ctx, p.Bare, p.Base.Name, p.LocalBase, actions.baseFF)
+		}
+		if _, advanced := errors.AsType[*domain.AdvancedBranchError](err); err == nil || advanced {
+			r.Items[0].AppliedMoves = append(r.Items[0].AppliedMoves, WorkspaceBranchMove{Branch: p.Base.Name, From: p.LocalBase, To: actions.baseFF})
+		}
+		if err != nil {
 			return failedWorktreeUpdate(r, fmt.Errorf("could not advance local %s: %w", p.Base.Name, err))
 		}
-		r.Items[0].AppliedMoves = append(r.Items[0].AppliedMoves, WorkspaceBranchMove{Branch: p.Base.Name, From: p.LocalBase, To: actions.baseFF})
 	}
 	r.Items[0].Outcome = "updated"
 	return r, nil
@@ -171,6 +188,12 @@ func (p worktreeUpdate) digest() string {
 		p.LocalBase = ""
 	}
 	data, _ := json.Marshal(p)
+	// Git ref and path names are byte strings on Unix. JSON normalizes invalid
+	// UTF-8; bind the original names as well. Neither Git nor OS paths allow NUL.
+	for _, name := range []string{p.Root, p.Bare, p.Path, p.Branch, p.MappedBranch, p.Base.Remote, p.Base.Name, p.Upstream.Remote, p.Upstream.Name, p.SkipDefault} {
+		data = append(data, 0)
+		data = append(data, name...)
+	}
 	digest := sha256.Sum256(data)
 	return hex.EncodeToString(digest[:])
 }
@@ -200,7 +223,7 @@ func (s *Service) loadWorktreeUpdateSnapshot(workspace string) (worktreeUpdateSn
 }
 
 func (s *Service) planMappedWorktreeUpdate(ctx context.Context, req UpdateWorktreeRequest, git worktreeUpdater, snapshot worktreeUpdateSnapshot, batch bool) (worktreeUpdate, error) {
-	p := worktreeUpdate{Root: s.Store.RootPath(), Workspace: req.Workspace, Repository: req.Repository, UpdateOnly: req.UpdateOnly, WorkspaceRevision: snapshot.workspaceRevision, CatalogRevision: snapshot.catalogRevision}
+	p := worktreeUpdate{Root: s.Store.RootPath(), Workspace: req.Workspace, Repository: req.Repository, UpdateOnly: req.UpdateOnly, WorkspaceRevision: snapshot.workspaceRevision, CatalogRevision: snapshot.catalogRevision, batch: batch}
 	m, ok := snapshot.workspace.Repositories[req.Repository]
 	if !ok {
 		return p, domain.E("not_found", "repository %s is not mapped in workspace %s", req.Repository, req.Workspace)
@@ -225,7 +248,7 @@ func (s *Service) planMappedWorktreeUpdate(ctx context.Context, req UpdateWorktr
 		return p, err
 	}
 	if batch && p.Branch != p.MappedBranch {
-		return p, domain.E("conflict", "Checked out %s; workspace expects %s. Review this repository individually.", p.Branch, p.MappedBranch)
+		return p, domain.E("conflict", "Checked out %s; workspace expects %s. Review this repository individually.", domain.DisplayRef(p.Branch), domain.DisplayRef(p.MappedBranch))
 	}
 	ref, err := s.repositoryBaseRef(ctx, p.Bare, repo, snapshot.catalog.Remote)
 	if err != nil {
@@ -390,17 +413,18 @@ func (s *Service) updateTrackingAction(ctx context.Context, bare, name, local st
 	if err != nil {
 		return "", "", "", err
 	}
+	localLabel, remoteLabel := domain.DisplayRef(name), domain.DisplayRef(t.label())
 	switch relation {
 	case "equal":
-		return name + " is up to date with " + t.label() + ".", "", "", nil
+		return localLabel + " is up to date with " + remoteLabel + ".", "", "", nil
 	case "ahead":
-		return "Preserve commits ahead of " + t.label() + " on " + name + ".", "", "", nil
+		return "Preserve commits ahead of " + remoteLabel + " on " + localLabel + ".", "", "", nil
 	case "behind":
-		return "Fast-forward " + name + " to " + t.label() + ".", t.Tip, "", nil
+		return "Fast-forward " + localLabel + " to " + remoteLabel + ".", t.Tip, "", nil
 	case "pending", "incomplete":
-		return "Fast-forward " + name + " from " + t.label() + " if its fetched history allows it.", "", relation, nil
+		return "Fast-forward " + localLabel + " from " + remoteLabel + " if its fetched history allows it.", "", relation, nil
 	default:
-		return "", "", "", domain.E("conflict", "local %s and %s have diverged; reconcile them manually before updating", name, t.label())
+		return "", "", "", domain.E("conflict", "local %s and %s have diverged; reconcile them manually before updating", localLabel, remoteLabel)
 	}
 }
 
@@ -419,6 +443,11 @@ type missingUpdateHistory struct {
 
 type fastForwardTargets struct {
 	featureFF, baseFF string
+}
+
+type reviewedWorkspaceMoves struct {
+	targets     fastForwardTargets
+	checkIntent func() error
 }
 
 func (s *Service) worktreeUpdateActions(ctx context.Context, p worktreeUpdate, mode historyComparison) (updateActions, error) {
@@ -452,6 +481,15 @@ func (s *Service) worktreeUpdateActions(ctx context.Context, p worktreeUpdate, m
 		}
 		if err != nil {
 			return plan, err
+		}
+		if p.batch && plan.baseFF != "" {
+			reviewed, ok := s.Git.(reviewedBranchUpdater)
+			if !ok {
+				return plan, domain.E("unavailable", "the Git adapter cannot verify a reviewed local branch")
+			}
+			if err := reviewed.CheckDirectBranch(ctx, p.Bare, p.Base.Name); err != nil {
+				return plan, err
+			}
 		}
 	}
 	if p.UpdateOnly || p.Branch == p.Base.Name {

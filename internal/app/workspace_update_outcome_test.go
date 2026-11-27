@@ -13,7 +13,7 @@ import (
 
 type refuseDefaultUpdate struct{ *gitcli.Client }
 
-func (refuseDefaultUpdate) AdvanceBranch(context.Context, string, string, string, string) error {
+func (refuseDefaultUpdate) AdvanceReviewedBranch(context.Context, string, string, string, string, func() error) error {
 	return errors.New("default update failed")
 }
 

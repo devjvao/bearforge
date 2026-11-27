@@ -48,6 +48,10 @@ func addWorkspaceUpdateCommand(workspace *cobra.Command, o *options) {
 						return result, err // Lock or setup refusal before the batch started.
 					}
 				} else {
+					if blocked != nil {
+						result.Outcome = "failed"
+						return result, blocked
+					}
 					result.Outcome = "unchanged"
 				}
 				if err = app.WorkspaceUpdateError(blocked, err); err != nil {
@@ -92,12 +96,12 @@ func writeWorkspaceUpdate(writer io.Writer, plan app.WorkspaceUpdatePlan, result
 	for _, row := range plan.Rows {
 		status, detail := row.Status, row.Detail
 		advice := row.BaseAdvice
-		branch := row.Branch
+		branch := domain.DisplayRef(row.Branch)
 		if item, ok := items[row.Repository]; ok {
 			status, detail = item.Outcome, ""
 			var observations []string
 			for _, move := range item.AppliedMoves {
-				observations = append(observations, fmt.Sprintf("%s: %s → %s", move.Branch, move.From, move.To))
+				observations = append(observations, move.Description())
 			}
 			if item.Problem != nil {
 				observations = append(observations, item.Problem.Message)
@@ -109,6 +113,9 @@ func writeWorkspaceUpdate(writer io.Writer, plan app.WorkspaceUpdatePlan, result
 		} else if row.Eligible {
 			if reviewing {
 				status = "selected"
+				for _, move := range row.Moves {
+					detail += "\n" + move.Description()
+				}
 			} else {
 				status, detail, advice = "not run", "", ""
 			}

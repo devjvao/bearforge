@@ -3,9 +3,12 @@ package gitcli
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func TestBranchReservationProbeWithFileTransportDisabled(t *testing.T) {
@@ -26,6 +29,51 @@ func TestBranchReservationProbeWithFileTransportDisabled(t *testing.T) {
 	runGit(t, c, bare, "config", "url."+filepath.ToSlash(filepath.Join(root, "remote"))+".insteadOf", ".")
 	if err := c.CheckBranchAvailable(ctx, bare, "main", oid); err == nil {
 		t.Fatal("trusted a rewritten URL for the self-fetch")
+	}
+}
+
+func TestDefaultMoveOnReftable(t *testing.T) {
+	c, bare, path, old, tip := reviewedCheckoutFixture(t, "reftable")
+	runGit(t, c, path, "switch", "--detach", old)
+	if err := c.AdvanceReviewedBranch(t.Context(), bare, "main", old, tip, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(runGit(t, c, bare, "rev-parse", "refs/heads/main"))); got != tip {
+		t.Fatalf("default at %s, want %s", got, tip)
+	}
+}
+
+func TestDefaultMoveRechecksWorktreeReservationDuringPublication(t *testing.T) {
+	for _, phase := range []string{"prepared", "committed"} {
+		t.Run(phase, func(t *testing.T) {
+			c, bare, path, old, tip := reviewedCheckoutFixture(t, "files")
+			runGit(t, c, path, "switch", "--detach", old)
+			hooks := t.TempDir()
+			runGit(t, c, bare, "config", "bearforge.testCheckout", filepath.ToSlash(path))
+			script := "#!/bin/sh\ntest \"$1\" = " + phase + " || exit 0\n" +
+				"checkout=$(git config bearforge.testCheckout) || exit 1\n" +
+				"unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE\n" +
+				"git -C \"$checkout\" -c core.hooksPath=/dev/null switch main\n"
+			if err := os.WriteFile(filepath.Join(hooks, "reference-transaction"), []byte(script), 0755); err != nil {
+				t.Fatal(err)
+			}
+			c.commandConfig = append(c.commandConfig, "-c", "core.hooksPath="+filepath.ToSlash(hooks))
+			err := c.AdvanceReviewedBranch(t.Context(), bare, "main", old, tip, nil)
+			if err == nil {
+				t.Fatal("accepted concurrently reserved branch")
+			}
+			if got := strings.TrimSpace(string(runGit(t, c, path, "symbolic-ref", "HEAD"))); got != "refs/heads/main" {
+				t.Fatalf("concurrent switch failed: %q, %v", got, err)
+			}
+			want := old
+			if phase == "committed" {
+				want = tip
+			}
+			_, advanced := errors.AsType[*domain.AdvancedBranchError](err)
+			if got := strings.TrimSpace(string(runGit(t, c, bare, "rev-parse", "refs/heads/main"))); got != want || advanced != (phase == "committed") {
+				t.Fatalf("phase %s: default at %s, want %s, outcome %v", phase, got, want, err)
+			}
+		})
 	}
 }
 

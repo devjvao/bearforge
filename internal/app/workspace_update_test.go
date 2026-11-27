@@ -107,7 +107,7 @@ func TestWorkspaceUpdateReviewsAndAppliesOnlySelectedFastForwards(t *testing.T) 
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !row.Eligible || !strings.Contains(row.Detail, feature) || !strings.Contains(row.BaseAdvice, "rebase") {
+		if !row.Eligible || len(row.Moves) == 0 || row.Moves[0].To != feature || !strings.Contains(row.BaseAdvice, "rebase") {
 			t.Fatalf("ready row %+v", row)
 		}
 	}

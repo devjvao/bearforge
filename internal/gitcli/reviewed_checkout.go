@@ -16,6 +16,12 @@ import (
 // FastForwardReviewedCheckout locks the symbolic HEAD and the ref it resolves
 // to before checking the branch identity or installing the reviewed tree.
 func (c *Client) FastForwardReviewedCheckout(ctx context.Context, bare, path, branch, old, target string) error {
+	return c.FastForwardReviewedCheckoutWithIntent(ctx, bare, path, branch, old, target, nil)
+}
+
+// FastForwardReviewedCheckoutWithIntent rechecks external intent while the
+// reviewed Git refs are locked, immediately before installing the target tree.
+func (c *Client) FastForwardReviewedCheckoutWithIntent(ctx context.Context, bare, path, branch, old, target string, checkIntent func() error) error {
 	if !domain.ValidCommitID(old) || !domain.ValidCommitID(target) {
 		return domain.E("invalid", "the reviewed fast-forward requires full commit IDs")
 	}
@@ -29,8 +35,9 @@ func (c *Client) FastForwardReviewedCheckout(ctx context.Context, bare, path, br
 	if !ff {
 		return domain.E("conflict", "branch %s cannot fast-forward to the reviewed tip", branch)
 	}
-	installed := false
-	err = c.withPreparedHEAD(ctx, path, old, target, func() error {
+	installStarted := false
+	var installErr error
+	committed, err := c.withPreparedHEAD(ctx, path, old, target, func() error {
 		status, err := c.CheckUpdateWorktree(ctx, bare, path, branch)
 		if err != nil {
 			return err
@@ -44,25 +51,43 @@ func (c *Client) FastForwardReviewedCheckout(ctx context.Context, bare, path, br
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if checkIntent != nil {
+			if err := checkIntent(); err != nil {
+				return err
+			}
+		}
 		// Once index/worktree installation starts, let it and the ref commit
 		// finish together. Cancellation still stops the next repository.
-		_, err = c.localOnly().Run(context.WithoutCancel(ctx), path, "--no-replace-objects", "read-tree", "--no-recurse-submodules", "-u", "-m", old, target)
-		if err != nil {
-			return fmt.Errorf("could not install the reviewed tree; inspect git status at %s before retrying: %w", path, err)
+		installStarted = true
+		finish := context.WithoutCancel(ctx)
+		local := c.localOnly()
+		_, installErr = local.Run(finish, path, "--no-replace-objects", "read-tree", "--no-recurse-submodules", "-u", "-m", old, target)
+		if installErr != nil {
+			return fmt.Errorf("install reviewed tree %s at %s: %w", target, path, installErr)
 		}
-		installed = true
-		return nil
+		return local.checkInstalledTree(finish, path, "refs/heads/"+branch, target)
 	})
-	if !installed {
+	if !installStarted {
 		return err
 	}
-	return c.finishReviewedCheckout(ctx, bare, path, branch, old, target, err)
+	err = c.finishReviewedCheckout(ctx, bare, path, branch, old, target, committed, err)
+	if err == nil && installErr != nil {
+		return &domain.AdvancedBranchError{Cause: fmt.Errorf("verified the installed tree and finished %s at %s after Git reported: %w", branch, target, installErr)}
+	}
+	if installErr != nil && !errors.Is(err, installErr) {
+		return errors.Join(err, fmt.Errorf("initial checkout installation: %w", installErr))
+	}
+	return err
+}
+
+func (c *Client) withPreparedHEAD(ctx context.Context, path, old, target string, install func() error) (bool, error) {
+	return c.withPreparedRef(ctx, path, "update HEAD "+target+" "+old, install)
 }
 
 // update-ref --stdin supports explicit transactions on Git 2.40+. Its prepare
-// acknowledgment means both HEAD and its dereferenced branch are locked. EOF
-// aborts an explicitly started transaction that has not been committed.
-func (c *Client) withPreparedHEAD(ctx context.Context, path, old, target string, install func() error) (result error) {
+// acknowledgment locks the requested refs. EOF aborts an uncommitted explicit
+// transaction. A commit acknowledgment remains evidence even if Wait later fails.
+func (c *Client) withPreparedRef(ctx context.Context, path, updateCommand string, install func() error) (committed bool, result error) {
 	lifetime, kill := context.WithCancel(context.WithoutCancel(ctx))
 	defer kill()
 	cmd := c.command(lifetime, path, nil, "update-ref", "-m", "bearforge: workspace fast-forward", "--stdin")
@@ -70,20 +95,22 @@ func (c *Client) withPreparedHEAD(ctx context.Context, path, old, target string,
 	cmd.Stderr = stderr
 	input, err := cmd.StdinPipe()
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer input.Close()
 	output, err := cmd.StdoutPipe()
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer output.Close()
 	if err := cmd.Start(); err != nil {
-		return err
+		return false, err
 	}
 	var forced atomic.Bool
 	forceStop := func() {
 		forced.Store(true)
+		// A descendant can outlive the Git command and still hold its stdout.
+		_ = output.Close()
 		kill()
 	}
 	defer func() {
@@ -121,7 +148,7 @@ func (c *Client) withPreparedHEAD(ctx context.Context, path, old, target string,
 			forceStop()
 		}
 	})
-	_, err = fmt.Fprintf(input, "start\nupdate HEAD %s %s\nprepare\n", target, old)
+	_, err = fmt.Fprintf(input, "start\n%s\nprepare\n", updateCommand)
 	if err == nil {
 		err = answer("start")
 	}
@@ -133,20 +160,20 @@ func (c *Client) withPreparedHEAD(ctx context.Context, path, old, target string,
 	err = errors.Join(deadline.Err(), err)
 	stop()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := install(); err != nil {
-		return err
+		return false, err
 	}
-	// A commit failure can leave the index and worktree at the reviewed tree.
-	// Do not reset them; that could discard independent filesystem edits.
 	commitLimit := time.AfterFunc(c.Timeout, forceStop)
-	defer commitLimit.Stop()
 	if _, err = io.WriteString(input, "commit\n"); err == nil {
 		err = answer("commit")
 	}
-	if err != nil {
-		return fmt.Errorf("installed tree %s but could not confirm the branch update from %s; inspect git status and git reflog at %s before retrying: %w", target, old, path, err)
+	if !commitLimit.Stop() && err != nil {
+		err = errors.Join(context.DeadlineExceeded, err)
 	}
-	return nil
+	if err != nil {
+		return false, fmt.Errorf("could not confirm the Git ref transaction at %s: %w", path, err)
+	}
+	return true, nil
 }

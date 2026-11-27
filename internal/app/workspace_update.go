@@ -41,6 +41,10 @@ type WorkspaceBranchMove struct {
 	To     string `json:"to"`
 }
 
+func (m WorkspaceBranchMove) Description() string {
+	return fmt.Sprintf("%s: %s → %s", domain.DisplayRef(m.Branch), m.From, m.To)
+}
+
 // PreviewWorkspaceUpdate reads remote advertisements and verifies fast-forwards
 // against locally available history. It never fetches missing commits.
 func (s *Service) PreviewWorkspaceUpdate(ctx context.Context, workspace string, repositories []string) (WorkspaceUpdatePlan, error) {
@@ -101,8 +105,9 @@ func (s *Service) workspaceUpdateRow(ctx context.Context, p worktreeUpdate, err 
 		row.Detail, row.Problem = err.Error(), ProblemFor(err)
 		return row
 	}
+	baseLabel := domain.DisplayRef(p.Base.label())
 	if p.baseLookupErr != nil {
-		row.BaseAdvice = fmt.Sprintf("Could not compare with %s: %v", p.Base.label(), p.baseLookupErr)
+		row.BaseAdvice = fmt.Sprintf("Could not compare with %s: %v", baseLabel, p.baseLookupErr)
 	}
 	actions, err := s.worktreeUpdateActions(ctx, p, workspacePreview)
 	if err != nil {
@@ -139,24 +144,21 @@ func (s *Service) workspaceUpdateRow(ctx context.Context, p worktreeUpdate, err 
 	if actions.baseFF != "" {
 		row.Moves = append(row.Moves, WorkspaceBranchMove{Branch: p.Base.Name, From: p.LocalBase, To: actions.baseFF})
 	}
-	for _, move := range row.Moves {
-		row.Detail += fmt.Sprintf(" %s: %s → %s.", move.Branch, move.From, move.To)
-	}
 	if p.Branch != p.Base.Name && p.baseLookupErr == nil {
-		subject := p.Branch
+		subject := domain.DisplayRef(p.Branch)
 		if actions.featureFF != "" {
-			subject = "After the fast-forward, " + p.Branch
+			subject = "After the fast-forward, " + subject
 		}
 		relation, err := s.branchRelation(ctx, p.Bare, feature, p.Base.Tip, workspacePreview)
 		switch {
 		case err != nil:
-			row.BaseAdvice = fmt.Sprintf("Could not compare with %s: %v", p.Base.label(), err)
+			row.BaseAdvice = fmt.Sprintf("Could not compare with %s: %v", baseLabel, err)
 		case relation == "behind" || relation == "diverged":
-			row.BaseAdvice = fmt.Sprintf("%s is missing commits from %s. Review a rebase for this repository.", subject, p.Base.label())
+			row.BaseAdvice = fmt.Sprintf("%s is missing commits from %s. Review a rebase for this repository.", subject, baseLabel)
 		case relation == "pending" || relation == "incomplete":
-			row.BaseAdvice = "Comparison with " + p.Base.label() + " needs more history. " + s.workspaceHistoryAdvice(ctx, p.Bare, missingUpdateHistory{target: p.Base, relation: relation})
+			row.BaseAdvice = "Comparison with " + baseLabel + " needs more history. " + s.workspaceHistoryAdvice(ctx, p.Bare, missingUpdateHistory{target: p.Base, relation: relation})
 		default:
-			row.BaseAdvice = subject + " contains " + p.Base.label() + "."
+			row.BaseAdvice = subject + " contains " + baseLabel + "."
 		}
 	}
 	row.Status = "no_update"
@@ -191,7 +193,7 @@ func (s *Service) workspaceHistoryAdvice(ctx context.Context, bare string, missi
 			flags = " --unshallow"
 			shallow = false
 		} else if need.relation == "incomplete" {
-			flags = " --refetch"
+			flags = " --refetch --no-filter"
 			if len(commands) == 0 {
 				instruction = "A parent commit is missing locally. Fetch its history from the checkout, then preview again."
 			}
@@ -311,10 +313,14 @@ func (s *Service) applyMappedWorkspaceUpdate(ctx context.Context, req UpdateWork
 	if err != nil {
 		return Result{}, err
 	}
-	// Rehash the files after remote inspection so edits outside the BearForge
-	// lock invalidate this row without decoding and cloning both YAML documents.
-	if err := s.Store.CheckWorkspaceRevisions(req.Workspace, snapshot.workspaceRevision, snapshot.catalogRevision); err != nil {
-		return Result{}, err
+	var intentErr error
+	reviewed := reviewedWorkspaceMoves{targets: targets, checkIntent: func() error {
+		intentErr = s.Store.CheckWorkspaceRevisions(req.Workspace, snapshot.workspaceRevision, snapshot.catalogRevision)
+		return intentErr
+	}}
+	result, err := s.executeWorktreeUpdate(ctx, req, g, p, &reviewed)
+	if intentErr != nil && len(result.Items) > 0 && len(result.Items[0].AppliedMoves) == 0 {
+		result.Items[0].Outcome = "skipped"
 	}
-	return s.executeWorktreeUpdate(ctx, req, g, p, &targets)
+	return result, err
 }

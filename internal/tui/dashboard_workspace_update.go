@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 // DashboardWorkspaceUpdater previews workspace fast-forwards and applies a reviewed selection.
@@ -155,7 +156,7 @@ func (m dashboardModel) workspaceUpdatePickerKey(key string) (tea.Model, tea.Cmd
 func (m dashboardModel) retryWorkspaceUpdate() (tea.Model, tea.Cmd) {
 	run := m.workspaceRun
 	remaining := run.unfinishedUpdates()
-	if len(remaining) == 0 || (m.syncRun != nil && m.syncRun.running) {
+	if len(remaining) == 0 || !m.workspaceWritesReady() || m.workspace != run.workspace || m.data.Workspace != run.workspace {
 		return m, nil
 	}
 	m.invalidatePullRequests()
@@ -193,9 +194,10 @@ func (picker workspaceUpdateSelection) selectedNames() []string {
 	return names
 }
 
-// A retry can apply its ready subset while other members still need attention.
+// Keep excluded rows visible without adding them to names or retryScope, the
+// only sources of authority for subsequent apply and retry operations.
 func (run *dashboardWorkspace) recordDeferredUpdates() {
-	if run.batch.retryScope == nil {
+	if run.action != workspaceUpdateAll {
 		return
 	}
 	for _, row := range run.batch.plan.Rows {
@@ -204,9 +206,58 @@ func (run *dashboardWorkspace) recordDeferredUpdates() {
 		}
 		outcome := row.Status
 		if row.Eligible {
-			outcome = "deferred"
+			outcome = "not_selected"
+			if run.batch.retryScope != nil {
+				outcome = "deferred"
+			}
 		}
 		run.states[row.Repository] = outcome
+	}
+	previous := run.batch.previous
+	run.batch.previous = nil
+	if previous == nil {
+		return
+	}
+	// Retain observations that this retry did not replace. A blocked preview
+	// cannot recover a failed apply's named refs, commit IDs or diagnostics.
+	reported := make(map[string]bool, len(run.result.Items))
+	for _, item := range run.result.Items {
+		reported[item.Repository] = true
+	}
+	for _, item := range previous.result.Items {
+		if !reported[item.Repository] {
+			run.result.Items = append(run.result.Items, item)
+		}
+	}
+	for _, row := range previous.batch.plan.Rows {
+		if _, seen := run.states[row.Repository]; !seen {
+			run.states[row.Repository] = previous.states[row.Repository]
+			run.batch.plan.Rows = append(run.batch.plan.Rows, row)
+		}
+	}
+	slices.SortFunc(run.batch.plan.Rows, func(a, b app.WorkspaceUpdateRow) int { return strings.Compare(a.Repository, b.Repository) })
+}
+
+// A fresh retry can prove that an outstanding row no longer needs a write.
+// Returning to the report records that fact without confirming an operation.
+func (run *dashboardWorkspace) recordSettledPreview(plan app.WorkspaceUpdatePlan) {
+	settled := make(map[string]app.WorkspaceUpdateRow)
+	for _, row := range plan.Rows {
+		if row.Status == "no_update" || row.Status == "removed" {
+			run.states[row.Repository] = row.Status
+			settled[row.Repository] = row
+		}
+	}
+	if len(settled) == 0 {
+		return
+	}
+	for i, row := range run.batch.plan.Rows {
+		if current, ok := settled[row.Repository]; ok {
+			run.batch.plan.Rows[i] = current
+		}
+	}
+	if len(run.unfinishedUpdates()) == 0 {
+		run.err, run.result.Problem, run.result.Outcome = nil, nil, "success"
 	}
 }
 
@@ -221,7 +272,7 @@ func updateDetailText(detail string) string {
 func updateRowDetails(row app.WorkspaceUpdateRow) string {
 	header := displayText(row.Repository)
 	if row.Branch != "" {
-		header += " (" + displayText(row.Branch) + ")"
+		header += " (" + domain.DisplayRef(row.Branch) + ")"
 	}
 	lines := []string{header + "  " + updateStatusLabel(row.Status)}
 	if row.Path != "" {
@@ -229,7 +280,26 @@ func updateRowDetails(row app.WorkspaceUpdateRow) string {
 	}
 	for _, detail := range []string{row.Detail, row.BaseAdvice} {
 		if detail != "" {
-			lines = append(lines, updateDetailText(detail))
+			lines = append(lines, workspaceUpdateAdvice(detail))
+		}
+	}
+	for _, move := range row.Moves {
+		lines = append(lines, displayText(move.Description()))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func workspaceUpdateAdvice(detail string) string {
+	var lines []string
+	var fetchHint bool
+	for line := range strings.SplitSeq(detail, "\n") {
+		if strings.HasPrefix(line, "git fetch ") {
+			if !fetchHint {
+				lines = append(lines, "For the exact fetch instructions, run the CLI workspace update for this workspace with --dry-run.")
+				fetchHint = true
+			}
+		} else {
+			lines = append(lines, displayText(strings.TrimSuffix(line, "\r")))
 		}
 	}
 	return strings.Join(lines, "\n")

@@ -87,6 +87,11 @@ func (m dashboardModel) workspaceActionBusy() bool {
 	return m.workspaceRun != nil && m.workspaceRun.phase != workspaceResults
 }
 
+func (m dashboardModel) workspaceWritesReady() bool {
+	return !m.loading && m.loadErr == nil && len(m.data.PendingOperations) == 0 &&
+		(m.syncRun == nil || !m.syncRun.running) && (m.addRun == nil || m.addRun.phase == addResults) && !m.workspaceActionBusy()
+}
+
 func (m dashboardModel) openWorkspace(action workspaceAction) (tea.Model, tea.Cmd) {
 	_, available := m.reader.source.(DashboardWorkspaceActions)
 	if action.updatesBranches() {
@@ -94,9 +99,7 @@ func (m dashboardModel) openWorkspace(action workspaceAction) (tea.Model, tea.Cm
 	} else if action == workspaceUpdateAll {
 		_, available = m.reader.source.(DashboardWorkspaceUpdater)
 	}
-	if !available || m.loading || m.loadErr != nil ||
-		len(m.data.PendingOperations) > 0 || (m.syncRun != nil && m.syncRun.running) ||
-		(m.addRun != nil && m.addRun.phase != addResults) || m.workspaceActionBusy() {
+	if !available || !m.workspaceWritesReady() {
 		return m, nil
 	}
 	if action != workspaceCreate && (m.workspace == "" || m.data.Workspace != m.workspace) {
@@ -201,7 +204,6 @@ func (m dashboardModel) confirmWorkspace() (tea.Model, tea.Cmd) {
 		if len(run.names) == 0 {
 			return m, nil
 		}
-		run.batch.previous = nil
 	} else if run.preview.PlanDigest == "" {
 		return m, nil
 	}
@@ -332,6 +334,9 @@ func (m dashboardModel) closeWorkspace() (tea.Model, tea.Cmd) {
 		m.workspaceRun = run.batch.previous
 		if m.workspaceRun != nil {
 			m.workspaceRun.batch.excluded = run.batch.excluded
+			if run.phase == workspacePicking && run.err == nil {
+				m.workspaceRun.recordSettledPreview(run.batch.plan)
+			}
 			return m, nil
 		}
 	}
@@ -430,9 +435,6 @@ func (m dashboardModel) workspaceKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if run.phase == workspaceResults && name == "v" {
-		if m.syncRun != nil {
-			m.showSync, m.detailOffset = true, 0
-		}
 		return m.closeWorkspace()
 	}
 	return m, nil

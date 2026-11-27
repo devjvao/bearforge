@@ -96,6 +96,28 @@ func TestReviewedCheckoutDetectsAnIndexWriterAtPublication(t *testing.T) {
 	}
 }
 
+func TestAcknowledgedCheckoutMoveSurvivesAnotherRefWriter(t *testing.T) {
+	for _, mutation := range []string{"restore", "remove"} {
+		t.Run(mutation, func(t *testing.T) {
+			c, bare, path, old, target := reviewedCheckoutFixture(t, "files")
+			hooks := t.TempDir()
+			update := "update-ref refs/heads/main " + old + " " + target
+			if mutation == "remove" {
+				update = "update-ref -d refs/heads/main " + target
+			}
+			script := "#!/bin/sh\nif test \"$1\" = committed; then git -c core.hooksPath=/dev/null " + update + "; fi\n"
+			if err := os.WriteFile(filepath.Join(hooks, "reference-transaction"), []byte(script), 0755); err != nil {
+				t.Fatal(err)
+			}
+			c.commandConfig = append(c.commandConfig, "-c", "core.hooksPath="+hooks)
+			err := c.FastForwardReviewedCheckout(t.Context(), bare, path, "main", old, target)
+			if _, moved := errors.AsType[*domain.AdvancedBranchError](err); !moved {
+				t.Fatalf("Git acknowledged the move before a later ref %s but returned %v", mutation, err)
+			}
+		})
+	}
+}
+
 func TestReviewedCheckoutFinishesOnlyAnExactInterruptedMove(t *testing.T) {
 	for _, edited := range []bool{false, true} {
 		name := "exact"
@@ -111,7 +133,7 @@ func TestReviewedCheckoutFinishesOnlyAnExactInterruptedMove(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			err := c.finishReviewedCheckout(t.Context(), bare, path, "main", old, target, errors.New("lost ref write"))
+			err := c.finishReviewedCheckout(t.Context(), bare, path, "main", old, target, false, errors.New("lost ref write"))
 			head := strings.TrimSpace(string(runGit(t, c, path, "rev-parse", "HEAD")))
 			if !edited {
 				if err != nil || head != target {
@@ -139,7 +161,7 @@ func TestReviewedCheckoutIdentifiesLocksAfterStoppingStalledPrepare(t *testing.T
 	}
 	c.commandConfig = append(c.commandConfig, "-c", "core.hooksPath="+hooks)
 	c.Timeout = time.Second
-	err := c.withPreparedHEAD(t.Context(), path, old, target, func() error { t.Fatal("installed tree after prepare timed out"); return nil })
+	_, err := c.withPreparedHEAD(t.Context(), path, old, target, func() error { t.Fatal("installed tree after prepare timed out"); return nil })
 	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "stale lock") {
 		t.Fatalf("missing timeout and lock recovery: %v", err)
 	}
@@ -149,7 +171,7 @@ func TestPreparedHEADReleasesLocksOnCancellation(t *testing.T) {
 	c, _, path, old, target := reviewedCheckoutFixture(t, "files")
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	err := c.withPreparedHEAD(ctx, path, old, target, func() error {
+	_, err := c.withPreparedHEAD(ctx, path, old, target, func() error {
 		cancel()
 		return ctx.Err()
 	})
@@ -208,5 +230,94 @@ func TestReviewedCheckoutCompletesStartedTreeOnCancel(t *testing.T) {
 	status, err := c.Inspect(t.Context(), path)
 	if err != nil || status.Head != target || status.Dirty() {
 		t.Fatalf("cancellation split the checkout from its branch: %+v %v", status, err)
+	}
+}
+
+func TestReviewedCheckoutChecksTreeBeforePublication(t *testing.T) {
+	c, bare, path, old, target := reviewedCheckoutFixture(t, "files")
+	hooks := t.TempDir()
+	script := "#!/bin/sh\nprintf 'my independent edit' > personal.txt\ngit -c core.hooksPath=/dev/null add -- personal.txt\n"
+	if err := os.WriteFile(filepath.Join(hooks, "post-index-change"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	c.commandConfig = append(c.commandConfig, "-c", "core.hooksPath="+hooks)
+	err := c.FastForwardReviewedCheckout(t.Context(), bare, path, "main", old, target)
+	if err == nil {
+		t.Fatal("published a tree with an extra staged edit")
+	}
+	if got := strings.TrimSpace(string(runGit(t, c, path, "rev-parse", "HEAD"))); got != old {
+		t.Fatalf("published reviewed target before checking index: %s", got)
+	}
+	if got := string(runGit(t, c, path, "show", ":personal.txt")); got != "my independent edit" {
+		t.Fatalf("lost independent edit: %s", got)
+	}
+}
+
+func TestInstalledTreeIgnoresStatOnlyChanges(t *testing.T) {
+	c, _, path, old, _ := reviewedCheckoutFixture(t, "files")
+	file := filepath.Join(path, "steady.txt")
+	if err := os.WriteFile(file, []byte("same content"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, c, path, "add", "steady.txt")
+	runGit(t, c, path, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "steady")
+	target := strings.TrimSpace(string(runGit(t, c, path, "rev-parse", "HEAD")))
+	if old == target {
+		t.Fatal("fixture failed to create steady entry")
+	}
+	earlier := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(file, earlier, earlier); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.checkInstalledTree(t.Context(), path, "refs/heads/main", target); err != nil {
+		t.Fatalf("stat-only change rejected: %v", err)
+	}
+	if err := os.WriteFile(file, []byte("real content"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.checkInstalledTree(t.Context(), path, "refs/heads/main", target); err == nil {
+		t.Fatal("actual worktree edit passed verification")
+	}
+}
+
+func TestReviewedCheckoutRecoversInstalledTreeAfterTimedOutHook(t *testing.T) {
+	c, bare, path, old, target := reviewedCheckoutFixture(t, "files")
+	hooks := t.TempDir()
+	if err := os.WriteFile(filepath.Join(hooks, "post-index-change"), []byte("#!/bin/sh\nsleep 60\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	c.commandConfig = append(c.commandConfig, "-c", "core.hooksPath="+hooks)
+	c.Timeout = 2 * time.Second
+	err := c.FastForwardReviewedCheckout(t.Context(), bare, path, "main", old, target)
+	if got := strings.TrimSpace(string(runGit(t, c, path, "rev-parse", "HEAD"))); got != target {
+		t.Fatalf("exact installed tree stranded at %s: %v", got, err)
+	}
+	if _, ok := errors.AsType[*domain.AdvancedBranchError](err); !ok || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("lost hook timeout or recovered move: %v", err)
+	}
+}
+
+func TestReviewedCheckoutReportsPartialFilterFailure(t *testing.T) {
+	c, bare, path, old, first := reviewedCheckoutFixture(t, "files")
+	other := filepath.Join(t.TempDir(), "filter-target")
+	runGit(t, c, bare, "worktree", "add", "--detach", "--", other, first)
+	for name, content := range map[string]string{".gitattributes": "z.bad filter=required\n", "a.txt": "first installed file", "z.bad": "cannot smudge"} {
+		if err := os.WriteFile(filepath.Join(other, name), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGit(t, c, other, "add", ".")
+	runGit(t, c, other, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "filtered files")
+	target := strings.TrimSpace(string(runGit(t, c, other, "rev-parse", "HEAD")))
+	c.commandConfig = append(c.commandConfig, "-c", "filter.required.required=true", "-c", "filter.required.smudge=false", "-c", "filter.required.clean=cat")
+	err := c.FastForwardReviewedCheckout(t.Context(), bare, path, "main", old, target)
+	if err == nil || !strings.Contains(err.Error(), "partially") || !strings.Contains(err.Error(), old) || !strings.Contains(err.Error(), target) {
+		t.Fatalf("partial checkout has no recovery context: %v", err)
+	}
+	if got := strings.TrimSpace(string(runGit(t, c, path, "rev-parse", "HEAD"))); got != old {
+		t.Fatalf("partial tree changed the branch: %s", got)
+	}
+	if got, err := os.ReadFile(filepath.Join(path, "a.txt")); err != nil || string(got) != "first installed file" {
+		t.Fatalf("expected partially installed checkout retained: %s %v", got, err)
 	}
 }

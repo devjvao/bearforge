@@ -3,6 +3,7 @@ package gitcli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/devjvao/bearforge/internal/domain"
@@ -17,19 +18,7 @@ func (c *Client) CheckReviewedCheckout(ctx context.Context, path, old, target st
 	c = c.localOnly()
 	diff, err := c.Run(ctx, path, "--no-replace-objects", "diff-tree", "--no-commit-id", "-r", "--raw", "--no-abbrev", "--no-renames", "--no-ext-diff", "--ignore-submodules=none", "-z", old, target, "--")
 	if err != nil {
-		// Run the wider object scan only when Git couldn't compare the trees.
-		// It distinguishes an absent tree from unrelated Git or I/O failures.
-		if ctx.Err() == nil {
-			objects, scanErr := c.Run(ctx, path, "--no-replace-objects", "rev-list", "--objects", "--no-walk", "--no-object-names", "--missing=print", old, target, "--")
-			if scanErr == nil {
-				for line := range strings.Lines(string(objects)) {
-					if oid, ok := strings.CutPrefix(strings.TrimSpace(line), "?"); ok && domain.ValidCommitID(oid) {
-						return domain.E("incomplete_history", "checkout object %s is unavailable locally", oid)
-					}
-				}
-			}
-		}
-		return err
+		return c.checkoutReadError(ctx, path, old, target, nil, err)
 	}
 	if len(diff) == 0 {
 		return nil
@@ -62,7 +51,7 @@ func (c *Client) CheckReviewedCheckout(ctx context.Context, path, old, target st
 		// avoids walking history or scanning unrelated files in a large tree.
 		out, err := c.runWithInput(ctx, path, nil, strings.NewReader(ids.String()), "--no-replace-objects", "cat-file", "--batch-check=%(objecttype)")
 		if err != nil {
-			return err
+			return c.checkoutReadError(ctx, path, old, target, seen, err)
 		}
 		for line := range strings.Lines(string(out)) {
 			result := strings.TrimSpace(line)
@@ -76,4 +65,60 @@ func (c *Client) CheckReviewedCheckout(ctx context.Context, path, old, target st
 	}
 	_, err = c.checkIgnoredUpdatePaths(ctx, path, old, target, false)
 	return err
+}
+
+// Old Git may diagnose a blocked lazy fetch instead of emitting a "missing"
+// batch record. Confirm only the object named by the failed operation. A full
+// SHA given to --disambiguate probes the local object directory and pack
+// indexes without parsing the object or asking a promisor remote for it.
+func (c *Client) checkoutReadError(ctx context.Context, path, old, target string, blobs map[string]bool, cause error) error {
+	command, ok := errors.AsType[*CommandError](cause)
+	if !ok || command.ExitCode <= 0 || ctx.Err() != nil {
+		return cause
+	}
+	for line := range strings.Lines(command.Detail) {
+		oid := reportedMissingObject(strings.TrimSpace(line))
+		if oid == "" {
+			continue
+		}
+		if blobs != nil {
+			if !blobs[oid] {
+				continue
+			}
+		} else if oid == old || oid == target {
+			// diff-tree can report the committish passed to it instead of
+			// the root tree which could not be read.
+			commit, err := c.Run(ctx, path, "--no-replace-objects", "cat-file", "commit", oid)
+			if err != nil {
+				continue
+			}
+			header, _, _ := strings.Cut(string(commit), "\n")
+			oid = strings.TrimPrefix(header, "tree ")
+			if !domain.ValidCommitID(oid) {
+				continue
+			}
+		}
+		out, err := c.Run(ctx, path, "rev-parse", "--disambiguate="+oid)
+		if err == nil && len(out) == 0 {
+			return domain.E("incomplete_history", "checkout object %s is unavailable locally", oid)
+		}
+	}
+	return cause
+}
+
+func reportedMissingObject(line string) string {
+	// Git commands run in the C locale. Accept only its object read errors,
+	// never an arbitrary hash appearing in a ref name, filename or config error.
+	for _, prefix := range []string{"fatal: unable to read tree ", "fatal: bad tree object ", "error: Could not read ", "fatal: unable to read ", "fatal: could not fetch "} {
+		rest, ok := strings.CutPrefix(line, prefix)
+		if !ok {
+			continue
+		}
+		word, _, _ := strings.Cut(rest, " ")
+		oid := strings.Trim(word, "()")
+		if domain.ValidCommitID(oid) {
+			return oid
+		}
+	}
+	return ""
 }

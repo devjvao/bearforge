@@ -93,7 +93,13 @@ func TestUpdatePreviewDefersMissingPromisorParent(t *testing.T) {
 		t.Fatalf("missing parent was not deferred: %+v", p)
 	}
 	batch, err := s.PreviewWorkspaceUpdate(ctx, req.Workspace, nil)
-	if err != nil || len(batch.Rows) != 1 || batch.Rows[0].Eligible || !strings.Contains(batch.Rows[0].Detail, "git fetch --refetch") {
+	if err != nil || len(batch.Rows) != 1 || batch.Rows[0].Eligible || !strings.Contains(batch.Rows[0].Detail, "git fetch --refetch --no-filter") {
 		t.Fatalf("missing parent should have recovery guidance: %+v, %v", batch, err)
+	}
+	prGit(t, bare, "config", "remote.origin.partialclonefilter", "object:type=tree")
+	runSuggestedWorkspaceFetch(t, filepath.Join(s.Store.RootPath(), req.Workspace, req.Repository), batch.Rows[0].Detail)
+	found, err := s.Git.HasCommit(ctx, bare, parent)
+	if err != nil || !found {
+		t.Fatalf("suggested fetch did not restore parent commit %s: %v", parent, err)
 	}
 }

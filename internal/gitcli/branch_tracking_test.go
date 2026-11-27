@@ -32,6 +32,10 @@ func TestBranchTrackingReadsOnlyTheLiteralSubsection(t *testing.T) {
 	if remote, _, err := c.BranchTracking(t.Context(), bare, "a+.b"); err != nil || remote != "another" {
 		t.Fatalf("expected the effective remote another, got %q, %v", remote, err)
 	}
+	runGit(t, c, bare, "config", "--add", "branch.a+.b.merge", "refs/heads/topic")
+	if _, branch, err := c.BranchTracking(t.Context(), bare, "a+.b"); err != nil || branch != "topic" {
+		t.Fatalf("duplicate tracking settings for the same upstream: %q, %v", branch, err)
+	}
 	runGit(t, c, bare, "config", "--add", "branch.a+.b.merge", "refs/heads/main")
 	if _, _, err := c.BranchTracking(t.Context(), bare, "a+.b"); err == nil || !strings.Contains(err.Error(), "multiple") {
 		t.Fatalf("multi-merge tracking returned %v", err)

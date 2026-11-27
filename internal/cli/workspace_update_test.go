@@ -54,6 +54,23 @@ func TestWorkspaceUpdateReportDescribesAppliedMovesAndMultilineDiagnostics(t *te
 	}
 }
 
+func TestWorkspaceUpdateDisambiguatesHiddenRefNames(t *testing.T) {
+	row := app.WorkspaceUpdateRow{Repository: "api", Branch: "ma\u200bin", Eligible: true, Moves: []app.WorkspaceBranchMove{{Branch: "ma\u200bin", From: "old", To: "new"}, {Branch: "main", From: "a", To: "b"}}}
+	for _, review := range []bool{true, false} {
+		var out bytes.Buffer
+		var items []app.Item
+		if !review {
+			items = []app.Item{{Repository: "api", Outcome: "updated", AppliedMoves: row.Moves}}
+		}
+		if err := writeWorkspaceUpdate(&out, app.WorkspaceUpdatePlan{Rows: []app.WorkspaceUpdateRow{row}}, items, review); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out.String(), `"ma\u200bin": old`) || !strings.Contains(out.String(), "main: a") || strings.Contains(out.String(), "\u200b") {
+			t.Fatal(out.String())
+		}
+	}
+}
+
 func TestWorkspaceUpdateCLIReviewsAndAppliesSelectedFastForwards(t *testing.T) {
 	root := cliFixtureDir(t)
 	t.Chdir(root)
@@ -185,7 +202,11 @@ func TestWorkspaceUpdateCLIReviewsAndAppliesSelectedFastForwards(t *testing.T) {
 		out.Reset()
 		stderr.Reset()
 		code := Run(t.Context(), args, strings.NewReader(""), &out, &stderr)
-		if code == 0 || !strings.Contains(out.String(), `"outcome":"partial"`) || !strings.Contains(out.String(), `"status":"blocked"`) {
+		wantOutcome := "partial"
+		if len(scope) > 0 {
+			wantOutcome = "failed"
+		}
+		if code == 0 || !strings.Contains(out.String(), `"outcome":"`+wantOutcome+`"`) || !strings.Contains(out.String(), `"status":"blocked"`) {
 			t.Fatalf("incomplete update reported success: %d %s%s", code, &out, &stderr)
 		}
 	}

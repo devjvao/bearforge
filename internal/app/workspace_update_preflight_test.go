@@ -132,6 +132,16 @@ func TestWorkspaceUpdateRequiresLocalCheckoutObjects(t *testing.T) {
 	g := s.Git.(interface {
 		FastForwardReviewedCheckout(context.Context, string, string, string, string, string) error
 	})
+	// An unrelated Git failure should keep its own diagnostic even though
+	// the repository also has an intentionally missing blob.
+	prGit(t, path, "config", "diff.suppressBlankEmpty", "invalid-boolean-setting")
+	preflight := s.Git.(interface {
+		CheckReviewedCheckout(context.Context, string, string, string) error
+	})
+	if failure := preflight.CheckReviewedCheckout(ctx, path, old, tip); failure == nil || !strings.Contains(failure.Error(), "invalid-boolean-setting") {
+		t.Errorf("unrelated diff failure misclassified: %v", failure)
+	}
+	prGit(t, path, "config", "--unset", "diff.suppressBlankEmpty")
 	if err := g.FastForwardReviewedCheckout(ctx, bare, path, "topic", old, tip); err == nil {
 		t.Fatal("apply accepted missing blob")
 	}

@@ -48,8 +48,22 @@ func (m dashboardModel) workspaceView() tea.View {
 		summary = "Result: " + displayText(run.result.Outcome)
 		if run.err != nil {
 			summary = "Needs attention; inspect the results"
-		} else if run.action == workspaceUpdateAll && len(run.unfinishedUpdates()) > 0 {
-			summary = fmt.Sprintf("%d unfinished | r retry", len(run.unfinishedUpdates()))
+		} else if run.action == workspaceUpdateAll {
+			updated, attention, unselected := 0, 0, 0
+			for _, state := range run.states {
+				switch state {
+				case "updated":
+					updated++
+				case "blocked", "sync_required", "failed", "skipped", "deferred", "not_run":
+					attention++
+				case "not_selected":
+					unselected++
+				}
+			}
+			summary = fmt.Sprintf("%d updated | %d need attention | %d not selected", updated, attention, unselected)
+		}
+		if run.action == workspaceUpdateAll && len(run.unfinishedUpdates()) > 0 && len(m.data.PendingOperations) > 0 {
+			summary = "Recovery required | Esc then o"
 		}
 	}
 	lines := []string{m.styles.brand.Render("Bearforge / " + string(run.action)), "Workspace: " + displayText(run.workspace), m.styles.focus.Render(summary)}
@@ -86,7 +100,7 @@ func (m dashboardModel) workspaceView() tea.View {
 		second = "q cancel/quit | Ctrl-C cancel"
 	case workspaceResults:
 		second = "Esc dashboard | v view | q quit"
-		if run.action == workspaceUpdateAll && len(run.unfinishedUpdates()) > 0 {
+		if run.action == workspaceUpdateAll && len(run.unfinishedUpdates()) > 0 && m.workspaceWritesReady() && run.workspace == m.workspace && m.data.Workspace == run.workspace {
 			first = "r retry unfinished | PgUp/PgDn details"
 		}
 	}
@@ -217,15 +231,19 @@ func (m dashboardModel) workspaceContent() []string {
 				}
 				lines = append(lines, "", m.styles.title.Render(displayText(row.Repository))+"  "+m.styles.outcome(outcome))
 				switch outcome {
-				case "deferred", "blocked", "sync_required", "removed", "no_update":
-					lines = append(lines, updateDetailText(row.Detail))
+				case "not_selected", "deferred", "blocked", "sync_required", "removed", "no_update":
+					lines = append(lines, workspaceUpdateAdvice(row.Detail))
 				}
 				item := itemsByID[row.Repository]
 				for _, move := range item.AppliedMoves {
-					lines = append(lines, fmt.Sprintf("Fast-forwarded %s from %s to %s.", displayText(move.Branch), displayText(move.From), displayText(move.To)))
+					lines = append(lines, fmt.Sprintf("Fast-forwarded %s from %s to %s.", domain.DisplayRef(move.Branch), displayText(move.From), displayText(move.To)))
 				}
 				if problem := item.Problem; problem != nil {
-					lines = append(lines, m.styles.bad.Render("Error: "+updateDetailText(problem.Message)))
+					label := "Error: "
+					if outcome != item.Outcome {
+						label = "Previous apply error: "
+					}
+					lines = append(lines, m.styles.bad.Render(label+updateDetailText(problem.Message)))
 				}
 			}
 			return lines
