@@ -367,12 +367,15 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "p", "P":
 			return m.startPullRequests(key == "P")
 		case "v":
-			if m.operationsRun != nil && m.operationsRun.phase == operationsResults {
+			if m.syncRun != nil && m.syncRun.running {
+				m.showSync, m.detailOffset = !m.showSync, 0
+			} else if m.operationsRun != nil && m.operationsRun.phase == operationsResults {
 				m.showOperations, m.operationsRun.offset = !m.showOperations, 0
 			} else if m.importRun != nil && m.importRun.phase == importResults {
 				m.showImport, m.importRun.offset = !m.showImport, 0
 			} else if m.workspaceRun != nil && m.workspaceRun.phase == workspaceResults {
 				m.showWorkspace, m.workspaceRun.offset = !m.showWorkspace, 0
+				m.showSync = false
 			} else if m.addRun != nil && m.addRun.phase == addResults {
 				m.showAdd = !m.showAdd
 				m.addRun.offset = 0

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -20,9 +21,11 @@ type DashboardWorkspaceUpdater interface {
 }
 
 type workspaceUpdateSelection struct {
-	plan     app.WorkspaceUpdatePlan
-	selected map[string]bool
-	index    int
+	plan          app.WorkspaceUpdatePlan
+	excluded      map[string]bool // User choices persist while eligibility changes on refresh.
+	selectedCount int
+	index         int
+	retryScope    []string // Includes unfinished members even when this attempt cannot select them.
 	// Keep the last applied run until the retry is confirmed.
 	previous *dashboardWorkspace
 }
@@ -42,9 +45,9 @@ func (m dashboardModel) previewWorkspaceUpdate() (tea.Model, tea.Cmd) {
 	updater := reader.source.(DashboardWorkspaceUpdater)
 	preview := updater.PreviewWorkspaceUpdate
 	var scope []string
-	if run.batch.previous != nil {
+	if run.batch.retryScope != nil {
 		preview = updater.PreviewWorkspaceUpdateRetry
-		scope = run.batch.previous.unfinishedUpdates()
+		scope = slices.Clone(run.batch.retryScope)
 	}
 	return m, func() tea.Msg {
 		release, err := reader.acquire(ctx)
@@ -70,13 +73,13 @@ func (m dashboardModel) receiveWorkspaceUpdatePreview(msg workspaceUpdatePreview
 		run.err = errors.New("the update preview names a different workspace; reopen it")
 		return m, nil
 	}
-	selected := make(map[string]bool)
+	run.batch.plan = msg.plan
+	run.batch.selectedCount = 0
 	for _, row := range msg.plan.Rows {
-		if row.Eligible && (run.batch.selected == nil || run.batch.selected[row.Repository]) {
-			selected[row.Repository] = true
+		if row.Eligible && !run.batch.excluded[row.Repository] {
+			run.batch.selectedCount++
 		}
 	}
-	run.batch.plan, run.batch.selected = msg.plan, selected
 	run.batch.index = 0
 	run.phase = workspacePicking
 	return m, nil
@@ -108,15 +111,11 @@ func (m dashboardModel) workspaceUpdatePickerKey(key string) (tea.Model, tea.Cmd
 	case "r":
 		return m.previewWorkspaceUpdate()
 	case "enter":
-		if len(picker.selected) == 0 || m.width < 36 || m.height < 12 {
+		names := picker.selectedNames()
+		if len(names) == 0 || m.width < 36 || m.height < 12 {
 			return m, nil
 		}
-		run.names = nil
-		for _, row := range rows {
-			if picker.selected[row.Repository] {
-				run.names = append(run.names, row.Repository)
-			}
-		}
+		run.names = names
 		run.phase, run.offset = workspaceReview, 0
 	case "down", "j", "up", "k":
 		delta := 1
@@ -128,10 +127,15 @@ func (m dashboardModel) workspaceUpdatePickerKey(key string) (tea.Model, tea.Cmd
 	case "space", " ":
 		if len(rows) > 0 && rows[picker.index].Eligible {
 			name := rows[picker.index].Repository
-			if picker.selected[name] {
-				delete(picker.selected, name)
+			if picker.excluded == nil {
+				picker.excluded = make(map[string]bool)
+			}
+			if picker.excluded[name] {
+				delete(picker.excluded, name)
+				picker.selectedCount++
 			} else {
-				picker.selected[name] = true
+				picker.excluded[name] = true
+				picker.selectedCount--
 			}
 		}
 	case "pgup", "pgdown":
@@ -150,25 +154,68 @@ func (m dashboardModel) workspaceUpdatePickerKey(key string) (tea.Model, tea.Cmd
 
 func (m dashboardModel) retryWorkspaceUpdate() (tea.Model, tea.Cmd) {
 	run := m.workspaceRun
-	if len(run.unfinishedUpdates()) == 0 {
+	remaining := run.unfinishedUpdates()
+	if len(remaining) == 0 || (m.syncRun != nil && m.syncRun.running) {
 		return m, nil
 	}
+	m.invalidatePullRequests()
 	ctx, cancel := context.WithCancel(m.reader.ctx)
 	m.workspaceRun = &dashboardWorkspace{
 		ctx: ctx, cancel: cancel, action: run.action, workspace: run.workspace, root: run.root,
-		batch: workspaceUpdateSelection{previous: run},
+		batch: workspaceUpdateSelection{previous: run, retryScope: remaining, excluded: maps.Clone(run.batch.excluded)},
 	}
 	return m.previewWorkspaceUpdate()
 }
 
 func (run *dashboardWorkspace) unfinishedUpdates() []string {
 	var names []string
-	for _, id := range run.names {
-		if run.states[id] != "updated" {
+	scope := run.batch.retryScope
+	if scope == nil {
+		scope = run.names
+	}
+	for _, id := range scope {
+		switch run.states[id] {
+		case "updated", "no_update", "removed":
+		default:
 			names = append(names, id)
 		}
 	}
 	return names
+}
+
+func (picker workspaceUpdateSelection) selectedNames() []string {
+	var names []string
+	for _, row := range picker.plan.Rows {
+		if row.Eligible && !picker.excluded[row.Repository] {
+			names = append(names, row.Repository)
+		}
+	}
+	return names
+}
+
+// A retry can apply its ready subset while other members still need attention.
+func (run *dashboardWorkspace) recordDeferredUpdates() {
+	if run.batch.retryScope == nil {
+		return
+	}
+	for _, row := range run.batch.plan.Rows {
+		if _, attempted := run.states[row.Repository]; attempted {
+			continue
+		}
+		outcome := row.Status
+		if row.Eligible {
+			outcome = "deferred"
+		}
+		run.states[row.Repository] = outcome
+	}
+}
+
+func updateDetailText(detail string) string {
+	lines := strings.Split(detail, "\n")
+	for i, line := range lines {
+		lines[i] = displayText(strings.TrimSuffix(line, "\r"))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func updateRowDetails(row app.WorkspaceUpdateRow) string {
@@ -182,7 +229,7 @@ func updateRowDetails(row app.WorkspaceUpdateRow) string {
 	}
 	for _, detail := range []string{row.Detail, row.BaseAdvice} {
 		if detail != "" {
-			lines = append(lines, displayText(detail))
+			lines = append(lines, updateDetailText(detail))
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -210,7 +257,7 @@ func (m dashboardModel) workspaceUpdatePickerLines() []string {
 		check := "[-]"
 		if row.Eligible {
 			check = "[ ]"
-			if picker.selected[row.Repository] {
+			if !picker.excluded[row.Repository] {
 				check = "[x]"
 			}
 		}

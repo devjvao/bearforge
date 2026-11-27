@@ -267,6 +267,7 @@ func (m dashboardModel) updateWorkspace(msg tea.Msg) (tea.Model, tea.Cmd) {
 				run.states[item.Repository] = item.Outcome
 			}
 		}
+		run.recordDeferredUpdates()
 		target := m.workspace
 		if run.action == workspaceCreate && v.err == nil && v.result.Outcome == "success" {
 			target = run.workspace
@@ -326,9 +327,11 @@ func validateWorkspacePreview(run *dashboardWorkspace, result app.Result) error 
 
 func (m dashboardModel) closeWorkspace() (tea.Model, tea.Cmd) {
 	if m.workspaceRun.phase != workspaceResults {
-		m.workspaceRun.cancel()
-		m.workspaceRun = m.workspaceRun.batch.previous
+		run := m.workspaceRun
+		run.cancel()
+		m.workspaceRun = run.batch.previous
 		if m.workspaceRun != nil {
+			m.workspaceRun.batch.excluded = run.batch.excluded
 			return m, nil
 		}
 	}
@@ -427,6 +430,9 @@ func (m dashboardModel) workspaceKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if run.phase == workspaceResults && name == "v" {
+		if m.syncRun != nil {
+			m.showSync, m.detailOffset = true, 0
+		}
 		return m.closeWorkspace()
 	}
 	return m, nil

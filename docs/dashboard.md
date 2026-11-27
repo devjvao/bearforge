@@ -73,7 +73,7 @@ Press `d` in the repository pane to preview removing the selected member. Press 
 
 Press `U` to review the whole workspace, including repositories hidden by the dashboard filter. Eligible repositories start checked. Press Space to toggle a repository, Enter to review the selection, and `y` once to apply it. The preview names the checked-out branch and any local default branch that would advance. Each branch advances only to a reviewed commit reachable by fast-forward.
 
-The preview checks the remote tips and uses local history to verify ancestry. If a remote commit is new to this machine, close the preview, press `s` to fetch it, and reopen it. A feature can match its upstream and still trail the repository default. Review that rebase separately with `b`. If a checkout changes after review, the results identify the affected repository. Press `r` in partial results to preview the unfinished selections again.
+The preview checks the remote tips and uses local history to verify ancestry. If a remote commit is new to this machine, close the preview, press `s` to fetch it, and reopen it. A feature can match its upstream and still trail the repository default. Review that rebase separately with `b`. If a checkout changes after review, the results identify the affected repository. Press `r` in partial results to preview the unfinished selections again. When the retry needs a sync, use `v` after syncing to reopen the batch results, then `r` to review those selections. You can apply the ready subset and return to the remaining repositories later.
 
 The **Base** column uses locally cached remote refs. If Git already has the target commit through another branch, a workspace update can fast-forward the local branch while that column still shows an older comparison. Press `s` to refresh the remote refs.
 
@@ -96,6 +96,23 @@ Press `p` to look up open GitHub and Bitbucket PRs for every loaded workspace me
 Lookup preserves local status, filters and selection, and keys remain usable during HTTP. Startup, navigation and `r` do not contact provider APIs. Local refresh or workspace changes cancel and invalidate PR results. Repeated `p`/`P` does not queue requests while a lookup is active or draining. Provider clients retain bounded, timestamped observations in memory; refresh still respects rate-limit cooldowns. See [PR authentication, configuration and limits](onboarding.md#look-up-pull-requests).
 
 ## Operations and recovery
+
+### Guarded ref recovery after a workspace update
+
+Git can finish writing the selected tree and then fail to record the branch move, for example if the reflog is unwritable. Bearforge checks the named branch, index, and tracked files. When they match the reviewed transition, it retries the ref write once under Git’s locks. The result identifies any branch that already advanced.
+
+If the ref write still fails, fix the reported Git error first. Enter the reported checkout. Substitute the exact full branch ref and the old and target commit IDs from the result in the commands below.
+
+```sh
+git symbolic-ref HEAD
+git rev-parse REVIEWED_FULL_REF
+git diff-index --cached --quiet --ignore-submodules=none TARGET_COMMIT --
+git diff-files --quiet --ignore-submodules=none --
+```
+
+Continue only if the first command shows the reviewed full ref, the second shows the old commit, and both comparisons exit successfully. With other Git writers stopped, finish the ref move with `git update-ref --no-deref -m "finish reviewed workspace update" REVIEWED_FULL_REF TARGET_COMMIT OLD_COMMIT`. Git checks the old commit again. The command writes only that ref and its reflog. If any check differs, inspect `git status` and the reflog and preserve the current edits.
+
+### Interrupted operations
 
 Unfinished mutations block unrelated writes. Press `o` to open **Operations**, including when a partial import prevents other changes. Select an operation to inspect failed steps. Press `r` to review retrying or `a` to review stopping recovery tracking; only `y` executes either action. Retry reuses successful clones and retained directories. Stopping tracking retains registrations, files and Git effects, clears the write block, and prevents resuming that operation afterward.
 

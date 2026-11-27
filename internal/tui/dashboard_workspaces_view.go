@@ -36,7 +36,7 @@ func (m dashboardModel) workspaceView() tea.View {
 			summary = "Checking local and remote branches..."
 		}
 	case workspacePicking:
-		summary = fmt.Sprintf("%d selected | %d repositories", len(run.batch.selected), len(run.batch.plan.Rows))
+		summary = fmt.Sprintf("%d selected | %d repositories", run.batch.selectedCount, len(run.batch.plan.Rows))
 	case workspaceReview:
 		summary = "Review the plan; y confirms"
 		if run.err != nil {
@@ -48,6 +48,8 @@ func (m dashboardModel) workspaceView() tea.View {
 		summary = "Result: " + displayText(run.result.Outcome)
 		if run.err != nil {
 			summary = "Needs attention; inspect the results"
+		} else if run.action == workspaceUpdateAll && len(run.unfinishedUpdates()) > 0 {
+			summary = fmt.Sprintf("%d unfinished | r retry", len(run.unfinishedUpdates()))
 		}
 	}
 	lines := []string{m.styles.brand.Render("Bearforge / " + string(run.action)), "Workspace: " + displayText(run.workspace), m.styles.focus.Render(summary)}
@@ -100,7 +102,7 @@ func (m dashboardModel) workspaceContent() []string {
 	run := m.workspaceRun
 	lines := []string{}
 	if run.err != nil {
-		lines = append(lines, m.styles.bad.Render("Error: "+displayText(run.err.Error())))
+		lines = append(lines, m.styles.bad.Render("Error: "+updateDetailText(run.err.Error())))
 	}
 	switch run.phase {
 	case workspaceForm:
@@ -124,7 +126,7 @@ func (m dashboardModel) workspaceContent() []string {
 		if run.action == workspaceUpdateAll {
 			lines = append(lines, fmt.Sprintf("Fast-forward branches in %d selected repositories.", len(run.names)))
 			for _, row := range run.batch.plan.Rows {
-				if run.batch.selected[row.Repository] {
+				if row.Eligible && !run.batch.excluded[row.Repository] {
 					lines = append(lines, "", updateRowDetails(row))
 				}
 			}
@@ -201,12 +203,12 @@ func (m dashboardModel) workspaceContent() []string {
 			}
 		}
 		if run.result.Problem != nil && run.err == nil {
-			lines = append(lines, m.styles.bad.Render("Error: "+displayText(run.result.Problem.Message)))
+			lines = append(lines, m.styles.bad.Render("Error: "+updateDetailText(run.result.Problem.Message)))
 		}
 		if run.action == workspaceUpdateAll && run.phase == workspaceResults {
-			errorsByID := make(map[string]*app.Problem, len(run.result.Items))
+			itemsByID := make(map[string]app.Item, len(run.result.Items))
 			for _, item := range run.result.Items {
-				errorsByID[item.Repository] = item.Problem
+				itemsByID[item.Repository] = item
 			}
 			for _, row := range run.batch.plan.Rows {
 				outcome, selected := run.states[row.Repository]
@@ -214,11 +216,16 @@ func (m dashboardModel) workspaceContent() []string {
 					continue
 				}
 				lines = append(lines, "", m.styles.title.Render(displayText(row.Repository))+"  "+m.styles.outcome(outcome))
-				if outcome == "updated" {
-					lines = append(lines, displayText(row.Detail))
+				switch outcome {
+				case "deferred", "blocked", "sync_required", "removed", "no_update":
+					lines = append(lines, updateDetailText(row.Detail))
 				}
-				if problem := errorsByID[row.Repository]; problem != nil {
-					lines = append(lines, m.styles.bad.Render("Error: "+displayText(problem.Message)))
+				item := itemsByID[row.Repository]
+				for _, move := range item.AppliedMoves {
+					lines = append(lines, fmt.Sprintf("Fast-forwarded %s from %s to %s.", displayText(move.Branch), displayText(move.From), displayText(move.To)))
+				}
+				if problem := item.Problem; problem != nil {
+					lines = append(lines, m.styles.bad.Render("Error: "+updateDetailText(problem.Message)))
 				}
 			}
 			return lines

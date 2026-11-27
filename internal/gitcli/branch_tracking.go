@@ -23,7 +23,8 @@ func (c *Client) BranchTracking(ctx context.Context, path, branch string) (strin
 	settings := make(map[string]string, 2)
 	for record := range strings.SplitSeq(strings.TrimSuffix(string(out), "\x00"), "\x00") {
 		key, value, _ := strings.Cut(record, "\n")
-		if _, exists := settings[key]; exists {
+		// Git uses the last remote, but accumulates merge refs for an octopus pull.
+		if _, exists := settings[key]; exists && key == prefix+"merge" {
 			return "", "", domain.E("conflict", "%s has multiple values; choose one upstream before updating", key)
 		}
 		settings[key] = value

@@ -34,13 +34,23 @@ func TestWorkspaceUpdateReportDescribesAppliedMovesAndMultilineDiagnostics(t *te
 	}}
 	result := app.NewResult("workspace.update")
 	result.Data = plan
-	result.Items = []app.Item{{Repository: "api", Branch: "feature", Outcome: "updated"}}
+	result.Items = []app.Item{{Repository: "api", Branch: "feature", Outcome: "updated", AppliedMoves: plan.Rows[0].Moves}}
 	o := options{output: "human", out: &out, errOut: &out}
 	if err := o.render(result); err != nil {
 		t.Fatal(err)
 	}
 	if got := out.String(); !strings.Contains(got, "main: old → new") || !strings.Contains(got, "  remote: permission denied\n  fatal: access failed") || strings.Contains(got, "\x1b") {
 		t.Fatalf("actual default-branch update or readable diagnostics missing: %s", got)
+	}
+	out.Reset()
+	result.Items[0].Outcome = "failed"
+	result.Items[0].AppliedMoves = []app.WorkspaceBranchMove{{Branch: "feature", From: "original", To: "advanced"}}
+	result.Items[0].Problem = &app.Problem{Code: "failed", Message: "cannot advance main"}
+	if err := o.render(result); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); !strings.Contains(got, "feature: original → advanced") || !strings.Contains(got, "cannot advance main") || strings.Contains(got, "main: old → new") {
+		t.Fatalf("partially applied branches confused with proposed moves: %s", got)
 	}
 }
 
@@ -96,6 +106,38 @@ func TestWorkspaceUpdateCLIReviewsAndAppliesSelectedFastForwards(t *testing.T) {
 	}
 	if head("api") != start["api"] || head("web") != start["web"] {
 		t.Fatal("dry run or unconfirmed update moved a checkout")
+	}
+	// A dirty checkout discovered after review must never hide a remote
+	// transport failure, whether that failure was observed at preview or apply.
+	for _, failAtPreview := range []bool{false, true} {
+		remote := filepath.Join(remotes, "web")
+		offline := func() {
+			if err := os.Rename(remote, remote+"-offline"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if failAtPreview {
+			offline()
+		}
+		marker := filepath.Join(root, "release", "api", "changed-after-review")
+		log := &workspaceUpdateLog{onRunning: func() {
+			if err := os.WriteFile(marker, []byte("local"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if !failAtPreview {
+				offline()
+			}
+		}}
+		code := Run(t.Context(), []string{"workspace", "update", "release", "--yes", "--output=jsonl"}, strings.NewReader(""), log, &stderr)
+		if code != 1 || !strings.Contains(log.String(), "uncommitted changes") || !strings.Contains(log.String(), `"code":"failed"`) {
+			t.Fatalf("operation error masked (preview=%v): %d %s", failAtPreview, code, log)
+		}
+		if err := os.Rename(remote+"-offline", remote); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(marker); err != nil {
+			t.Fatal(err)
+		}
 	}
 	report := runCLIHere(t, "workspace", "update", "release", "--repo", "api", "--yes", "--no-input", "--json")
 	if head("api") != target["api"] || head("web") != start["web"] || !strings.Contains(report, `"outcome":"updated"`) {

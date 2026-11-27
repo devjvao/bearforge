@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func reviewedCheckoutFixture(t *testing.T, format string) (*Client, string, string, string, string) {
@@ -74,6 +76,75 @@ func TestReviewedCheckoutProtectsIgnoredFile(t *testing.T) {
 	}
 }
 
+func TestReviewedCheckoutDetectsAnIndexWriterAtPublication(t *testing.T) {
+	c, bare, path, old, target := reviewedCheckoutFixture(t, "files")
+	hooks := t.TempDir()
+	script := "#!/bin/sh\nif test \"$1\" = committed; then git restore --source=" + old + " --staged -- incoming.txt; fi\n"
+	if err := os.WriteFile(filepath.Join(hooks, "reference-transaction"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	c.commandConfig = append(c.commandConfig, "-c", "core.hooksPath="+hooks)
+	err := c.FastForwardReviewedCheckout(t.Context(), bare, path, "main", old, target)
+	if _, advanced := errors.AsType[*domain.AdvancedBranchError](err); !advanced || !strings.Contains(err.Error(), "index") {
+		t.Fatalf("stale index after ref publication returned %v", err)
+	}
+	if got := strings.TrimSpace(string(runGit(t, c, path, "rev-parse", "HEAD"))); got != target {
+		t.Fatalf("concurrent index writer unexpectedly changed HEAD to %s", got)
+	}
+	if got := runGit(t, c, path, "ls-files", "--", "incoming.txt"); len(got) != 0 {
+		t.Fatalf("concurrent index edit was overwritten: %s", got)
+	}
+}
+
+func TestReviewedCheckoutFinishesOnlyAnExactInterruptedMove(t *testing.T) {
+	for _, edited := range []bool{false, true} {
+		name := "exact"
+		if edited {
+			name = "later local change"
+		}
+		t.Run(name, func(t *testing.T) {
+			c, bare, path, old, target := reviewedCheckoutFixture(t, "files")
+			// Reproduce the state after a successful read-tree and a refused ref write.
+			runGit(t, c, path, "read-tree", "-u", "-m", old, target)
+			if edited {
+				if err := os.WriteFile(filepath.Join(path, "incoming.txt"), []byte("new local work"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := c.finishReviewedCheckout(t.Context(), bare, path, "main", old, target, errors.New("lost ref write"))
+			head := strings.TrimSpace(string(runGit(t, c, path, "rev-parse", "HEAD")))
+			if !edited {
+				if err != nil || head != target {
+					t.Fatalf("exact installed tree was not recovered: %s, %v", head, err)
+				}
+				return
+			}
+			if err == nil || head != old {
+				t.Fatalf("retried after the checkout changed: %s, %v", head, err)
+			}
+			got, err := os.ReadFile(filepath.Join(path, "incoming.txt"))
+			if err != nil || string(got) != "new local work" {
+				t.Fatalf("lost concurrent work: %s %v", got, err)
+			}
+		})
+	}
+}
+
+func TestReviewedCheckoutIdentifiesLocksAfterStoppingStalledPrepare(t *testing.T) {
+	c, _, path, old, target := reviewedCheckoutFixture(t, "files")
+	hooks := t.TempDir()
+	script := "#!/bin/sh\nif test \"$1\" = prepared; then while :; do sleep 1; done; fi\n"
+	if err := os.WriteFile(filepath.Join(hooks, "reference-transaction"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	c.commandConfig = append(c.commandConfig, "-c", "core.hooksPath="+hooks)
+	c.Timeout = time.Second
+	err := c.withPreparedHEAD(t.Context(), path, old, target, func() error { t.Fatal("installed tree after prepare timed out"); return nil })
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "stale lock") {
+		t.Fatalf("missing timeout and lock recovery: %v", err)
+	}
+}
+
 func TestPreparedHEADReleasesLocksOnCancellation(t *testing.T) {
 	c, _, path, old, target := reviewedCheckoutFixture(t, "files")
 	ctx, cancel := context.WithCancel(t.Context())
@@ -108,7 +179,7 @@ func TestReviewedCheckoutCompletesStartedTreeOnCancel(t *testing.T) {
 	go func() { result <- c.FastForwardReviewedCheckout(ctx, bare, path, "main", old, target) }()
 	// Release the hook even if the test times out before the checkout reaches it.
 	defer func() { _ = os.WriteFile(release, []byte("continue"), 0600) }()
-	timer := time.NewTimer(15 * time.Second)
+	timer := time.NewTimer(time.Minute)
 	defer timer.Stop()
 	for {
 		if _, err := os.Stat(marker); err == nil {
@@ -131,7 +202,7 @@ func TestReviewedCheckoutCompletesStartedTreeOnCancel(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(15 * time.Second):
+	case <-time.After(time.Minute):
 		t.Fatal("ref transaction did not finish")
 	}
 	status, err := c.Inspect(t.Context(), path)

@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -90,12 +91,41 @@ func TestWorkspaceUpdateOffersExplicitFetchForSkippedUpstream(t *testing.T) {
 	prGit(t, path, "config", "branch.topic.merge", "refs/heads/"+remoteBranch)
 	prGit(t, bare, "config", "remote.origin.skipFetchAll", "true")
 	prGit(t, bare, "config", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main")
+	prGit(t, bare, "config", "fetch.prune", "true")
+	prGit(t, bare, "config", "fetch.pruneTags", "true")
+	prGit(t, path, "tag", "local-only")
+	headPathOut, err := exec.Command("git", "-C", path, "rev-parse", "--path-format=absolute", "--git-path", "FETCH_HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	headPath := strings.TrimSpace(string(headPathOut))
+	if err := os.WriteFile(headPath, []byte("unrelated manual fetch\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	plan, err := s.PreviewWorkspaceUpdate(ctx, "topic", nil)
 	if err != nil || len(plan.Rows) != 1 || plan.Rows[0].Eligible || !strings.Contains(plan.Rows[0].Detail, "git fetch") {
 		t.Fatalf("missing scoped fetch command %+v %v", plan, err)
 	}
-	lines := strings.Split(plan.Rows[0].Detail, "\n")
+	runSuggestedWorkspaceFetch(t, path, plan.Rows[0].Detail)
+	if b, err := os.ReadFile(headPath); err != nil || string(b) != "unrelated manual fetch\n" {
+		t.Errorf("object-only fetch overwrote FETCH_HEAD: %q, %v", b, err)
+	}
+	if present, err := s.Git.RefExists(ctx, bare, "refs/tags/local-only"); err != nil || !present {
+		t.Errorf("object-only fetch pruned local tag: %v %v", present, err)
+	}
+	plan, err = s.PreviewWorkspaceUpdate(ctx, "topic", nil)
+	if err != nil || !plan.Rows[0].Eligible {
+		t.Fatalf("explicit fetch did not prepare the skipped remote branch: %+v %v", plan, err)
+	}
+}
+
+func runSuggestedWorkspaceFetch(t *testing.T, path, detail string) {
+	t.Helper()
+	lines := strings.Split(detail, "\n")
 	command := lines[len(lines)-1]
+	if !strings.HasPrefix(command, "git fetch ") {
+		t.Fatalf("missing fetch command in %s", detail)
+	}
 	cmd := exec.Command("sh", "-c", command)
 	if runtime.GOOS == "windows" {
 		cmd = exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", command)
@@ -103,10 +133,6 @@ func TestWorkspaceUpdateOffersExplicitFetchForSkippedUpstream(t *testing.T) {
 	cmd.Dir = path
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("suggested fetch failed: %s %v", out, err)
-	}
-	plan, err = s.PreviewWorkspaceUpdate(ctx, "topic", nil)
-	if err != nil || !plan.Rows[0].Eligible {
-		t.Fatalf("explicit fetch did not prepare the skipped remote branch: %+v %v", plan, err)
 	}
 }
 

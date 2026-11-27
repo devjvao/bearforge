@@ -80,6 +80,13 @@ type Status struct {
 
 func (s Status) Dirty() bool { return s.Staged+s.Modified+s.Untracked+s.Conflicts > 0 }
 
+// AdvancedBranchError reports a checkout problem after Git confirmed the local
+// branch reached its reviewed target. Callers can report that move separately.
+type AdvancedBranchError struct{ Cause error }
+
+func (e *AdvancedBranchError) Error() string { return e.Cause.Error() }
+func (e *AdvancedBranchError) Unwrap() error { return e.Cause }
+
 type Error struct {
 	Code    string
 	Message string
@@ -88,6 +95,15 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Message }
 func (e *Error) Unwrap() error { return e.Cause }
+
+func IsSafetyRefusal(code string) bool {
+	switch code {
+	case "conflict", "unsafe_path", "unsafe_removal", "confirmation", "unhealthy":
+		return true
+	default:
+		return false
+	}
+}
 func E(code, format string, args ...any) error {
 	return &Error{Code: code, Message: fmt.Sprintf(format, args...)}
 }

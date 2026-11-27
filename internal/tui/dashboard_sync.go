@@ -68,7 +68,11 @@ func (m dashboardModel) startSync() (tea.Model, tea.Cmd) {
 	}
 	run.progress = newDashboardProgress(names)
 	m.addRun, m.showAdd = nil, false
-	m.workspaceRun, m.showWorkspace = nil, false
+	if m.workspaceRun == nil || m.workspaceRun.action != workspaceUpdateAll || m.workspaceRun.workspace != m.workspace ||
+		len(m.workspaceRun.unfinishedUpdates()) == 0 {
+		m.workspaceRun = nil
+	}
+	m.showWorkspace = false
 	m.syncRun, m.showSync, m.detailOffset = run, true, 0
 	id, reader := m.syncID, m.reader
 	work := func() tea.Msg {
@@ -127,7 +131,11 @@ func (m dashboardModel) syncCounts() (synced, failed, notRun int) {
 
 func (m dashboardModel) syncContent() []string {
 	run := m.syncRun
-	lines := []string{m.styles.title.Render(m.syncSummary()), m.styles.muted.Render("Workspace repositories (filters do not limit sync)."), "Fetch/prune only; checkouts are unchanged. v repository details"}
+	hint := "Fetch/prune only; checkouts are unchanged. v repository details"
+	if !run.running && m.workspaceRun != nil && m.workspaceRun.action == workspaceUpdateAll {
+		hint = "Fetch/prune only. v opens the unfinished workspace update."
+	}
+	lines := []string{m.styles.title.Render(m.syncSummary()), m.styles.muted.Render("Workspace repositories (filters do not limit sync)."), hint}
 	if run.running {
 		synced, failed, _ := m.syncCounts()
 		if bar := m.batchProgress(synced+failed, len(run.names), failed); bar != "" {

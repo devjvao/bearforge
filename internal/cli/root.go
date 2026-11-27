@@ -78,11 +78,14 @@ func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 }
 
 func domainExitCode(code string) int {
+	if domain.IsSafetyRefusal(code) {
+		return 3
+	}
 	switch code {
 	case "invalid":
 		return 2
-	case "conflict", "unsafe_path", "unsafe_removal", "confirmation", "unhealthy":
-		return 3
+	case "cancelled":
+		return 130
 	case "unavailable":
 		return 4
 	default:

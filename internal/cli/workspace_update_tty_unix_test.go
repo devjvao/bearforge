@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"strings"
@@ -13,6 +14,34 @@ import (
 
 	"github.com/devjvao/bearforge/internal/app"
 )
+
+func TestWorkspaceUpdateTerminalPreservesLongFetchCommand(t *testing.T) {
+	master, terminal, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer master.Close()
+	defer terminal.Close()
+	if err := pty.Setsize(terminal, &pty.Winsize{Rows: 12, Cols: 36}); err != nil {
+		t.Fatal(err)
+	}
+	command := "git fetch --no-tags --refmap= -- origin 'refs/heads/" + strings.Repeat("long-ref/", 12) + "feature'"
+	plan := app.WorkspaceUpdatePlan{Rows: []app.WorkspaceUpdateRow{{Repository: "api", Status: "sync_required", Detail: command}}}
+	if err := writeWorkspaceUpdate(terminal, plan, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := terminal.Write([]byte{0}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := bufio.NewReader(master).ReadString(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "api  [sync_required]\n  " + command + "\n\x00"
+	if strings.ReplaceAll(got, "\r\n", "\n") != want {
+		t.Fatalf("fetch command was hard-wrapped: %q", got)
+	}
+}
 
 func TestWorkspaceUpdateConfirmationReviewsAllSelectionsOnce(t *testing.T) {
 	master, terminal, err := pty.Open()

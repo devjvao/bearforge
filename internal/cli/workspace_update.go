@@ -44,12 +44,14 @@ func addWorkspaceUpdateCommand(workspace *cobra.Command, o *options) {
 					}
 					result, err = s.ApplyWorkspaceUpdate(ctx, plan, selected)
 					result.Data = plan
+					if err != nil && len(result.Items) == 0 {
+						return result, err // Lock or setup refusal before the batch started.
+					}
 				} else {
 					result.Outcome = "unchanged"
 				}
-				if err == nil && blocked != nil {
+				if err = app.WorkspaceUpdateError(blocked, err); err != nil {
 					result.Outcome = "partial"
-					err = blocked
 				}
 				return result, err
 			})
@@ -59,9 +61,9 @@ func addWorkspaceUpdateCommand(workspace *cobra.Command, o *options) {
 	workspace.AddCommand(command)
 }
 
-func workspaceUpdateScope(plan app.WorkspaceUpdatePlan) ([]string, *domain.Error) {
+func workspaceUpdateScope(plan app.WorkspaceUpdatePlan) ([]string, error) {
 	var selected []string
-	var blocked *domain.Error
+	var blocked []error
 	for _, row := range plan.Rows {
 		if row.Eligible {
 			selected = append(selected, row.Repository)
@@ -74,13 +76,9 @@ func workspaceUpdateScope(plan app.WorkspaceUpdatePlan) ([]string, *domain.Error
 		if row.Problem != nil {
 			code, message = row.Problem.Code, row.Problem.Message
 		}
-		// Report an operation failure ahead of a safety refusal. The preview
-		// retains every individual reason in repository order.
-		if blocked == nil || (domainExitCode(blocked.Code) == 3 && domainExitCode(code) != 3) {
-			blocked = &domain.Error{Code: code, Message: row.Repository + ": " + message}
-		}
+		blocked = append(blocked, domain.E(code, "%s: %s", row.Repository, message))
 	}
-	return selected, blocked
+	return selected, app.WorkspaceUpdateError(blocked...)
 }
 
 // Use the same review for dry runs and confirmation. After apply, replace each
@@ -97,17 +95,17 @@ func writeWorkspaceUpdate(writer io.Writer, plan app.WorkspaceUpdatePlan, result
 		branch := row.Branch
 		if item, ok := items[row.Repository]; ok {
 			status, detail = item.Outcome, ""
+			var observations []string
+			for _, move := range item.AppliedMoves {
+				observations = append(observations, fmt.Sprintf("%s: %s → %s", move.Branch, move.From, move.To))
+			}
 			if item.Problem != nil {
-				detail = item.Problem.Message
+				observations = append(observations, item.Problem.Message)
 				advice = ""
 			} else if item.Outcome == "updated" {
 				branch = ""
-				var moved []string
-				for _, move := range row.Moves {
-					moved = append(moved, fmt.Sprintf("%s: %s → %s", move.Branch, move.From, move.To))
-				}
-				detail = strings.Join(moved, "\n")
 			}
+			detail = strings.Join(observations, "\n")
 		} else if row.Eligible {
 			if reviewing {
 				status = "selected"
@@ -131,10 +129,8 @@ func writeWorkspaceUpdate(writer io.Writer, plan app.WorkspaceUpdatePlan, result
 	if len(lines) == 0 {
 		lines = append(lines, "No workspace repositories to update.")
 	}
-	document := strings.Join(lines, "\n")
-	if isTerminal(writer) {
-		document = terminalDocument(document, outputWidth(writer))
-	}
-	_, err := fmt.Fprintln(writer, document)
+	// The terminal soft-wraps these lines. Inserting hard line breaks would
+	// split a fetch instruction, commit ID, or exact ref when copied.
+	_, err := fmt.Fprintln(writer, strings.Join(lines, "\n"))
 	return err
 }

@@ -15,6 +15,10 @@ func TestWorkspaceUpdateGuidesShallowCheckoutBeforeSync(t *testing.T) {
 	s, remote, bare, _, _ := updateFixture(t)
 	updateCommit(t, remote, "intermediate", "intermediate")
 	prGit(t, bare, "fetch", "--depth=1", "origin", "+refs/heads/main:refs/remotes/origin/main")
+	cached, err := s.PreviewWorkspaceUpdate(t.Context(), "topic", nil)
+	if err != nil || len(cached.Rows) != 1 || cached.Rows[0].Status != "sync_required" || !strings.Contains(cached.Rows[0].Detail, "refs/heads/main") {
+		t.Fatalf("cached but shallow tips should identify the missing ref: %+v %v", cached, err)
+	}
 	updateCommit(t, remote, "latest", "latest")
 	plan, err := s.PreviewWorkspaceUpdate(t.Context(), "topic", nil)
 	if err != nil || len(plan.Rows) != 1 || plan.Rows[0].Eligible || !strings.Contains(plan.Rows[0].Detail, "git fetch --unshallow") {

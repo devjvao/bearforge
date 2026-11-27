@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -117,9 +118,14 @@ func (c *Client) command(ctx context.Context, dir string, env []string, args ...
 }
 
 func (c *Client) runWithEnv(ctx context.Context, dir string, env []string, args ...string) ([]byte, error) {
+	return c.runWithInput(ctx, dir, env, nil, args...)
+}
+
+func (c *Client) runWithInput(ctx context.Context, dir string, env []string, input io.Reader, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
 	defer cancel()
 	cmd := c.command(ctx, dir, env, args...)
+	cmd.Stdin = input
 	out := &limitedBuffer{limit: 16 << 20}
 	stderr := &limitedBuffer{limit: 16 << 10}
 	cmd.Stdout = out

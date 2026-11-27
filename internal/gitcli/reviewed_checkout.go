@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/devjvao/bearforge/internal/domain"
@@ -28,7 +29,8 @@ func (c *Client) FastForwardReviewedCheckout(ctx context.Context, bare, path, br
 	if !ff {
 		return domain.E("conflict", "branch %s cannot fast-forward to the reviewed tip", branch)
 	}
-	return c.withPreparedHEAD(ctx, path, old, target, func() error {
+	installed := false
+	err = c.withPreparedHEAD(ctx, path, old, target, func() error {
 		status, err := c.CheckUpdateWorktree(ctx, bare, path, branch)
 		if err != nil {
 			return err
@@ -36,7 +38,7 @@ func (c *Client) FastForwardReviewedCheckout(ctx context.Context, bare, path, br
 		if status.Head != old {
 			return domain.E("conflict", "branch %s moved after review", branch)
 		}
-		if _, err := c.checkIgnoredUpdatePaths(ctx, path, old, target, false); err != nil {
+		if err := c.CheckReviewedCheckout(ctx, path, old, target); err != nil {
 			return err
 		}
 		if err := ctx.Err(); err != nil {
@@ -44,12 +46,17 @@ func (c *Client) FastForwardReviewedCheckout(ctx context.Context, bare, path, br
 		}
 		// Once index/worktree installation starts, let it and the ref commit
 		// finish together. Cancellation still stops the next repository.
-		_, err = c.Run(context.WithoutCancel(ctx), path, "--no-replace-objects", "read-tree", "--no-recurse-submodules", "-u", "-m", old, target)
+		_, err = c.localOnly().Run(context.WithoutCancel(ctx), path, "--no-replace-objects", "read-tree", "--no-recurse-submodules", "-u", "-m", old, target)
 		if err != nil {
 			return fmt.Errorf("could not install the reviewed tree; inspect git status at %s before retrying: %w", path, err)
 		}
+		installed = true
 		return nil
 	})
+	if !installed {
+		return err
+	}
+	return c.finishReviewedCheckout(ctx, bare, path, branch, old, target, err)
 }
 
 // update-ref --stdin supports explicit transactions on Git 2.40+. Its prepare
@@ -74,13 +81,21 @@ func (c *Client) withPreparedHEAD(ctx context.Context, path, old, target string,
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	var forced atomic.Bool
+	forceStop := func() {
+		forced.Store(true)
+		kill()
+	}
 	defer func() {
 		_ = input.Close()
-		timeout := time.AfterFunc(c.Timeout, kill)
+		timeout := time.AfterFunc(c.Timeout, forceStop)
 		waitErr := cmd.Wait()
 		timeout.Stop()
 		if waitErr != nil {
 			result = errors.Join(result, fmt.Errorf("git update-ref: %w: %s", waitErr, cleanError(string(stderr.data))))
+		}
+		if forced.Load() {
+			result = errors.Join(result, fmt.Errorf("Git had to be stopped while holding or acquiring ref locks at %s. Check for a stalled reference-transaction hook and other Git processes. After they have exited, inspect the worktree and shared repository for the stale lock named by Git before retrying", path))
 		}
 	}()
 	reader := bufio.NewReader(output)
@@ -103,7 +118,7 @@ func (c *Client) withPreparedHEAD(ctx context.Context, path, old, target string,
 		select {
 		case <-prepared:
 		case <-time.After(cmd.WaitDelay):
-			kill()
+			forceStop()
 		}
 	})
 	_, err = fmt.Fprintf(input, "start\nupdate HEAD %s %s\nprepare\n", target, old)
@@ -125,7 +140,7 @@ func (c *Client) withPreparedHEAD(ctx context.Context, path, old, target string,
 	}
 	// A commit failure can leave the index and worktree at the reviewed tree.
 	// Do not reset them; that could discard independent filesystem edits.
-	commitLimit := time.AfterFunc(c.Timeout, kill)
+	commitLimit := time.AfterFunc(c.Timeout, forceStop)
 	defer commitLimit.Stop()
 	if _, err = io.WriteString(input, "commit\n"); err == nil {
 		err = answer("commit")

@@ -134,6 +134,7 @@ type Problem struct {
 	Message string `json:"message"`
 }
 type Item struct {
+	AppliedMoves   []WorkspaceBranchMove          `json:"applied_moves,omitempty"`
 	RemovalMode    string                         `json:"removal_mode,omitempty"`
 	RetainedPath   string                         `json:"retained_path,omitempty"`
 	RefFormat      string                         `json:"ref_format,omitempty"`

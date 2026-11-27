@@ -235,7 +235,7 @@ bearforge workspace update audit-feature --repo api --repo web
 
 The first command previews every workspace member. The second reviews only `api` and `web` and asks once before applying eligible fast-forwards. Omit `--repo` to consider all members. For automation, use `--dry-run --json` to inspect the plan and `--yes` to approve the eligible updates in a fresh invocation.
 
-The preview reads advertised remote tips. If a tip is missing from local history, fetch the affected repository with `bearforge sync REPO` and preview again. For a remote excluded from normal sync or a shallow checkout, the row provides a Git fetch command for the specific remote and branch.
+The preview reads advertised remote tips. If a tip is missing from local history, fetch the affected repository with `bearforge sync REPO` and preview again. For a remote excluded from normal sync or a shallow checkout, the row provides a fetch command scoped to the remote and branch. For ref names that a shell could misinterpret, it gives the remote and exact escaped ref name to use in your Git client.
 
 A dry run reports each repository’s status. An apply exits nonzero when a repository in scope still requires attention, including when other repositories updated successfully. Successful rows identify the local branches and commits that moved. To retry a subset, repeat `--repo` for those IDs. Use the dashboard’s `b` action when an individual feature branch needs rebasing onto its default.
 

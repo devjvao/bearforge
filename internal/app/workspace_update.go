@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/devjvao/bearforge/internal/domain"
@@ -102,7 +104,7 @@ func (s *Service) workspaceUpdateRow(ctx context.Context, p worktreeUpdate, err 
 	if p.baseLookupErr != nil {
 		row.BaseAdvice = fmt.Sprintf("Could not compare with %s: %v", p.Base.label(), p.baseLookupErr)
 	}
-	actions, err := s.worktreeUpdateActions(ctx, p, true)
+	actions, err := s.worktreeUpdateActions(ctx, p, workspacePreview)
 	if err != nil {
 		row.Detail, row.Problem = err.Error(), ProblemFor(err)
 		return row
@@ -115,6 +117,22 @@ func (s *Service) workspaceUpdateRow(ctx context.Context, p worktreeUpdate, err 
 	}
 	feature := p.Head
 	if actions.featureFF != "" {
+		g, ok := s.Git.(reviewedCheckoutUpdater)
+		if !ok {
+			err = domain.E("unavailable", "the Git adapter cannot verify a reviewed checkout")
+		} else {
+			err = g.CheckReviewedCheckout(ctx, p.Path, p.Head, actions.featureFF)
+		}
+		if err != nil {
+			row.Detail = err.Error()
+			if ProblemFor(err).Code == "incomplete_history" {
+				row.Status = "sync_required"
+				row.Detail += ". " + s.workspaceHistoryAdvice(ctx, p.Bare, missingUpdateHistory{target: p.Upstream, relation: "checkout_objects"})
+			} else {
+				row.Problem = ProblemFor(err)
+			}
+			return row
+		}
 		row.Moves = append(row.Moves, WorkspaceBranchMove{Branch: p.Branch, From: p.Head, To: actions.featureFF})
 		feature = actions.featureFF
 	}
@@ -129,7 +147,7 @@ func (s *Service) workspaceUpdateRow(ctx context.Context, p worktreeUpdate, err 
 		if actions.featureFF != "" {
 			subject = "After the fast-forward, " + p.Branch
 		}
-		relation, err := s.branchRelation(ctx, p.Bare, feature, p.Base.Tip, true)
+		relation, err := s.branchRelation(ctx, p.Bare, feature, p.Base.Tip, workspacePreview)
 		switch {
 		case err != nil:
 			row.BaseAdvice = fmt.Sprintf("Could not compare with %s: %v", p.Base.label(), err)
@@ -149,6 +167,8 @@ func (s *Service) workspaceUpdateRow(ctx context.Context, p worktreeUpdate, err 
 	return row
 }
 
+var portableFetchRef = regexp.MustCompile(`^[A-Za-z0-9_./'-]+$`)
+
 func (s *Service) workspaceHistoryAdvice(ctx context.Context, bare string, missing ...missingUpdateHistory) string {
 	shallow := false
 	instruction := "Sync the workspace or fetch the missing history explicitly from the checkout, then preview again."
@@ -162,7 +182,12 @@ func (s *Service) workspaceHistoryAdvice(ctx context.Context, bare string, missi
 	var commands []string
 	for _, need := range missing {
 		flags := ""
-		if shallow {
+		if need.relation == "checkout_objects" {
+			flags = " --refetch --no-filter"
+			if len(commands) == 0 {
+				instruction = "Some files required by the checkout are missing locally. Fetch the full objects for the ref and preview again."
+			}
+		} else if shallow {
 			flags = " --unshallow"
 			shallow = false
 		} else if need.relation == "incomplete" {
@@ -171,9 +196,21 @@ func (s *Service) workspaceHistoryAdvice(ctx context.Context, bare string, missi
 				instruction = "A parent commit is missing locally. Fetch its history from the checkout, then preview again."
 			}
 		}
-		// The empty refmap scopes the fetch to the named objects even with
-		// custom refspecs. No destination ref has to be updated.
-		commands = append(commands, "git fetch"+flags+" --no-tags --refmap= -- "+need.target.Remote+" "+domain.QuoteShellArgument("refs/heads/"+need.target.Name))
+		ref := "refs/heads/" + need.target.Name
+		if !portableFetchRef.MatchString(ref) || domain.ValidateRemoteName(need.target.Remote) != nil {
+			// Format and quoting characters can be lost in a terminal or during
+			// native argument conversion in Windows PowerShell. Use an exact
+			// escaped identifier rather than offering a lossy shell command.
+			mode := ""
+			if flags != "" {
+				mode = " with" + flags
+			}
+			commands = append(commands, fmt.Sprintf("Use your Git client to fetch this exact ref%s from remote %s (ASCII-escaped ref name): %s", mode, strconv.QuoteToASCII(need.target.Remote), strconv.QuoteToASCII(ref)))
+			continue
+		}
+		// Fetch objects for this ref without writing or pruning destination refs,
+		// replacing FETCH_HEAD, or starting recursive fetches and maintenance.
+		commands = append(commands, "git fetch"+flags+" --no-write-fetch-head --no-prune --no-prune-tags --no-recurse-submodules --no-auto-maintenance --no-tags --refmap= -- "+need.target.Remote+" "+domain.QuoteShellArgument(ref))
 	}
 	return instruction + "\n" + strings.Join(commands, "\n")
 }
@@ -235,12 +272,38 @@ func (s *Service) ApplyWorkspaceUpdate(ctx context.Context, plan WorkspaceUpdate
 		result.Items = append(result.Items, item)
 		s.event(id, item.Outcome)
 	}
-	if err := errors.Join(failures...); err != nil {
+	if err := WorkspaceUpdateError(failures...); err != nil {
 		result.Outcome = "partial"
 		result.Problem = ProblemFor(err)
 		return result, err
 	}
 	return result, nil
+}
+
+// WorkspaceUpdateError retains the per-repository causes while giving cancellation
+// precedence over operation failures, and operation failures over safety refusals.
+func WorkspaceUpdateError(failures ...error) error {
+	var causes []error
+	var primary *Problem
+	for _, err := range failures {
+		if err == nil {
+			continue
+		}
+		causes = append(causes, err)
+		problem := ProblemFor(err)
+		if primary == nil || problem.Code == "cancelled" || (domain.IsSafetyRefusal(primary.Code) && !domain.IsSafetyRefusal(problem.Code)) {
+			primary = problem
+		}
+	}
+	switch len(causes) {
+	case 0:
+		return nil
+	case 1:
+		return causes[0]
+	default:
+		joined := errors.Join(causes...)
+		return &domain.Error{Code: primary.Code, Message: joined.Error(), Cause: joined}
+	}
 }
 
 func (s *Service) applyMappedWorkspaceUpdate(ctx context.Context, req UpdateWorktreeRequest, g worktreeUpdater, snapshot worktreeUpdateSnapshot, targets fastForwardTargets) (Result, error) {

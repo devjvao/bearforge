@@ -31,6 +31,7 @@ type worktreeUpdater interface {
 }
 
 type reviewedCheckoutUpdater interface {
+	CheckReviewedCheckout(ctx context.Context, path, old, target string) error
 	FastForwardReviewedCheckout(ctx context.Context, bare, path, branch, old, target string) error
 }
 
@@ -103,7 +104,11 @@ func (s *Service) executeWorktreeUpdate(ctx context.Context, req UpdateWorktreeR
 			}
 		}
 	}
-	actions, err := s.worktreeUpdateActions(ctx, p, req.DryRun)
+	mode := confirmedUpdate
+	if req.DryRun {
+		mode = individualPreview
+	}
+	actions, err := s.worktreeUpdateActions(ctx, p, mode)
 	r.Data = actions.WorktreeUpdatePlan
 	if err != nil {
 		return failedWorktreeUpdate(r, err)
@@ -133,6 +138,9 @@ func (s *Service) executeWorktreeUpdate(ctx context.Context, req UpdateWorktreeR
 		} else {
 			err = g.UpdateCheckedOutBranch(ctx, p.Bare, p.Path, p.Branch, current, actions.featureFF, false)
 		}
+		if _, advanced := errors.AsType[*domain.AdvancedBranchError](err); err == nil || advanced {
+			r.Items[0].AppliedMoves = append(r.Items[0].AppliedMoves, WorkspaceBranchMove{Branch: p.Branch, From: current, To: actions.featureFF})
+		}
 		if err != nil {
 			return failedWorktreeUpdate(r, err)
 		}
@@ -148,8 +156,9 @@ func (s *Service) executeWorktreeUpdate(ctx context.Context, req UpdateWorktreeR
 	}
 	if actions.baseFF != "" {
 		if err := s.Git.AdvanceBranch(ctx, p.Bare, p.Base.Name, p.LocalBase, actions.baseFF); err != nil {
-			return failedWorktreeUpdate(r, fmt.Errorf("checked-out branch update completed; could not advance local %s: %w", p.Base.Name, err))
+			return failedWorktreeUpdate(r, fmt.Errorf("could not advance local %s: %w", p.Base.Name, err))
 		}
+		r.Items[0].AppliedMoves = append(r.Items[0].AppliedMoves, WorkspaceBranchMove{Branch: p.Base.Name, From: p.LocalBase, To: actions.baseFF})
 	}
 	r.Items[0].Outcome = "updated"
 	return r, nil
@@ -322,9 +331,17 @@ func (s *Service) updateRemoteTarget(ctx context.Context, bare string, repo doma
 	return t, err
 }
 
+type historyComparison int
+
+const (
+	confirmedUpdate historyComparison = iota
+	individualPreview
+	workspacePreview
+)
+
 // branchRelation compares immutable tips. An advertised tip can be unavailable
 // locally until the user approves the scoped fetch.
-func (s *Service) branchRelation(ctx context.Context, bare, local, remote string, preview bool) (string, error) {
+func (s *Service) branchRelation(ctx context.Context, bare, local, remote string, mode historyComparison) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -337,7 +354,7 @@ func (s *Service) branchRelation(ctx context.Context, bare, local, remote string
 			return "", err
 		}
 		if !found {
-			if !preview {
+			if mode == confirmedUpdate {
 				return "", domain.E("conflict", "commit %s is unavailable after fetch; review the branch again", oid)
 			}
 			return "pending", nil
@@ -349,7 +366,7 @@ func (s *Service) branchRelation(ctx context.Context, bare, local, remote string
 	} {
 		isAncestor, err := s.Git.IsAncestor(ctx, bare, direction.ancestor, direction.descendant)
 		if err != nil {
-			if problem, ok := errors.AsType[*domain.Error](err); preview && ok && problem.Code == "incomplete_history" {
+			if problem, ok := errors.AsType[*domain.Error](err); mode != confirmedUpdate && ok && problem.Code == "incomplete_history" {
 				return "incomplete", nil
 			}
 			return "", err
@@ -360,13 +377,16 @@ func (s *Service) branchRelation(ctx context.Context, bare, local, remote string
 	}
 	// A shallow boundary can hide a common parent even when both tips exist.
 	if err := s.Git.RequireFullHistory(ctx, bare); err != nil {
+		if mode == workspacePreview && ProblemFor(err).Code == "incomplete_history" {
+			return "incomplete", nil
+		}
 		return "", err
 	}
 	return "diverged", nil
 }
 
-func (s *Service) updateTrackingAction(ctx context.Context, bare, name, local string, t updateTarget, preview bool) (detail, target, missingHistory string, err error) {
-	relation, err := s.branchRelation(ctx, bare, local, t.Tip, preview)
+func (s *Service) updateTrackingAction(ctx context.Context, bare, name, local string, t updateTarget, mode historyComparison) (detail, target, missingHistory string, err error) {
+	relation, err := s.branchRelation(ctx, bare, local, t.Tip, mode)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -401,7 +421,7 @@ type fastForwardTargets struct {
 	featureFF, baseFF string
 }
 
-func (s *Service) worktreeUpdateActions(ctx context.Context, p worktreeUpdate, preview bool) (updateActions, error) {
+func (s *Service) worktreeUpdateActions(ctx context.Context, p worktreeUpdate, mode historyComparison) (updateActions, error) {
 	var plan updateActions
 	var err error
 	effective := p.Head
@@ -412,7 +432,7 @@ func (s *Service) worktreeUpdateActions(ctx context.Context, p worktreeUpdate, p
 		plan.FeatureAction = "The feature tracks the rebase target directly."
 	default:
 		var missingHistory string
-		plan.FeatureAction, plan.featureFF, missingHistory, err = s.updateTrackingAction(ctx, p.Bare, p.Branch, p.Head, p.Upstream, preview)
+		plan.FeatureAction, plan.featureFF, missingHistory, err = s.updateTrackingAction(ctx, p.Bare, p.Branch, p.Head, p.Upstream, mode)
 		if missingHistory != "" {
 			plan.missingHistory = append(plan.missingHistory, missingUpdateHistory{target: p.Upstream, relation: missingHistory})
 		}
@@ -426,7 +446,7 @@ func (s *Service) worktreeUpdateActions(ctx context.Context, p worktreeUpdate, p
 	plan.DefaultAction = p.SkipDefault
 	if p.SkipDefault == "" {
 		var missingHistory string
-		plan.DefaultAction, plan.baseFF, missingHistory, err = s.updateTrackingAction(ctx, p.Bare, p.Base.Name, p.LocalBase, p.Base, preview)
+		plan.DefaultAction, plan.baseFF, missingHistory, err = s.updateTrackingAction(ctx, p.Bare, p.Base.Name, p.LocalBase, p.Base, mode)
 		if missingHistory != "" && (len(plan.missingHistory) == 0 || p.Upstream != p.Base) {
 			plan.missingHistory = append(plan.missingHistory, missingUpdateHistory{target: p.Base, relation: missingHistory})
 		}
@@ -438,7 +458,7 @@ func (s *Service) worktreeUpdateActions(ctx context.Context, p worktreeUpdate, p
 		plan.RebaseAction = "No rebase."
 		return plan, nil
 	}
-	relation, err := s.branchRelation(ctx, p.Bare, effective, p.Base.Tip, preview)
+	relation, err := s.branchRelation(ctx, p.Bare, effective, p.Base.Tip, mode)
 	if err != nil {
 		return plan, err
 	}

@@ -158,7 +158,14 @@ func (m dashboardModel) footerLines() []string {
 	}
 	if _, ok := m.reader.source.(DashboardWorkspaceUpdater); ok && m.workspace != "" {
 		footer = strings.Replace(footer, "q quit", "q quit | U workspace", 1)
-		if m.width < 70 {
+		if m.workspaceRun != nil && m.workspaceRun.phase == workspaceResults {
+			footer = strings.Replace(footer, " | v view", "", 1)
+			footer = strings.Replace(footer, "q quit", "q quit | v view", 1)
+		}
+		if len(footer) > m.width {
+			if m.width < 60 {
+				footer = strings.Replace(footer, "o operations", "o ops", 1)
+			}
 			return []string{actions, keyboardHelp(actionBindings(strings.Split(footer, " | ")...), m.width, " ", m.styles)}
 		}
 	}

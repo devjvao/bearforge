@@ -8,8 +8,9 @@ import (
 // PowerShell treats the four typographic single quotes as string delimiters.
 var powerShellSingleQuotes = strings.NewReplacer("'", "''", "‘", "‘‘", "’", "’’", "‚", "‚‚", "‛", "‛‛")
 
-// QuoteShellArgument keeps a displayed argument literal when copied into
-// PowerShell on Windows or a POSIX shell elsewhere.
+// QuoteShellArgument quotes text for PowerShell on Windows and a POSIX shell
+// elsewhere. Callers generating native commands must also consider shell-to-argv
+// conversion, especially for embedded double quotes on older PowerShell versions.
 func QuoteShellArgument(value string) string {
 	if runtime.GOOS == "windows" {
 		return "'" + powerShellSingleQuotes.Replace(value) + "'"

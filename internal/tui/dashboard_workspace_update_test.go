@@ -70,8 +70,8 @@ func TestWorkspaceUpdateSelectionAndPartialRetry(t *testing.T) {
 				return app.Result{}, errors.New("wrong workspace update plan")
 			}
 			return app.Result{Outcome: "partial", Items: []app.Item{
-				{Repository: "api", Outcome: "updated"},
-				{Repository: "web", Outcome: "skipped", Problem: &app.Problem{Message: "Branch changed since preview"}},
+				{Repository: "api", Outcome: "updated", AppliedMoves: []app.WorkspaceBranchMove{{Branch: "main", From: "old-api", To: "abc"}}},
+				{Repository: "web", Outcome: "failed", Problem: &app.Problem{Message: "Branch changed since preview"}, AppliedMoves: []app.WorkspaceBranchMove{{Branch: "topic", From: "old-web", To: "def"}}},
 			}}, errors.New("partial update")
 		},
 	}
@@ -120,8 +120,8 @@ func TestWorkspaceUpdateSelectionAndPartialRetry(t *testing.T) {
 	if result := strings.Join(m.workspaceContent(), "\n"); !strings.Contains(result, "Branch changed since preview") || !strings.Contains(result, "updated") {
 		t.Fatalf("missing per-repository outcomes: %s", result)
 	}
-	if result := strings.Join(m.workspaceContent(), "\n"); !strings.Contains(result, "Advance api to abc") {
-		t.Fatalf("result omitted which branches moved in the successful repository: %s", result)
+	if result := strings.Join(m.workspaceContent(), "\n"); !strings.Contains(result, "Fast-forwarded main from old-api to abc") || !strings.Contains(result, "Fast-forwarded topic from old-web to def") {
+		t.Fatalf("result omitted actual branch moves: %s", result)
 	}
 	m, cmd = dashboardKey(m, 'r', "r")
 	loaded, _ = m.Update(cmd())
@@ -264,5 +264,125 @@ func TestCancelWorkspaceRetryPreservesLastResult(t *testing.T) {
 		if !strings.Contains(m.View().Content, "original batch failure") {
 			t.Fatal("v could not reopen the last batch report")
 		}
+	}
+}
+
+func TestWorkspaceUpdateRefreshPreservesCheckboxIntent(t *testing.T) {
+	m := loadedDashboard(t)
+	ready := true
+	m.reader.source = workspaceUpdateSource{DashboardSource: m.reader.source, preview: func(ws string, _ []string) (app.WorkspaceUpdatePlan, error) {
+		return app.WorkspaceUpdatePlan{Workspace: ws, Rows: []app.WorkspaceUpdateRow{
+			{Repository: "api", Eligible: ready}, {Repository: "web", Eligible: ready},
+		}}, nil
+	}}
+	m, preview := dashboardKey(m, 'U', "U")
+	next, _ := m.Update(preview())
+	m = next.(dashboardModel)
+	m, _ = dashboardKey(m, ' ', " ")
+	ready = false
+	m, preview = dashboardKey(m, 'r', "r")
+	next, _ = m.Update(preview())
+	m = next.(dashboardModel)
+	if strings.Contains(m.View().Content, "[x]") {
+		t.Fatal("a blocked row was selected")
+	}
+	ready = true
+	m, preview = dashboardKey(m, 'r', "r")
+	next, _ = m.Update(preview())
+	m = next.(dashboardModel)
+	if text := m.View().Content; !strings.Contains(text, "[ ] api") || !strings.Contains(text, "[x] web") {
+		t.Fatalf("eligibility changes discarded checkbox choices: %s", text)
+	}
+}
+
+type syncableUpdateSource struct {
+	workspaceUpdateSource
+	DashboardRecoverer
+}
+
+func (s syncableUpdateSource) Sync(_ context.Context, _ []string, _ func(app.Event)) (app.Result, error) {
+	return app.Result{Outcome: "success"}, nil
+}
+
+func TestWorkspaceUpdateRetryRetainsBlockedRowsAcrossSyncAndSubsetApply(t *testing.T) {
+	m := loadedDashboard(t)
+	m.width = 90
+	m.workspaceRun = &dashboardWorkspace{action: workspaceUpdateAll, phase: workspaceResults, workspace: "alpha", names: []string{"api", "web"}, states: map[string]string{"api": "failed", "web": "skipped"}}
+	var scopes [][]string
+	m.reader.source = syncableUpdateSource{workspaceUpdateSource: workspaceUpdateSource{
+		DashboardSource: m.reader.source,
+		preview: func(ws string, scope []string) (app.WorkspaceUpdatePlan, error) {
+			scopes = append(scopes, slices.Clone(scope))
+			plan := app.WorkspaceUpdatePlan{Workspace: ws}
+			for _, id := range scope {
+				if id == "api" {
+					plan.Rows = append(plan.Rows, app.WorkspaceUpdateRow{Repository: "api", Status: "ready", Eligible: true})
+				} else {
+					plan.Rows = append(plan.Rows, app.WorkspaceUpdateRow{Repository: "web", Status: "blocked", Detail: "Commit local edits"})
+				}
+			}
+			return plan, nil
+		},
+		apply: func(_ app.WorkspaceUpdatePlan, selected []string) (app.Result, error) {
+			if !slices.Equal(selected, []string{"api"}) {
+				return app.Result{}, errors.New("applied ineligible rows")
+			}
+			return app.Result{Outcome: "success", Items: []app.Item{{Repository: "api", Outcome: "updated"}}}, nil
+		},
+	}}
+	if footer := strings.Join(m.footerLines(), "\n"); !strings.Contains(footer, "v view") {
+		t.Errorf("cannot reopen a report at 90 columns: %s", footer)
+	}
+	m, sync := dashboardKey(m, 's', "s")
+	if sync == nil {
+		t.Fatal("unable to sync from dashboard")
+	}
+	msgs := runDashboardCommands(t, sync)
+	for m.syncRun.running {
+		next, refresh := m.Update(dashboardMessage(t, msgs))
+		m = next.(dashboardModel)
+		if !m.syncRun.running && refresh != nil {
+			next, _ = m.Update(refresh())
+			m = next.(dashboardModel)
+		}
+	}
+	m, _ = dashboardKey(m, 'v', "v")
+	if !m.showWorkspace || m.workspaceRun == nil {
+		t.Fatal("sync lost the unfinished workspace update report")
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	m.prRun = &dashboardPullRequestRun{cancel: cancel, running: true}
+	m, preview := dashboardKey(m, 'r', "r")
+	if ctx.Err() == nil {
+		t.Error("retry did not cancel a concurrent PR lookup")
+	}
+	next, _ := m.Update(preview())
+	m = next.(dashboardModel)
+	m, _ = dashboardKey(m, tea.KeyEnter, "")
+	m, apply := dashboardKey(m, 'y', "y")
+	msgs = runDashboardCommands(t, apply)
+	for m.workspaceRun.phase != workspaceResults {
+		next, _ = m.Update(dashboardMessage(t, msgs))
+		m = next.(dashboardModel)
+	}
+	if rows := m.workspaceRun.unfinishedUpdates(); !slices.Equal(rows, []string{"web"}) {
+		t.Fatalf("subset apply dropped blocked members: %v", rows)
+	}
+	if report := strings.Join(m.workspaceContent(), "\n"); !strings.Contains(report, "web") || !strings.Contains(report, "Commit local edits") {
+		t.Fatalf("report hid deferred row: %s", report)
+	}
+	m, preview = dashboardKey(m, 'r', "r")
+	next, _ = m.Update(preview())
+	m = next.(dashboardModel)
+	if len(scopes) != 2 || !slices.Equal(scopes[0], []string{"api", "web"}) || !slices.Equal(scopes[1], []string{"web"}) {
+		t.Fatalf("retry broadened or repeated completed rows: %v", scopes)
+	}
+}
+
+func TestWorkspaceUpdateDetailsPreserveMultilineCommands(t *testing.T) {
+	text := updateRowDetails(app.WorkspaceUpdateRow{Repository: "api", Detail: "Fetch manually:\ngit fetch origin main\ngit fetch other topic"})
+	if !strings.Contains(text, "\ngit fetch origin main\ngit fetch other topic") {
+		t.Fatalf("fetch commands ran together: %q", text)
 	}
 }
