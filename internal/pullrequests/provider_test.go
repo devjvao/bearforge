@@ -82,6 +82,10 @@ func TestLegacyBitbucketRoutes(t *testing.T) {
 		{"unrelated host", "git@another.company.test:TEST/service.git", savedPRConnections{work}, nil, ""},
 		{"unapproved remote with named connection", "git@another.company.test:TEST/service.git", savedPRConnections{work}, map[string]string{"connection": "work"}, ""},
 		{"invalid remote password", "https://alice:secret@code.company.test:8443/bb/scm/TEST/service.git", savedPRConnections{work}, nil, ""},
+		{"named alias with unknown source", "ssh://git@company_work:7999/TEST/service.git", savedPRConnections{work}, map[string]string{"kind": "bitbucket-server", "connection": "work", "host": "web.company.test", "repository": "UPSTREAM/service"}, ""},
+		{"named alias mismatched source", "git@company_work:OTHER/service.git", savedPRConnections{work}, map[string]string{"kind": "bitbucket-server", "connection": "work", "host": "web.company.test", "repository": "UPSTREAM/service", "source_repository": "TEST/service"}, ""},
+		{"named alias wrong installation", "git@company_work:TEST/service.git", savedPRConnections{work}, map[string]string{"kind": "bitbucket-server", "connection": "work", "host": "unapproved.test", "repository": "UPSTREAM/service", "source_repository": "TEST/service"}, ""},
+		{"env override mismatched source", "git@code.company.test:TEST/service.git", savedPRConnections{work}, map[string]string{"kind": "bitbucket-server", "connection": "removed", "token_env": "COMPANY_TEST_TOKEN", "source_repository": "OTHER/service"}, ""},
 		{"unapproved source", "git@code.company.test:TEST/service.git", savedPRConnections{work}, map[string]string{"source_repository": "OTHER/project"}, ""},
 		{"GitHub connection alone", "git@code.company.test:TEST/service.git", savedPRConnections{otherProvider}, nil, ""},
 		{"ambiguous SSH context", "git@code.company.test:TEST/service.git", savedPRConnections{work, other}, nil, ""},
@@ -115,8 +119,24 @@ func TestLegacyBitbucketKeepsExplicitEnvironmentCredential(t *testing.T) {
 	second := account
 	second.Name, second.GrantID = "two", "b"
 	p := NewProviderWithResolver(savedPRConnections{account, second})
-	q, err := p.Resolve(domain.Repository{Provider: map[string]string{"token_env": "WORK_TOKEN"}}, "https://git.company.test/scm/TEAM/api.git", "feature")
-	if err != nil || q.APIURL != account.APIURL || q.Provider != "bitbucket-server" || q.TokenEnv != "WORK_TOKEN" || q.Connection != "" || q.GrantID != "" {
-		t.Fatalf("wrong credential selection: %+v %v", q, err)
+	for _, binding := range []struct{ name, connection, grant string }{
+		{"unbound", "", ""}, {"replaced grant", "one", "old"}, {"removed login", "removed", "old"}, {"orphaned grant", "", "old"},
+	} {
+		t.Run(binding.name, func(t *testing.T) {
+			repo := domain.Repository{Provider: map[string]string{"kind": "bitbucket-server", "token_env": "WORK_TOKEN", "connection": binding.connection, "grant_id": binding.grant}}
+			q, err := p.Resolve(repo, "https://git.company.test/scm/TEAM/api.git", "feature")
+			if err != nil || q.APIURL != account.APIURL || q.Provider != "bitbucket-server" || q.TokenEnv != "WORK_TOKEN" || q.Connection != "" || q.GrantID != "" {
+				t.Fatalf("wrong credential selection: %+v %v", q, err)
+			}
+		})
 	}
+	// An old login name cannot disambiguate which API should receive the
+	// catalog's independently supplied environment token.
+	second.APIURL = "https://git.company.test/other/rest/api/latest"
+	p = NewProviderWithResolver(savedPRConnections{account, second})
+	repo := domain.Repository{Provider: map[string]string{"kind": "bitbucket-server", "token_env": "WORK_TOKEN", "connection": "one", "grant_id": "a"}}
+	if q, err := p.Resolve(repo, "git@git.company.test:TEAM/api.git", "feature"); err == nil {
+		t.Fatalf("sent environment credential to an ambiguous installation: %+v", q)
+	}
+
 }

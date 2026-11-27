@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -15,6 +17,8 @@ import (
 	"github.com/devjvao/bearforge/internal/app"
 	"github.com/devjvao/bearforge/internal/auth"
 	"github.com/devjvao/bearforge/internal/config"
+	"github.com/devjvao/bearforge/internal/domain"
+	"github.com/devjvao/bearforge/internal/pullrequests"
 )
 
 func configureLookupFixture(t *testing.T, root, api, kind string) {
@@ -247,5 +251,83 @@ func TestDashboardLegacyCompanyBitbucketConnection(t *testing.T) {
 	after, _, err := store.LoadCatalog()
 	if err != nil || len(after.Repositories["web"].Provider) != 0 {
 		t.Fatalf("lookup changed catalog metadata: %+v %v", after.Repositories["web"].Provider, err)
+	}
+}
+
+type companyPRTransport func(*http.Request) (*http.Response, error)
+
+func (transport companyPRTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return transport(r)
+}
+
+func TestCompanyBitbucketExplicitCredentialRoutes(t *testing.T) {
+	const host = "git.company.test"
+	const api = "https://" + host + "/rest/api/1.0"
+	var wantAuth string
+	var requests int
+	transport := companyPRTransport(func(r *http.Request) (*http.Response, error) {
+		requests++
+		if r.URL.Host != host || r.URL.Scheme != "https" || r.Header.Get("Authorization") != "Bearer "+wantAuth {
+			return nil, fmt.Errorf("unexpected API destination or authentication for %s", r.URL)
+		}
+		var body string
+		switch r.URL.Path {
+		case "/rest/api/1.0/repos":
+			body = "{}"
+		case "/rest/api/1.0/projects/UPSTREAM/repos/api/pull-requests":
+			body = `{"isLastPage":true,"values":[]}`
+		default:
+			return nil, fmt.Errorf("unexpected path %s", r.URL.Path)
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	})
+	original := http.DefaultTransport
+	http.DefaultTransport = transport
+	t.Cleanup(func() { http.DefaultTransport = original })
+	manager := auth.NewManager(auth.Options{RegistryPath: filepath.Join(t.TempDir(), "connections.json"), Secrets: authTestSecrets{}, HTTPClient: &http.Client{Transport: transport}})
+	wantAuth = "saved-token"
+	ctx := t.Context()
+	connection, err := manager.Login(ctx, auth.LoginRequest{Name: "work", Provider: "bitbucket-server", Host: "https://" + host, APIURL: api, Username: "alice", NoBrowser: true}, auth.LoginHooks{ReadSecret: func(context.Context, string) (string, error) { return "saved-token", nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := pullrequests.NewProviderWithResolver(manager)
+	t.Setenv("PR_OVERRIDE_TOKEN", "environment-token")
+	for _, tc := range []struct{ name, remote, tokenEnv, grant, want string }{
+		{"rotated saved grant with environment override", "git@" + host + ":TEAM/api.git", "PR_OVERRIDE_TOKEN", "removed", "environment-token"},
+		{"explicit SSH alias with named grant", "git@company_work:TEAM/api.git", "", connection.GrantID, "saved-token"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := domain.Repository{Provider: map[string]string{"kind": "bitbucket-server", "host": host, "repository": "UPSTREAM/api", "source_repository": "TEAM/api", "connection": "work", "grant_id": tc.grant, "token_env": tc.tokenEnv}}
+			q, err := p.Resolve(repo, tc.remote, "feature")
+			if err != nil || q.APIURL != api || q.SourceRepository != "TEAM/api" || q.Repository != "UPSTREAM/api" {
+				t.Fatalf("wrong route %+v: %v", q, err)
+			}
+			wantAuth = tc.want
+			before := requests
+			if _, err := p.Lookup(ctx, q, true); err != nil || requests != before+1 {
+				t.Fatalf("expected one successful authenticated call: %v, calls %d", err, requests-before)
+			}
+			if tc.tokenEnv != "" {
+				t.Setenv(tc.tokenEnv, "")
+				if _, err := p.Lookup(ctx, q, true); err == nil || requests != before+1 {
+					t.Fatalf("empty explicit token fell back to saved credentials: %v", err)
+				}
+			} else {
+				for _, field := range []string{"api_url", "grant_id"} {
+					denied := q
+					wantErr := auth.ErrScope
+					if field == "api_url" {
+						denied.APIURL = "https://unapproved.example/api"
+					} else {
+						denied.GrantID = "removed"
+						wantErr = auth.ErrDisconnected
+					}
+					if _, err := p.Lookup(ctx, denied, true); !errors.Is(err, wantErr) || requests != before+1 {
+						t.Fatalf("lookup bypassed saved %s verification: %v", field, err)
+					}
+				}
+			}
+		})
 	}
 }

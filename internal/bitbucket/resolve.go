@@ -158,6 +158,21 @@ func ServerRepositoryAt(remote, gitBase string) string {
 	return identity.repository
 }
 
+// ExplicitServerSSHAlias checks whether a fully configured repository uses an
+// OpenSSH alias for its Git host and names the configured source project/slug.
+func ExplicitServerSSHAlias(repo domain.Repository, remote, gitBase string) bool {
+	p := repo.Provider
+	if p["kind"] != "bitbucket-server" || p["host"] == "" || p["repository"] == "" || p["source_repository"] == "" {
+		return false
+	}
+	approved, err := apiURL(gitBase)
+	if err != nil {
+		return false
+	}
+	identity, err := parseRemote(remote, true)
+	return err == nil && identity.api == "" && !strings.EqualFold(identity.host, approved.Hostname()) && strings.EqualFold(identity.repository, p["source_repository"])
+}
+
 func validRemoteHost(host string, ssh bool) bool {
 	return validHost(host) || (ssh && len(host) <= 253 && sshAliasPattern.MatchString(host))
 }

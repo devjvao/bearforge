@@ -80,7 +80,17 @@ func (p *Provider) withServerConnection(repo domain.Repository, remote string) (
 	if err != nil {
 		return repo, err
 	}
-	metadata := repo.Provider
+	metadata := maps.Clone(repo.Provider)
+	if metadata == nil {
+		metadata = make(map[string]string)
+	}
+	// An explicit environment token selects its own credential, even after
+	// a saved login is removed or rotated. Match only routing coordinates.
+	if metadata["token_env"] != "" {
+		delete(metadata, "connection")
+		delete(metadata, "grant_id")
+	}
+	repo.Provider = metadata
 	name := metadata["connection"]
 	if name == "" && metadata["grant_id"] != "" {
 		return repo, auth.ErrDisconnected
@@ -95,15 +105,21 @@ func (p *Provider) withServerConnection(repo domain.Repository, remote string) (
 		if name != "" && metadata["grant_id"] != "" && metadata["grant_id"] != c.GrantID {
 			return repo, auth.ErrDisconnected
 		}
-		project := bitbucket.ServerRepositoryAt(remote, c.GitURL)
-		if project == "" {
-			continue
-		}
 		host, err := url.Parse(c.Host)
 		if err != nil || host.Hostname() == "" || metadata["host"] != "" && !strings.EqualFold(metadata["host"], host.Hostname()) {
 			continue
 		}
 		if api := metadata["api_url"]; api != "" && strings.TrimRight(api, "/") != c.APIURL {
+			continue
+		}
+		project := bitbucket.ServerRepositoryAt(remote, c.GitURL)
+		if project == "" {
+			// A named connection and explicit coordinates can describe an
+			// OpenSSH alias. Use the configured host's default API; Lookup
+			// still verifies its exact scope against the saved grant.
+			if name != "" && bitbucket.ExplicitServerSSHAlias(repo, remote, c.GitURL) {
+				return repo, nil
+			}
 			continue
 		}
 		if selected != nil {
@@ -124,10 +140,6 @@ func (p *Provider) withServerConnection(repo domain.Repository, remote string) (
 	if metadata["source_repository"] != "" && !strings.EqualFold(metadata["source_repository"], source) {
 		return repo, domain.E("conflict", "the configured source repository differs from the Git remote")
 	}
-	metadata = maps.Clone(metadata)
-	if metadata == nil {
-		metadata = make(map[string]string)
-	}
 	metadata["kind"], metadata["host"], metadata["api_url"] = selected.Provider, installationHost, selected.APIURL
 	metadata["source_repository"] = source
 	if metadata["repository"] == "" {
@@ -136,7 +148,6 @@ func (p *Provider) withServerConnection(repo domain.Repository, remote string) (
 	if metadata["token_env"] == "" {
 		metadata["connection"], metadata["grant_id"] = selected.Name, selected.GrantID
 	}
-	repo.Provider = metadata
 	return repo, nil
 }
 
