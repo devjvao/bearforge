@@ -42,7 +42,8 @@ func (c *Client) checkIgnoredRebasePaths(ctx context.Context, path, old, target 
 	seen := make(map[string]bool)
 	for _, args := range [][]string{
 		{"diff", "--name-only", "--no-renames", "--no-ext-diff", "-z", old, target, "--"},
-		{"log", "--format=", "--name-only", "--no-renames", "-m", "-z", target + ".." + old, "--"},
+		// Signature reports share stdout with the first pathname of each commit.
+		{"log", "--format=", "--no-show-signature", "--name-only", "--no-renames", "-m", "-z", target + ".." + old, "--"},
 	} {
 		changed, err := c.Run(ctx, path, append([]string{"--no-replace-objects"}, args...)...)
 		if err != nil {
