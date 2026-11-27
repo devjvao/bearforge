@@ -131,7 +131,12 @@ func TestWorkspaceUpdateReviewsAndAppliesOnlySelectedFastForwards(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(store.Root, "topic", "api", "dirty"), []byte("local"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	counts := &countingUpdateStore{Store: store}
+	s.Store = counts
 	result, err := s.ApplyWorkspaceUpdate(ctx, plan, []string{"data", "api"})
+	if counts.workspaces != 1 || counts.catalogs != 1 {
+		t.Errorf("applying two rows decoded %d workspaces and loaded %d catalogs", counts.workspaces, counts.catalogs)
+	}
 	if err == nil || result.Outcome != "partial" || len(result.Items) != 2 || result.Items[0].Repository != "api" || result.Items[0].Problem == nil || result.Items[1].Outcome != "updated" {
 		t.Fatalf("apply %+v %v", result, err)
 	}
@@ -156,6 +161,32 @@ func TestWorkspaceUpdateReviewsAndAppliesOnlySelectedFastForwards(t *testing.T) 
 	// Updating both tracked branches did not rebase the feature onto the default.
 	if !strings.Contains(plan.Rows[1].BaseAdvice, "rebase") {
 		t.Fatalf("missing rebase advice: %+v", plan.Rows[1])
+	}
+	// An edit outside the BearForge lock between rows must invalidate the
+	// untouched rows even though the apply uses one parsed intent snapshot.
+	if err := os.Remove(filepath.Join(store.Root, "topic", "api", "dirty")); err != nil {
+		t.Fatal(err)
+	}
+	plan, err = s.PreviewWorkspaceUpdate(ctx, "topic", []string{"api", "web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Observe = func(event app.Event) {
+		if event.Repository != "api" || event.State != "updated" {
+			return
+		}
+		catalog, revision, err := store.LoadCatalog()
+		if err != nil {
+			t.Fatal(err)
+		}
+		catalog.Jobs++
+		if err := store.SaveCatalog(catalog, revision); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err = s.ApplyWorkspaceUpdate(ctx, plan, []string{"api", "web"})
+	if err == nil || len(result.Items) != 2 || result.Items[0].Outcome != "updated" || result.Items[1].Outcome != "skipped" || result.Items[1].Problem == nil || result.Items[1].Problem.Code != "conflict" || head("web", "HEAD") != initial {
+		t.Fatalf("external config edit accepted %+v %v", result, err)
 	}
 }
 

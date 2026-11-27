@@ -92,7 +92,7 @@ func (m dashboardModel) openWorkspace(action workspaceAction) (tea.Model, tea.Cm
 	if action.updatesBranches() {
 		_, available = m.reader.source.(dashboardWorktreeUpdater)
 	} else if action == workspaceUpdateAll {
-		_, available = m.reader.source.(dashboardWorkspaceUpdater)
+		_, available = m.reader.source.(DashboardWorkspaceUpdater)
 	}
 	if !available || m.loading || m.loadErr != nil ||
 		len(m.data.PendingOperations) > 0 || (m.syncRun != nil && m.syncRun.running) ||
@@ -122,6 +122,7 @@ func (m dashboardModel) openWorkspace(action workspaceAction) (tea.Model, tea.Cm
 		slices.Sort(names)
 		names = slices.Compact(names)
 	}
+	m.invalidatePullRequests()
 	m.cancel()
 	m.requestID++
 	m.workspaceID++
@@ -200,6 +201,7 @@ func (m dashboardModel) confirmWorkspace() (tea.Model, tea.Cmd) {
 		if len(run.names) == 0 {
 			return m, nil
 		}
+		run.batch.previous = nil
 	} else if run.preview.PlanDigest == "" {
 		return m, nil
 	}
@@ -325,7 +327,10 @@ func validateWorkspacePreview(run *dashboardWorkspace, result app.Result) error 
 func (m dashboardModel) closeWorkspace() (tea.Model, tea.Cmd) {
 	if m.workspaceRun.phase != workspaceResults {
 		m.workspaceRun.cancel()
-		m.workspaceRun = nil
+		m.workspaceRun = m.workspaceRun.batch.previous
+		if m.workspaceRun != nil {
+			return m, nil
+		}
 	}
 	m.showWorkspace = false
 	return m, nil

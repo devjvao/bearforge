@@ -156,7 +156,7 @@ func (m dashboardModel) footerLines() []string {
 			actions = actionHelp("p PRs | P refresh | u update | b rebase | PgUp/PgDn details | n new | d/D remove", m.width, m.styles)
 		}
 	}
-	if _, ok := m.reader.source.(dashboardWorkspaceUpdater); ok && m.workspace != "" {
+	if _, ok := m.reader.source.(DashboardWorkspaceUpdater); ok && m.workspace != "" {
 		footer = strings.Replace(footer, "q quit", "q quit | U workspace", 1)
 		if m.width < 70 {
 			return []string{actions, keyboardHelp(actionBindings(strings.Split(footer, " | ")...), m.width, " ", m.styles)}

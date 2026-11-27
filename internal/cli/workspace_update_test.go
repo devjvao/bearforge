@@ -7,7 +7,42 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/config"
+	"github.com/devjvao/bearforge/internal/operation"
 )
+
+type workspaceUpdateLog struct {
+	bytes.Buffer
+	onRunning func()
+}
+
+func (w *workspaceUpdateLog) Write(data []byte) (int, error) {
+	if w.onRunning != nil && bytes.Contains(data, []byte(`"state":"running"`)) {
+		w.onRunning()
+		w.onRunning = nil
+	}
+	return w.Buffer.Write(data)
+}
+
+func TestWorkspaceUpdateReportDescribesAppliedMovesAndMultilineDiagnostics(t *testing.T) {
+	var out bytes.Buffer
+	plan := app.WorkspaceUpdatePlan{Workspace: "release", Rows: []app.WorkspaceUpdateRow{
+		{Repository: "api", Branch: "feature", Eligible: true, Moves: []app.WorkspaceBranchMove{{Branch: "main", From: "old", To: "new"}}},
+		{Repository: "web", Status: "blocked", Detail: "remote: permission denied\nfatal: access failed\x1b[31m"},
+	}}
+	result := app.NewResult("workspace.update")
+	result.Data = plan
+	result.Items = []app.Item{{Repository: "api", Branch: "feature", Outcome: "updated"}}
+	o := options{output: "human", out: &out, errOut: &out}
+	if err := o.render(result); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); !strings.Contains(got, "main: old → new") || !strings.Contains(got, "  remote: permission denied\n  fatal: access failed") || strings.Contains(got, "\x1b") {
+		t.Fatalf("actual default-branch update or readable diagnostics missing: %s", got)
+	}
+}
 
 func TestWorkspaceUpdateCLIReviewsAndAppliesSelectedFastForwards(t *testing.T) {
 	root := cliFixtureDir(t)
@@ -73,6 +108,36 @@ func TestWorkspaceUpdateCLIReviewsAndAppliesSelectedFastForwards(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "release", "api", "untracked"), []byte("local work"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	journal := operation.New(config.New(root))
+	pending := &app.Operation{Version: 1, ID: "pending-update-test", Root: root, Kind: "workspace.add", State: "partial"}
+	if err := journal.Save(pending); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	stderr.Reset()
+	if code := Run(t.Context(), []string{"workspace", "update", "release", "--yes"}, strings.NewReader(""), &out, &stderr); code != 3 || !strings.Contains(out.String(), "web  [not run]") || !strings.Contains(stderr.String(), "unfinished") {
+		t.Fatalf("lock refusal must retain its reason and mark selected rows not run: %d %s%s", code, &out, &stderr)
+	}
+	out.Reset()
+	if code := Run(t.Context(), []string{"workspace", "update", "release", "--yes", "--json"}, strings.NewReader(""), &out, &stderr); code != 3 || !strings.Contains(out.String(), `"outcome":"failed"`) {
+		t.Fatalf("lock refusal was not a failed operation: %d %s", code, &out)
+	}
+	pending.State = "abandoned"
+	if err := journal.Save(pending); err != nil {
+		t.Fatal(err)
+	}
+	webRemote := filepath.Join(remotes, "web")
+	log := &workspaceUpdateLog{onRunning: func() {
+		if err := os.Rename(webRemote, webRemote+"-unavailable"); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	if code := Run(t.Context(), []string{"workspace", "update", "release", "--yes", "--output=jsonl"}, strings.NewReader(""), log, &stderr); code != 1 || !strings.Contains(log.String(), `"code":"failed"`) {
+		t.Fatalf("blocked preview masked the selected repository's apply error: %d %s", code, log)
+	}
+	if err := os.Rename(webRemote+"-unavailable", webRemote); err != nil {
+		t.Fatal(err)
+	}
 	for _, scope := range [][]string{{"--repo", "api"}, {}} {
 		args := append([]string{"workspace", "update", "release", "--yes", "--json"}, scope...)
 		out.Reset()
@@ -84,5 +149,12 @@ func TestWorkspaceUpdateCLIReviewsAndAppliesSelectedFastForwards(t *testing.T) {
 	}
 	if head("web") != target["web"] {
 		t.Fatal("blocked repository prevented the other reviewed update")
+	}
+	if err := os.Rename(filepath.Join(remotes, "web"), filepath.Join(remotes, "web-offline")); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if code := Run(t.Context(), []string{"workspace", "update", "release", "--yes", "--json"}, strings.NewReader(""), &out, &stderr); code != 1 || !strings.Contains(out.String(), `"code":"failed"`) {
+		t.Fatalf("dirty member masked the remote error: %d %s", code, &out)
 	}
 }

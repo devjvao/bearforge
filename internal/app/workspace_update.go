@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/devjvao/bearforge/internal/domain"
 )
@@ -17,27 +18,42 @@ type WorkspaceUpdatePlan struct {
 }
 
 type WorkspaceUpdateRow struct {
-	Repository string `json:"repository"`
-	Path       string `json:"path,omitempty"`
-	Branch     string `json:"branch,omitempty"`
-	Status     string `json:"status"`
-	Detail     string `json:"detail"`
-	BaseAdvice string `json:"base_advice,omitempty"`
-	Eligible   bool   `json:"eligible"`
+	Repository string                `json:"repository"`
+	Path       string                `json:"path,omitempty"`
+	Branch     string                `json:"branch,omitempty"`
+	Status     string                `json:"status"`
+	Detail     string                `json:"detail"`
+	BaseAdvice string                `json:"base_advice,omitempty"`
+	Eligible   bool                  `json:"eligible"`
+	Problem    *Problem              `json:"error,omitempty"`
+	Moves      []WorkspaceBranchMove `json:"moves,omitempty"`
 
 	digest  string
 	targets fastForwardTargets
 }
 
+// WorkspaceBranchMove identifies a verified local fast-forward in a reviewed row.
+type WorkspaceBranchMove struct {
+	Branch string `json:"branch"`
+	From   string `json:"from"`
+	To     string `json:"to"`
+}
+
 // PreviewWorkspaceUpdate reads remote advertisements and verifies fast-forwards
 // against locally available history. It never fetches missing commits.
 func (s *Service) PreviewWorkspaceUpdate(ctx context.Context, workspace string, repositories []string) (WorkspaceUpdatePlan, error) {
+	return s.previewWorkspaceUpdate(ctx, workspace, repositories, false)
+}
+
+// PreviewWorkspaceUpdateRetry keeps the original selection, including members
+// removed since the first review. An empty retry never expands to the workspace.
+func (s *Service) PreviewWorkspaceUpdateRetry(ctx context.Context, workspace string, repositories []string) (WorkspaceUpdatePlan, error) {
+	return s.previewWorkspaceUpdate(ctx, workspace, repositories, true)
+}
+
+func (s *Service) previewWorkspaceUpdate(ctx context.Context, workspace string, repositories []string, retry bool) (WorkspaceUpdatePlan, error) {
 	plan := WorkspaceUpdatePlan{Workspace: workspace}
-	w, wrev, err := s.Store.LoadWorkspace(workspace)
-	if err != nil {
-		return plan, err
-	}
-	c, crev, err := s.Store.LoadCatalog()
+	snapshot, err := s.loadWorktreeUpdateSnapshot(workspace)
 	if err != nil {
 		return plan, err
 	}
@@ -45,32 +61,30 @@ func (s *Service) PreviewWorkspaceUpdate(ctx context.Context, workspace string, 
 	if !ok {
 		return plan, domain.E("unavailable", "worktree updates require the Git adapter")
 	}
-	if len(repositories) == 0 {
-		repositories = slices.Collect(maps.Keys(w.Repositories))
+	if len(repositories) == 0 && !retry {
+		repositories = slices.Collect(maps.Keys(snapshot.workspace.Repositories))
 	}
 	ids := unique(repositories)
 	for _, id := range ids {
 		if id == "" {
 			return plan, domain.E("invalid", "repository selection contains an empty ID")
 		}
-		if _, ok := w.Repositories[id]; !ok {
+		if _, ok := snapshot.workspace.Repositories[id]; !ok && !retry {
 			return plan, domain.E("not_found", "repository %s is not mapped in workspace %s", id, workspace)
 		}
 	}
 	plan.Rows = make([]WorkspaceUpdateRow, len(ids))
-	runSyncJobs(len(ids), max(1, c.Jobs), func(i int) bool {
+	runSyncJobs(len(ids), max(1, snapshot.catalog.Jobs), func(i int) bool {
 		if ctx.Err() != nil {
 			return false
 		}
 		id := ids[i]
-		repo, ok := c.Repositories[id]
-		if !ok {
-			plan.Rows[i] = WorkspaceUpdateRow{Repository: id, Status: "blocked", Detail: "Repository is no longer registered."}
-			return true
-		}
 		req := UpdateWorktreeRequest{Workspace: workspace, Repository: id, DryRun: true, UpdateOnly: true}
-		p, err := s.planMappedWorktreeUpdate(ctx, req, g, repo, w.Repositories[id], c.Remote, wrev, crev)
+		p, err := s.planMappedWorktreeUpdate(ctx, req, g, snapshot, true)
 		plan.Rows[i] = s.workspaceUpdateRow(ctx, p, err)
+		if _, mapped := snapshot.workspace.Repositories[id]; !mapped && retry {
+			plan.Rows[i].Status = "removed"
+		}
 		return true
 	})
 	if err := ctx.Err(); err != nil {
@@ -82,33 +96,35 @@ func (s *Service) PreviewWorkspaceUpdate(ctx context.Context, workspace string, 
 func (s *Service) workspaceUpdateRow(ctx context.Context, p worktreeUpdate, err error) WorkspaceUpdateRow {
 	row := WorkspaceUpdateRow{Repository: p.Repository, Path: p.Path, Branch: p.Branch, Status: "blocked"}
 	if err != nil {
-		row.Detail = err.Error()
+		row.Detail, row.Problem = err.Error(), ProblemFor(err)
 		return row
 	}
-	if p.Branch != p.MappedBranch {
-		row.Detail = fmt.Sprintf("Checked out %s; workspace expects %s. Review this repository individually.", p.Branch, p.MappedBranch)
-		return row
+	if p.baseLookupErr != nil {
+		row.BaseAdvice = fmt.Sprintf("Could not compare with %s: %v", p.Base.label(), p.baseLookupErr)
 	}
 	actions, err := s.worktreeUpdateActions(ctx, p, true)
 	if err != nil {
-		row.Detail = err.Error()
+		row.Detail, row.Problem = err.Error(), ProblemFor(err)
 		return row
 	}
 	row.Detail = actions.FeatureAction + " " + actions.DefaultAction
-	if actions.missingHistory != "" {
+	if len(actions.missingHistory) > 0 {
 		row.Status = "sync_required"
-		row.Detail += " " + s.workspaceHistoryAdvice(ctx, p.Bare, actions.missingHistory)
+		row.Detail += " " + s.workspaceHistoryAdvice(ctx, p.Bare, actions.missingHistory...)
 		return row
 	}
 	feature := p.Head
 	if actions.featureFF != "" {
-		row.Detail += fmt.Sprintf(" %s: %s → %s.", p.Branch, p.Head, actions.featureFF)
+		row.Moves = append(row.Moves, WorkspaceBranchMove{Branch: p.Branch, From: p.Head, To: actions.featureFF})
 		feature = actions.featureFF
 	}
 	if actions.baseFF != "" {
-		row.Detail += fmt.Sprintf(" %s: %s → %s.", p.Base.Name, p.LocalBase, actions.baseFF)
+		row.Moves = append(row.Moves, WorkspaceBranchMove{Branch: p.Base.Name, From: p.LocalBase, To: actions.baseFF})
 	}
-	if p.Branch != p.Base.Name {
+	for _, move := range row.Moves {
+		row.Detail += fmt.Sprintf(" %s: %s → %s.", move.Branch, move.From, move.To)
+	}
+	if p.Branch != p.Base.Name && p.baseLookupErr == nil {
 		subject := p.Branch
 		if actions.featureFF != "" {
 			subject = "After the fast-forward, " + p.Branch
@@ -120,7 +136,7 @@ func (s *Service) workspaceUpdateRow(ctx context.Context, p worktreeUpdate, err 
 		case relation == "behind" || relation == "diverged":
 			row.BaseAdvice = fmt.Sprintf("%s is missing commits from %s. Review a rebase for this repository.", subject, p.Base.label())
 		case relation == "pending" || relation == "incomplete":
-			row.BaseAdvice = "Comparison with " + p.Base.label() + " needs more history. " + s.workspaceHistoryAdvice(ctx, p.Bare, relation)
+			row.BaseAdvice = "Comparison with " + p.Base.label() + " needs more history. " + s.workspaceHistoryAdvice(ctx, p.Bare, missingUpdateHistory{target: p.Base, relation: relation})
 		default:
 			row.BaseAdvice = subject + " contains " + p.Base.label() + "."
 		}
@@ -133,14 +149,33 @@ func (s *Service) workspaceUpdateRow(ctx context.Context, p worktreeUpdate, err 
 	return row
 }
 
-func (s *Service) workspaceHistoryAdvice(ctx context.Context, bare, relation string) string {
+func (s *Service) workspaceHistoryAdvice(ctx context.Context, bare string, missing ...missingUpdateHistory) string {
+	shallow := false
+	instruction := "Sync the workspace or fetch the missing history explicitly from the checkout, then preview again."
 	if err := s.Git.RequireFullHistory(ctx, bare); err != nil {
-		return err.Error()
+		if ProblemFor(err).Code != "incomplete_history" {
+			return err.Error()
+		}
+		shallow = true
+		instruction = "This checkout is shallow. Fetch its full history from the checkout, then preview again."
 	}
-	if relation == "incomplete" {
-		return "A parent commit is missing locally. Run git fetch --refetch REMOTE from the checkout for the affected remote and preview again."
+	var commands []string
+	for _, need := range missing {
+		flags := ""
+		if shallow {
+			flags = " --unshallow"
+			shallow = false
+		} else if need.relation == "incomplete" {
+			flags = " --refetch"
+			if len(commands) == 0 {
+				instruction = "A parent commit is missing locally. Fetch its history from the checkout, then preview again."
+			}
+		}
+		// The empty refmap scopes the fetch to the named objects even with
+		// custom refspecs. No destination ref has to be updated.
+		commands = append(commands, "git fetch"+flags+" --no-tags --refmap= -- "+need.target.Remote+" "+domain.QuoteShellArgument("refs/heads/"+need.target.Name))
 	}
-	return "Sync the workspace and preview again to verify ancestry."
+	return instruction + "\n" + strings.Join(commands, "\n")
 }
 
 // ApplyWorkspaceUpdate applies only selected, verified fast-forwards. A fresh
@@ -167,6 +202,14 @@ func (s *Service) ApplyWorkspaceUpdate(ctx context.Context, plan WorkspaceUpdate
 	}
 	defer release()
 
+	g, ok := s.Git.(worktreeUpdater)
+	if !ok {
+		return result, domain.E("unavailable", "worktree updates require the Git adapter")
+	}
+	snapshot, err := s.loadWorktreeUpdateSnapshot(plan.Workspace)
+	if err != nil {
+		return result, err
+	}
 	var failures []error
 	for _, id := range ids {
 		row := rows[id]
@@ -175,7 +218,7 @@ func (s *Service) ApplyWorkspaceUpdate(ctx context.Context, plan WorkspaceUpdate
 		if err == nil {
 			s.event(id, "running")
 			req := UpdateWorktreeRequest{Workspace: plan.Workspace, Repository: id, ExpectedPlan: row.digest, UpdateOnly: true}
-			applied, updateErr := s.updateWorktree(ctx, req, &row.targets)
+			applied, updateErr := s.applyMappedWorkspaceUpdate(ctx, req, g, snapshot, row.targets)
 			err = updateErr
 			if len(applied.Items) > 0 {
 				item = applied.Items[0]
@@ -198,4 +241,17 @@ func (s *Service) ApplyWorkspaceUpdate(ctx context.Context, plan WorkspaceUpdate
 		return result, err
 	}
 	return result, nil
+}
+
+func (s *Service) applyMappedWorkspaceUpdate(ctx context.Context, req UpdateWorktreeRequest, g worktreeUpdater, snapshot worktreeUpdateSnapshot, targets fastForwardTargets) (Result, error) {
+	p, err := s.planMappedWorktreeUpdate(ctx, req, g, snapshot, true)
+	if err != nil {
+		return Result{}, err
+	}
+	// Rehash the files after remote inspection so edits outside the BearForge
+	// lock invalidate this row without decoding and cloning both YAML documents.
+	if err := s.Store.CheckWorkspaceRevisions(req.Workspace, snapshot.workspaceRevision, snapshot.catalogRevision); err != nil {
+		return Result{}, err
+	}
+	return s.executeWorktreeUpdate(ctx, req, g, p, &targets)
 }

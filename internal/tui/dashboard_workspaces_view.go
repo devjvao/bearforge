@@ -2,12 +2,12 @@ package tui
 
 import (
 	"fmt"
-	"runtime"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func removalResultPath(item app.Item) string {
@@ -68,6 +68,12 @@ func (m dashboardModel) workspaceView() tea.View {
 	case workspaceForm:
 		first, second = "Tab field | Enter preview", "Esc dashboard | Ctrl-C cancel"
 	case workspacePicking:
+		if m.width < 60 {
+			lines = append(lines,
+				keyboardHelp(actionBindings("Space select", "Enter review", "j/k move"), m.width, " ", m.styles),
+				keyboardHelp(actionBindings("PgUp/PgDn details", "Esc back", "r refresh"), m.width, " ", m.styles))
+			return dashboardView(lines, m.width)
+		}
 		first, second = "Space select | Enter review | j/k move", "Esc back | r refresh | PgUp/PgDn details | q quit"
 	case workspaceReview:
 		first = "PgUp/PgDn review | y confirm"
@@ -197,6 +203,26 @@ func (m dashboardModel) workspaceContent() []string {
 		if run.result.Problem != nil && run.err == nil {
 			lines = append(lines, m.styles.bad.Render("Error: "+displayText(run.result.Problem.Message)))
 		}
+		if run.action == workspaceUpdateAll && run.phase == workspaceResults {
+			errorsByID := make(map[string]*app.Problem, len(run.result.Items))
+			for _, item := range run.result.Items {
+				errorsByID[item.Repository] = item.Problem
+			}
+			for _, row := range run.batch.plan.Rows {
+				outcome, selected := run.states[row.Repository]
+				if !selected {
+					continue
+				}
+				lines = append(lines, "", m.styles.title.Render(displayText(row.Repository))+"  "+m.styles.outcome(outcome))
+				if outcome == "updated" {
+					lines = append(lines, displayText(row.Detail))
+				}
+				if problem := errorsByID[row.Repository]; problem != nil {
+					lines = append(lines, m.styles.bad.Render("Error: "+displayText(problem.Message)))
+				}
+			}
+			return lines
+		}
 		for _, id := range run.names {
 			lines = append(lines, "", m.styles.title.Render(displayText(id))+"  "+m.styles.outcome(run.states[id]))
 			for _, item := range run.preview.Items {
@@ -279,8 +305,5 @@ func dashboardRecoveryLines(root, id string, resumable bool) []string {
 // Quote for PowerShell on Windows and a POSIX shell elsewhere, keeping arguments
 // with spaces, quotes or shell metacharacters literal in copied commands.
 func workspaceShellQuote(value string) string {
-	if runtime.GOOS == "windows" {
-		return "'" + strings.ReplaceAll(value, "'", "''") + "'"
-	}
-	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+	return domain.QuoteShellArgument(value)
 }

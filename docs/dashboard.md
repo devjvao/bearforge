@@ -77,6 +77,8 @@ The preview checks the remote tips and uses local history to verify ancestry. If
 
 The **Base** column uses locally cached remote refs. If Git already has the target commit through another branch, a workspace update can fast-forward the local branch while that column still shows an older comparison. Press `s` to refresh the remote refs.
 
+Let other Git commands that write to the selected checkouts finish before confirming. Workspace updates lock the checked-out branch while installing its reviewed Git tree. Use the single-repository `u` action if your project depends on Git’s `post-merge` hook. If another command changes workspace membership, retry shows which repositories were removed and lets you review the remaining selections. A branch with multiple configured upstream merge refs requires an individual choice of upstream before Bearforge can update it.
+
 Select a repository and press `u` to review fast-forward updates to its current branch and local default branch. Press `b` to also rebase the current feature branch onto the repository default. Both previews show which branches will move. Press `y` to apply the reviewed update locally. Rebasing can change the IDs of commits already on the feature branch. Publishing those commits is a separate Git operation.
 
 The checkout must be clean. The preview names the checked-out branch and shows the workspace’s intended branch if they differ. If a feature branch and its own published feature branch have diverged, the update reports which branches need reconciliation. A default branch checked out in a different worktree stays there. The selected feature can still rebase onto the fetched remote default.

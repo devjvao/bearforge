@@ -25,6 +25,8 @@ type dashboardService struct {
 	discoverer *discovery.Provider
 }
 
+var _ tui.DashboardWorkspaceUpdater = dashboardService{}
+
 func newDashboardService(service *app.Service, o *options) dashboardService {
 	configured := *service
 	manager, authErr := o.configureServiceAuthentication(&configured)

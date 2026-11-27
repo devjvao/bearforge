@@ -24,9 +24,14 @@ type WorktreeUpdatePlan struct {
 }
 
 type worktreeUpdater interface {
+	BranchTracking(context.Context, string, string) (string, string, error)
 	CheckUpdateWorktree(context.Context, string, string, string) (domain.Status, error)
 	WorktreeBranchReserved(context.Context, string, string, string) (bool, error)
 	UpdateCheckedOutBranch(ctx context.Context, bare, path, branch, old, target string, rebase bool) error
+}
+
+type reviewedCheckoutUpdater interface {
+	FastForwardReviewedCheckout(ctx context.Context, bare, path, branch, old, target string) error
 }
 
 type updateTarget struct {
@@ -42,6 +47,8 @@ type worktreeUpdate struct {
 	Base, Upstream                                  updateTarget
 	LocalBase, SkipDefault                          string
 	UpdateOnly                                      bool
+	advisoryBase                                    bool
+	baseLookupErr                                   error
 }
 
 func (s *Service) UpdateWorktree(ctx context.Context, req UpdateWorktreeRequest) (Result, error) {
@@ -56,20 +63,24 @@ func (s *Service) UpdateWorktree(ctx context.Context, req UpdateWorktreeRequest)
 		}
 		defer release()
 	}
-	return s.updateWorktree(ctx, req, nil)
-}
-
-// The caller holds the mutation lock for the duration of a confirmed update.
-func (s *Service) updateWorktree(ctx context.Context, req UpdateWorktreeRequest, expected *fastForwardTargets) (Result, error) {
-	r := NewResult("workspace.update-worktree")
 	g, ok := s.Git.(worktreeUpdater)
 	if !ok {
 		return r, domain.E("unavailable", "worktree updates require the Git adapter")
 	}
-	p, err := s.planWorktreeUpdate(ctx, req, g)
+	snapshot, err := s.loadWorktreeUpdateSnapshot(req.Workspace)
 	if err != nil {
 		return r, err
 	}
+	p, err := s.planMappedWorktreeUpdate(ctx, req, g, snapshot, false)
+	if err != nil {
+		return r, err
+	}
+	return s.executeWorktreeUpdate(ctx, req, g, p, nil)
+}
+
+// The caller holds the mutation lock for the duration of a confirmed update.
+func (s *Service) executeWorktreeUpdate(ctx context.Context, req UpdateWorktreeRequest, g worktreeUpdater, p worktreeUpdate, expected *fastForwardTargets) (Result, error) {
+	r := NewResult("workspace.update-worktree")
 	item := Item{Workspace: req.Workspace, Repository: req.Repository, Path: p.Path, Branch: p.Branch, ExpectedBranch: p.MappedBranch, Base: p.Base.label(), Start: p.Head, Outcome: "planned"}
 	if p.Upstream.Name != "" {
 		item.Tracking = p.Upstream.label()
@@ -113,7 +124,16 @@ func (s *Service) updateWorktree(ctx context.Context, req UpdateWorktreeRequest,
 	}
 	current := p.Head
 	if actions.featureFF != "" {
-		if err := g.UpdateCheckedOutBranch(ctx, p.Bare, p.Path, p.Branch, current, actions.featureFF, false); err != nil {
+		if expected != nil {
+			reviewed, ok := g.(reviewedCheckoutUpdater)
+			if !ok {
+				return failedWorktreeUpdate(r, domain.E("unavailable", "the Git adapter cannot fast-forward a reviewed checkout"))
+			}
+			err = reviewed.FastForwardReviewedCheckout(ctx, p.Bare, p.Path, p.Branch, current, actions.featureFF)
+		} else {
+			err = g.UpdateCheckedOutBranch(ctx, p.Bare, p.Path, p.Branch, current, actions.featureFF, false)
+		}
+		if err != nil {
 			return failedWorktreeUpdate(r, err)
 		}
 		current = actions.featureFF
@@ -136,6 +156,11 @@ func (s *Service) updateWorktree(ctx context.Context, req UpdateWorktreeRequest,
 }
 
 func (p worktreeUpdate) digest() string {
+	if p.advisoryBase {
+		// These tips are used only for display. The skip reason is still pinned.
+		p.Base.Tip = ""
+		p.LocalBase = ""
+	}
 	data, _ := json.Marshal(p)
 	digest := sha256.Sum256(data)
 	return hex.EncodeToString(digest[:])
@@ -149,29 +174,32 @@ func failedWorktreeUpdate(r Result, err error) (Result, error) {
 	return r, err
 }
 
-func (s *Service) planWorktreeUpdate(ctx context.Context, req UpdateWorktreeRequest, git worktreeUpdater) (worktreeUpdate, error) {
-	var p worktreeUpdate
-	w, wrev, err := s.Store.LoadWorkspace(req.Workspace)
-	if err != nil {
-		return p, err
+type worktreeUpdateSnapshot struct {
+	workspace                          domain.Workspace
+	catalog                            domain.Catalog
+	workspaceRevision, catalogRevision string
+}
+
+func (s *Service) loadWorktreeUpdateSnapshot(workspace string) (worktreeUpdateSnapshot, error) {
+	var snapshot worktreeUpdateSnapshot
+	var err error
+	snapshot.workspace, snapshot.workspaceRevision, err = s.Store.LoadWorkspace(workspace)
+	if err == nil {
+		snapshot.catalog, snapshot.catalogRevision, err = s.Store.LoadCatalog()
 	}
-	m, ok := w.Repositories[req.Repository]
+	return snapshot, err
+}
+
+func (s *Service) planMappedWorktreeUpdate(ctx context.Context, req UpdateWorktreeRequest, git worktreeUpdater, snapshot worktreeUpdateSnapshot, batch bool) (worktreeUpdate, error) {
+	p := worktreeUpdate{Root: s.Store.RootPath(), Workspace: req.Workspace, Repository: req.Repository, UpdateOnly: req.UpdateOnly, WorkspaceRevision: snapshot.workspaceRevision, CatalogRevision: snapshot.catalogRevision}
+	m, ok := snapshot.workspace.Repositories[req.Repository]
 	if !ok {
 		return p, domain.E("not_found", "repository %s is not mapped in workspace %s", req.Repository, req.Workspace)
 	}
-	c, crev, err := s.Store.LoadCatalog()
-	if err != nil {
-		return p, err
-	}
-	repo, ok := c.Repositories[req.Repository]
+	repo, ok := snapshot.catalog.Repositories[req.Repository]
 	if !ok {
 		return p, domain.E("not_found", "repository %s is no longer registered", req.Repository)
 	}
-	return s.planMappedWorktreeUpdate(ctx, req, git, repo, m, c.Remote, wrev, crev)
-}
-
-func (s *Service) planMappedWorktreeUpdate(ctx context.Context, req UpdateWorktreeRequest, git worktreeUpdater, repo domain.Repository, m domain.Mapping, catalogRemote, wrev, crev string) (worktreeUpdate, error) {
-	p := worktreeUpdate{Root: s.Store.RootPath(), Workspace: req.Workspace, Repository: req.Repository, UpdateOnly: req.UpdateOnly, WorkspaceRevision: wrev, CatalogRevision: crev}
 	var err error
 	p.Bare, err = s.checkRepository(ctx, repo)
 	if err != nil {
@@ -187,7 +215,10 @@ func (s *Service) planMappedWorktreeUpdate(ctx context.Context, req UpdateWorktr
 	if err != nil {
 		return p, err
 	}
-	ref, err := s.repositoryBaseRef(ctx, p.Bare, repo, catalogRemote)
+	if batch && p.Branch != p.MappedBranch {
+		return p, domain.E("conflict", "Checked out %s; workspace expects %s. Review this repository individually.", p.Branch, p.MappedBranch)
+	}
+	ref, err := s.repositoryBaseRef(ctx, p.Bare, repo, snapshot.catalog.Remote)
 	if err != nil {
 		return p, err
 	}
@@ -196,15 +227,26 @@ func (s *Service) planMappedWorktreeUpdate(ctx context.Context, req UpdateWorktr
 	if !ok || !valid {
 		return p, domain.E("conflict", "configured base %s is not a remote-tracking branch", ref)
 	}
-	p.Base, err = s.updateRemoteTarget(ctx, p.Bare, repo, remote, branch)
+	p.Base = updateTarget{Remote: remote, Name: branch}
+	if err = s.planLocalDefaultUpdate(ctx, git, &p); err != nil {
+		return p, err
+	}
+	upRemote, upBranch, err := git.BranchTracking(ctx, p.Path, p.Branch)
 	if err != nil {
 		return p, err
 	}
-	upRemote, upBranch, err := s.updateTracking(ctx, p.Path, p.Branch)
-	if err != nil {
-		return p, err
+	tracksBase := upRemote == remote && upBranch == branch
+	p.advisoryBase = batch && p.SkipDefault != "" && p.Branch != branch && !tracksBase
+	if !p.advisoryBase || req.DryRun {
+		p.Base, err = s.updateRemoteTarget(ctx, p.Bare, repo, remote, branch)
+		if err != nil {
+			if !p.advisoryBase || ctx.Err() != nil {
+				return p, err
+			}
+			p.baseLookupErr = err
+		}
 	}
-	if upRemote == p.Base.Remote && upBranch == p.Base.Name {
+	if tracksBase {
 		p.Upstream = p.Base
 	} else if upRemote != "" {
 		p.Upstream, err = s.updateRemoteTarget(ctx, p.Bare, repo, upRemote, upBranch)
@@ -217,34 +259,40 @@ func (s *Service) planMappedWorktreeUpdate(ctx context.Context, req UpdateWorktr
 			return p, domain.E("conflict", "local default branch %s tracks %s; check its upstream before updating", p.Branch, p.Upstream.label())
 		}
 		p.Upstream = p.Base
+	}
+	return p, nil
+}
+
+func (s *Service) planLocalDefaultUpdate(ctx context.Context, git worktreeUpdater, p *worktreeUpdate) error {
+	if p.Branch == p.Base.Name {
 		p.SkipDefault = "The selected checkout is the local default branch."
-		return p, nil
+		return nil
 	}
 	exists, err := s.Git.BranchExists(ctx, p.Bare, p.Base.Name)
 	if err != nil {
-		return p, err
+		return err
 	}
 	if !exists {
 		p.SkipDefault = "There is no local default branch to update."
-		return p, nil
+		return nil
 	}
 	p.LocalBase, err = s.Git.Resolve(ctx, p.Bare, "refs/heads/"+p.Base.Name)
 	if err != nil {
-		return p, err
+		return err
 	}
 	trees, err := s.Git.Worktrees(ctx, p.Bare)
 	if err != nil {
-		return p, err
+		return err
 	}
 	for _, tree := range trees {
 		if tree.Branch == p.Base.Name {
 			p.SkipDefault = fmt.Sprintf("Leave local %s in its other checkout at %s.", p.Base.Name, tree.Path)
-			return p, nil
+			return nil
 		}
 	}
-	defaultRemote, defaultMerge, err := s.updateTracking(ctx, p.Bare, p.Base.Name)
+	defaultRemote, defaultMerge, err := git.BranchTracking(ctx, p.Bare, p.Base.Name)
 	if err != nil {
-		return p, err
+		return err
 	}
 	if defaultRemote != "" && (defaultRemote != p.Base.Remote || defaultMerge != p.Base.Name) {
 		p.SkipDefault = fmt.Sprintf("Leave local %s tracking %s/%s.", p.Base.Name, defaultRemote, defaultMerge)
@@ -252,29 +300,13 @@ func (s *Service) planMappedWorktreeUpdate(ctx context.Context, req UpdateWorktr
 	if p.SkipDefault == "" {
 		reserved, err := git.WorktreeBranchReserved(ctx, p.Bare, p.Base.Name, p.LocalBase)
 		if err != nil {
-			return p, err
+			return err
 		}
 		if reserved {
 			p.SkipDefault = fmt.Sprintf("Leave local %s reserved by its other checkout.", p.Base.Name)
 		}
 	}
-	return p, nil
-}
-
-func (s *Service) updateTracking(ctx context.Context, path, branch string) (string, string, error) {
-	remote, err := s.Git.Config(ctx, path, "branch."+branch+".remote")
-	if err != nil {
-		return "", "", err
-	}
-	merge, err := s.Git.Config(ctx, path, "branch."+branch+".merge")
-	if err != nil || remote == "" && merge == "" {
-		return "", "", err
-	}
-	name, ok := strings.CutPrefix(merge, "refs/heads/")
-	if remote == "" || !ok || name == "" {
-		return "", "", domain.E("conflict", "branch %s has an incomplete upstream; check its Git tracking configuration", branch)
-	}
-	return remote, name, nil
+	return nil
 }
 
 func (s *Service) updateRemoteTarget(ctx context.Context, bare string, repo domain.Repository, remote, name string) (updateTarget, error) {
@@ -357,7 +389,12 @@ type updateActions struct {
 	WorktreeUpdatePlan
 	fastForwardTargets
 	rebaseTo       string
-	missingHistory string
+	missingHistory []missingUpdateHistory
+}
+
+type missingUpdateHistory struct {
+	target   updateTarget
+	relation string
 }
 
 type fastForwardTargets struct {
@@ -374,7 +411,11 @@ func (s *Service) worktreeUpdateActions(ctx context.Context, p worktreeUpdate, p
 	case p.Branch != p.Base.Name && p.Upstream == p.Base && !p.UpdateOnly:
 		plan.FeatureAction = "The feature tracks the rebase target directly."
 	default:
-		plan.FeatureAction, plan.featureFF, plan.missingHistory, err = s.updateTrackingAction(ctx, p.Bare, p.Branch, p.Head, p.Upstream, preview)
+		var missingHistory string
+		plan.FeatureAction, plan.featureFF, missingHistory, err = s.updateTrackingAction(ctx, p.Bare, p.Branch, p.Head, p.Upstream, preview)
+		if missingHistory != "" {
+			plan.missingHistory = append(plan.missingHistory, missingUpdateHistory{target: p.Upstream, relation: missingHistory})
+		}
 		if err != nil {
 			return plan, err
 		}
@@ -386,8 +427,8 @@ func (s *Service) worktreeUpdateActions(ctx context.Context, p worktreeUpdate, p
 	if p.SkipDefault == "" {
 		var missingHistory string
 		plan.DefaultAction, plan.baseFF, missingHistory, err = s.updateTrackingAction(ctx, p.Bare, p.Base.Name, p.LocalBase, p.Base, preview)
-		if plan.missingHistory == "" || missingHistory == "incomplete" {
-			plan.missingHistory = missingHistory
+		if missingHistory != "" && (len(plan.missingHistory) == 0 || p.Upstream != p.Base) {
+			plan.missingHistory = append(plan.missingHistory, missingUpdateHistory{target: p.Base, relation: missingHistory})
 		}
 		if err != nil {
 			return plan, err

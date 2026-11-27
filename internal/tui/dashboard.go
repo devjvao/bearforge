@@ -347,13 +347,10 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.invalidatePullRequests()
 			return m.startSync()
 		case "b":
-			m.invalidatePullRequests()
 			return m.openWorkspace(workspaceRebase)
 		case "u":
-			m.invalidatePullRequests()
 			return m.openWorkspace(workspaceUpdate)
 		case "U":
-			m.invalidatePullRequests()
 			return m.openWorkspace(workspaceUpdateAll)
 		case "a":
 			m.invalidatePullRequests()
@@ -362,13 +359,10 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.invalidatePullRequests()
 			return m.openImport()
 		case "n":
-			m.invalidatePullRequests()
 			return m.openWorkspace(workspaceCreate)
 		case "d":
-			m.invalidatePullRequests()
 			return m.openWorkspace(workspaceRemoveRepo)
 		case "D":
-			m.invalidatePullRequests()
 			return m.openWorkspace(workspaceRemoveAll)
 		case "p", "P":
 			return m.startPullRequests(key == "P")

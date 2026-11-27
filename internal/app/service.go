@@ -24,6 +24,7 @@ type IntentStore interface {
 	LoadCatalog() (domain.Catalog, string, error)
 	SaveCatalog(domain.Catalog, string) error
 	LoadWorkspace(string) (domain.Workspace, string, error)
+	CheckWorkspaceRevisions(name, workspaceRevision, catalogRevision string) error
 	SaveWorkspace(domain.Workspace, string) error
 	DeleteWorkspace(string, string) error
 	ListWorkspaces() ([]string, error)

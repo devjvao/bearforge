@@ -12,8 +12,10 @@ import (
 	"github.com/devjvao/bearforge/internal/app"
 )
 
-type dashboardWorkspaceUpdater interface {
+// DashboardWorkspaceUpdater previews workspace fast-forwards and applies a reviewed selection.
+type DashboardWorkspaceUpdater interface {
 	PreviewWorkspaceUpdate(context.Context, string, []string) (app.WorkspaceUpdatePlan, error)
+	PreviewWorkspaceUpdateRetry(context.Context, string, []string) (app.WorkspaceUpdatePlan, error)
 	ApplyWorkspaceUpdate(context.Context, app.WorkspaceUpdatePlan, []string, func(app.Event)) (app.Result, error)
 }
 
@@ -21,8 +23,8 @@ type workspaceUpdateSelection struct {
 	plan     app.WorkspaceUpdatePlan
 	selected map[string]bool
 	index    int
-	// A partial retry only inspects unfinished repositories from the confirmed selection.
-	scope []string
+	// Keep the last applied run until the retry is confirmed.
+	previous *dashboardWorkspace
 }
 
 type workspaceUpdatePreviewMsg struct {
@@ -36,14 +38,21 @@ func (m dashboardModel) previewWorkspaceUpdate() (tea.Model, tea.Cmd) {
 	run.phase, run.err, run.offset = workspacePlanning, nil, 0
 	m.workspaceID++
 	id, ctx, reader := m.workspaceID, run.ctx, m.reader
-	workspace, scope := run.workspace, slices.Clone(run.batch.scope)
+	workspace := run.workspace
+	updater := reader.source.(DashboardWorkspaceUpdater)
+	preview := updater.PreviewWorkspaceUpdate
+	var scope []string
+	if run.batch.previous != nil {
+		preview = updater.PreviewWorkspaceUpdateRetry
+		scope = run.batch.previous.unfinishedUpdates()
+	}
 	return m, func() tea.Msg {
 		release, err := reader.acquire(ctx)
 		if err != nil {
 			return workspaceUpdatePreviewMsg{id: id, err: err}
 		}
 		defer release()
-		plan, err := reader.source.(dashboardWorkspaceUpdater).PreviewWorkspaceUpdate(ctx, workspace, scope)
+		plan, err := preview(ctx, workspace, scope)
 		return workspaceUpdatePreviewMsg{id: id, plan: plan, err: err}
 	}
 }
@@ -84,7 +93,7 @@ func (m dashboardModel) applyWorkspaceUpdateCommand() tea.Cmd {
 			return dashboardWorkspaceDoneMsg{id: id, err: err}
 		}
 		defer release()
-		result, err := reader.source.(dashboardWorkspaceUpdater).ApplyWorkspaceUpdate(ctx, plan, selected, progress.observe)
+		result, err := reader.source.(DashboardWorkspaceUpdater).ApplyWorkspaceUpdate(ctx, plan, selected, progress.observe)
 		return dashboardWorkspaceDoneMsg{id: id, result: result, err: err}
 	}
 }
@@ -141,12 +150,14 @@ func (m dashboardModel) workspaceUpdatePickerKey(key string) (tea.Model, tea.Cmd
 
 func (m dashboardModel) retryWorkspaceUpdate() (tea.Model, tea.Cmd) {
 	run := m.workspaceRun
-	unfinished := run.unfinishedUpdates()
-	if len(unfinished) == 0 {
+	if len(run.unfinishedUpdates()) == 0 {
 		return m, nil
 	}
-	run.ctx, run.cancel = context.WithCancel(m.reader.ctx)
-	run.batch = workspaceUpdateSelection{scope: unfinished}
+	ctx, cancel := context.WithCancel(m.reader.ctx)
+	m.workspaceRun = &dashboardWorkspace{
+		ctx: ctx, cancel: cancel, action: run.action, workspace: run.workspace, root: run.root,
+		batch: workspaceUpdateSelection{previous: run},
+	}
 	return m.previewWorkspaceUpdate()
 }
 

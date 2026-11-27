@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -38,15 +37,7 @@ func addWorkspaceUpdateCommand(workspace *cobra.Command, o *options) {
 				if o.dry {
 					return result, nil
 				}
-				var selected []string
-				blocked := 0
-				for _, row := range plan.Rows {
-					if row.Eligible {
-						selected = append(selected, row.Repository)
-					} else if row.Status == "blocked" || row.Status == "sync_required" {
-						blocked++
-					}
-				}
+				selected, blocked := workspaceUpdateScope(plan)
 				if len(selected) > 0 {
 					if err := o.confirm(ctx, result); err != nil {
 						return result, err
@@ -56,9 +47,9 @@ func addWorkspaceUpdateCommand(workspace *cobra.Command, o *options) {
 				} else {
 					result.Outcome = "unchanged"
 				}
-				if blocked > 0 {
+				if err == nil && blocked != nil {
 					result.Outcome = "partial"
-					err = errors.Join(err, domain.E("conflict", "repositories needing attention: %d; review their reported reasons before retrying", blocked))
+					err = blocked
 				}
 				return result, err
 			})
@@ -68,9 +59,33 @@ func addWorkspaceUpdateCommand(workspace *cobra.Command, o *options) {
 	workspace.AddCommand(command)
 }
 
+func workspaceUpdateScope(plan app.WorkspaceUpdatePlan) ([]string, *domain.Error) {
+	var selected []string
+	var blocked *domain.Error
+	for _, row := range plan.Rows {
+		if row.Eligible {
+			selected = append(selected, row.Repository)
+			continue
+		}
+		if row.Status != "blocked" && row.Status != "sync_required" {
+			continue
+		}
+		code, message := "conflict", row.Detail
+		if row.Problem != nil {
+			code, message = row.Problem.Code, row.Problem.Message
+		}
+		// Report an operation failure ahead of a safety refusal. The preview
+		// retains every individual reason in repository order.
+		if blocked == nil || (domainExitCode(blocked.Code) == 3 && domainExitCode(code) != 3) {
+			blocked = &domain.Error{Code: code, Message: row.Repository + ": " + message}
+		}
+	}
+	return selected, blocked
+}
+
 // Use the same review for dry runs and confirmation. After apply, replace each
 // selected row with its actual outcome and retain the reasons for skipped rows.
-func writeWorkspaceUpdate(writer io.Writer, plan app.WorkspaceUpdatePlan, results []app.Item) error {
+func writeWorkspaceUpdate(writer io.Writer, plan app.WorkspaceUpdatePlan, results []app.Item, reviewing bool) error {
 	items := make(map[string]app.Item, len(results))
 	for _, item := range results {
 		items[item.Repository] = item
@@ -78,25 +93,38 @@ func writeWorkspaceUpdate(writer io.Writer, plan app.WorkspaceUpdatePlan, result
 	var lines []string
 	for _, row := range plan.Rows {
 		status, detail := row.Status, row.Detail
-		if row.Eligible {
-			status = "selected"
-		}
 		advice := row.BaseAdvice
+		branch := row.Branch
 		if item, ok := items[row.Repository]; ok {
 			status, detail = item.Outcome, ""
 			if item.Problem != nil {
 				detail = item.Problem.Message
 				advice = ""
+			} else if item.Outcome == "updated" {
+				branch = ""
+				var moved []string
+				for _, move := range row.Moves {
+					moved = append(moved, fmt.Sprintf("%s: %s → %s", move.Branch, move.From, move.To))
+				}
+				detail = strings.Join(moved, "\n")
+			}
+		} else if row.Eligible {
+			if reviewing {
+				status = "selected"
+			} else {
+				status, detail, advice = "not run", "", ""
 			}
 		}
 		header := fmt.Sprintf("%s  [%s]", repositoryListText(row.Repository), repositoryListText(status))
-		if row.Branch != "" {
-			header += "  " + repositoryListText(row.Branch)
+		if branch != "" {
+			header += "  " + repositoryListText(branch)
 		}
 		lines = append(lines, header)
 		for _, text := range []string{detail, advice} {
 			if text != "" {
-				lines = append(lines, "  "+repositoryListText(text))
+				for line := range strings.SplitSeq(text, "\n") {
+					lines = append(lines, "  "+repositoryListText(line))
+				}
 			}
 		}
 	}
