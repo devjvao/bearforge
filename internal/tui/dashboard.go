@@ -238,6 +238,8 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateWorkspace(v)
 	case dashboardWorkspacePreviewMsg, dashboardWorkspaceProgressMsg:
 		return m.updateWorkspace(msg)
+	case workspaceUpdatePreviewMsg:
+		return m.receiveWorkspaceUpdatePreview(v)
 	case dashboardAddedMsg:
 		if m.addRun != nil && v.id == m.addID && m.addRun.phase == addExecuting {
 			m.discardImportResults()
@@ -350,6 +352,9 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "u":
 			m.invalidatePullRequests()
 			return m.openWorkspace(workspaceUpdate)
+		case "U":
+			m.invalidatePullRequests()
+			return m.openWorkspace(workspaceUpdateAll)
 		case "a":
 			m.invalidatePullRequests()
 			return m.openAdd()

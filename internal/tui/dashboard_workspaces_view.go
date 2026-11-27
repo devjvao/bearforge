@@ -35,6 +35,8 @@ func (m dashboardModel) workspaceView() tea.View {
 		if run.action.updatesBranches() {
 			summary = "Checking local and remote branches..."
 		}
+	case workspacePicking:
+		summary = fmt.Sprintf("%d selected | %d repositories", len(run.batch.selected), len(run.batch.plan.Rows))
 	case workspaceReview:
 		summary = "Review the plan; y confirms"
 		if run.err != nil {
@@ -49,7 +51,12 @@ func (m dashboardModel) workspaceView() tea.View {
 		}
 	}
 	lines := []string{m.styles.brand.Render("Bearforge / " + string(run.action)), "Workspace: " + displayText(run.workspace), m.styles.focus.Render(summary)}
-	body := viewportLines(m.workspaceWrappedContent(), run.offset, m.detailWidth(), m.addViewportHeight())
+	var body []string
+	if run.phase == workspacePicking {
+		body = m.workspaceUpdatePickerLines()
+	} else {
+		body = viewportLines(m.workspaceWrappedContent(), run.offset, m.detailWidth(), m.addViewportHeight())
+	}
 	if m.framed() {
 		lines = append(lines, strings.Split(m.pane(body, m.width, true), "\n")...)
 	} else {
@@ -60,6 +67,8 @@ func (m dashboardModel) workspaceView() tea.View {
 	switch run.phase {
 	case workspaceForm:
 		first, second = "Tab field | Enter preview", "Esc dashboard | Ctrl-C cancel"
+	case workspacePicking:
+		first, second = "Space select | Enter review | j/k move", "Esc back | r refresh | PgUp/PgDn details | q quit"
 	case workspaceReview:
 		first = "PgUp/PgDn review | y confirm"
 		if run.err != nil {
@@ -69,6 +78,9 @@ func (m dashboardModel) workspaceView() tea.View {
 		second = "q cancel/quit | Ctrl-C cancel"
 	case workspaceResults:
 		second = "Esc dashboard | v view | q quit"
+		if run.action == workspaceUpdateAll && len(run.unfinishedUpdates()) > 0 {
+			first = "r retry unfinished | PgUp/PgDn details"
+		}
 	}
 	lines = append(lines, actionHelp(first, m.width, m.styles), actionHelp(second, m.width, m.styles))
 	return dashboardView(lines, m.width)
@@ -92,6 +104,9 @@ func (m dashboardModel) workspaceContent() []string {
 		}
 		return append(lines, name, branch, "Leave branch blank to use the name.", "Creates an empty workspace. Add repositories afterward with a.")
 	case workspacePlanning:
+		if run.action == workspaceUpdateAll {
+			return append(lines, "Checking workspace branches and their remote tips...")
+		}
 		if run.action.updatesBranches() {
 			return append(lines, "Looking up the latest branch tips for "+displayText(run.names[0])+".")
 		}
@@ -99,6 +114,15 @@ func (m dashboardModel) workspaceContent() []string {
 	case workspaceReview:
 		if run.err != nil {
 			return append(lines, "Retry with r; Escape returns without changes.")
+		}
+		if run.action == workspaceUpdateAll {
+			lines = append(lines, fmt.Sprintf("Fast-forward branches in %d selected repositories.", len(run.names)))
+			for _, row := range run.batch.plan.Rows {
+				if run.batch.selected[row.Repository] {
+					lines = append(lines, "", updateRowDetails(row))
+				}
+			}
+			return append(lines, "", "Press y to apply these fast-forwards or Escape to edit the selection.")
 		}
 		if run.action == workspaceCreate {
 			item := run.preview.Items[0]
@@ -155,9 +179,9 @@ func (m dashboardModel) workspaceContent() []string {
 			completed, failed := 0, 0
 			for _, id := range run.names {
 				switch run.states[id] {
-				case "removed", "succeeded":
+				case "removed", "succeeded", "updated":
 					completed++
-				case "failed":
+				case "failed", "skipped":
 					completed++
 					failed++
 				}
@@ -217,6 +241,8 @@ func (m dashboardModel) workspaceProgressAction() string {
 		return "Updating and rebasing the selected branch"
 	case workspaceUpdate:
 		return "Updating local branches"
+	case workspaceUpdateAll:
+		return "Fast-forwarding selected branches"
 	case workspaceCreate:
 		return "Creating workspace"
 	case workspaceRemoveRepo:

@@ -56,6 +56,12 @@ func (s *Service) UpdateWorktree(ctx context.Context, req UpdateWorktreeRequest)
 		}
 		defer release()
 	}
+	return s.updateWorktree(ctx, req, nil)
+}
+
+// The caller holds the mutation lock for the duration of a confirmed update.
+func (s *Service) updateWorktree(ctx context.Context, req UpdateWorktreeRequest, expected *fastForwardTargets) (Result, error) {
+	r := NewResult("workspace.update-worktree")
 	g, ok := s.Git.(worktreeUpdater)
 	if !ok {
 		return r, domain.E("unavailable", "worktree updates require the Git adapter")
@@ -69,13 +75,14 @@ func (s *Service) UpdateWorktree(ctx context.Context, req UpdateWorktreeRequest)
 		item.Tracking = p.Upstream.label()
 	}
 	r.Items = []Item{item}
-	data, _ := json.Marshal(p)
-	digest := sha256.Sum256(data)
-	r.PlanDigest = hex.EncodeToString(digest[:])
+	r.PlanDigest = p.digest()
 	if !req.DryRun && r.PlanDigest != req.ExpectedPlan {
 		return r, domain.E("conflict", "the branch, remote tips or workspace changed; review the update again")
 	}
-	if !req.DryRun {
+	// A workspace review only accepts targets already verified locally. Scoped
+	// fetches belong to the single-checkout workflow, which previews conditional
+	// actions when the remote's objects are missing.
+	if !req.DryRun && expected == nil {
 		for i, t := range []updateTarget{p.Base, p.Upstream} {
 			if t.Name == "" || i == 1 && t == p.Base {
 				continue
@@ -94,12 +101,15 @@ func (s *Service) UpdateWorktree(ctx context.Context, req UpdateWorktreeRequest)
 		r.Outcome = "planned"
 		return r, nil
 	}
+	if expected != nil && actions.fastForwardTargets != *expected {
+		return failedWorktreeUpdate(r, domain.E("conflict", "the fast-forward targets changed; review the update again"))
+	}
 	status, err := g.CheckUpdateWorktree(ctx, p.Bare, p.Path, p.Branch)
 	if err != nil {
 		return failedWorktreeUpdate(r, err)
 	}
 	if status.Head != p.Head {
-		return failedWorktreeUpdate(r, domain.E("conflict", "the feature moved during fetch; review the update again"))
+		return failedWorktreeUpdate(r, domain.E("conflict", "the checked-out branch moved after review; review the update again"))
 	}
 	current := p.Head
 	if actions.featureFF != "" {
@@ -125,6 +135,12 @@ func (s *Service) UpdateWorktree(ctx context.Context, req UpdateWorktreeRequest)
 	return r, nil
 }
 
+func (p worktreeUpdate) digest() string {
+	data, _ := json.Marshal(p)
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:])
+}
+
 func failedWorktreeUpdate(r Result, err error) (Result, error) {
 	r.Outcome = "partial"
 	r.Problem = ProblemFor(err)
@@ -134,7 +150,7 @@ func failedWorktreeUpdate(r Result, err error) (Result, error) {
 }
 
 func (s *Service) planWorktreeUpdate(ctx context.Context, req UpdateWorktreeRequest, git worktreeUpdater) (worktreeUpdate, error) {
-	p := worktreeUpdate{Root: s.Store.RootPath(), Workspace: req.Workspace, Repository: req.Repository, UpdateOnly: req.UpdateOnly}
+	var p worktreeUpdate
 	w, wrev, err := s.Store.LoadWorkspace(req.Workspace)
 	if err != nil {
 		return p, err
@@ -151,7 +167,12 @@ func (s *Service) planWorktreeUpdate(ctx context.Context, req UpdateWorktreeRequ
 	if !ok {
 		return p, domain.E("not_found", "repository %s is no longer registered", req.Repository)
 	}
-	p.WorkspaceRevision, p.CatalogRevision = wrev, crev
+	return s.planMappedWorktreeUpdate(ctx, req, git, repo, m, c.Remote, wrev, crev)
+}
+
+func (s *Service) planMappedWorktreeUpdate(ctx context.Context, req UpdateWorktreeRequest, git worktreeUpdater, repo domain.Repository, m domain.Mapping, catalogRemote, wrev, crev string) (worktreeUpdate, error) {
+	p := worktreeUpdate{Root: s.Store.RootPath(), Workspace: req.Workspace, Repository: req.Repository, UpdateOnly: req.UpdateOnly, WorkspaceRevision: wrev, CatalogRevision: crev}
+	var err error
 	p.Bare, err = s.checkRepository(ctx, repo)
 	if err != nil {
 		return p, err
@@ -162,11 +183,11 @@ func (s *Service) planWorktreeUpdate(ctx context.Context, req UpdateWorktreeRequ
 	}
 	p.MappedBranch = m.Branch
 	status, err := git.CheckUpdateWorktree(ctx, p.Bare, p.Path, "")
+	p.Branch, p.Head = status.Branch, status.Head
 	if err != nil {
 		return p, err
 	}
-	p.Branch, p.Head = status.Branch, status.Head
-	ref, err := s.repositoryBaseRef(ctx, p.Bare, repo, c.Remote)
+	ref, err := s.repositoryBaseRef(ctx, p.Bare, repo, catalogRemote)
 	if err != nil {
 		return p, err
 	}
@@ -297,7 +318,7 @@ func (s *Service) branchRelation(ctx context.Context, bare, local, remote string
 		isAncestor, err := s.Git.IsAncestor(ctx, bare, direction.ancestor, direction.descendant)
 		if err != nil {
 			if problem, ok := errors.AsType[*domain.Error](err); preview && ok && problem.Code == "incomplete_history" {
-				return "pending", nil
+				return "incomplete", nil
 			}
 			return "", err
 		}
@@ -312,29 +333,35 @@ func (s *Service) branchRelation(ctx context.Context, bare, local, remote string
 	return "diverged", nil
 }
 
-func (s *Service) updateTrackingAction(ctx context.Context, bare, name, local string, t updateTarget, preview bool) (string, string, error) {
+func (s *Service) updateTrackingAction(ctx context.Context, bare, name, local string, t updateTarget, preview bool) (detail, target, missingHistory string, err error) {
 	relation, err := s.branchRelation(ctx, bare, local, t.Tip, preview)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	switch relation {
 	case "equal":
-		return name + " is up to date with " + t.label() + ".", "", nil
+		return name + " is up to date with " + t.label() + ".", "", "", nil
 	case "ahead":
-		return "Preserve commits ahead of " + t.label() + " on " + name + ".", "", nil
+		return "Preserve commits ahead of " + t.label() + " on " + name + ".", "", "", nil
 	case "behind":
-		return "Fast-forward " + name + " to " + t.label() + ".", t.Tip, nil
-	case "pending":
-		return "Fast-forward " + name + " from " + t.label() + " if its fetched history allows it.", "", nil
+		return "Fast-forward " + name + " to " + t.label() + ".", t.Tip, "", nil
+	case "pending", "incomplete":
+		return "Fast-forward " + name + " from " + t.label() + " if its fetched history allows it.", "", relation, nil
 	default:
-		return "", "", domain.E("conflict", "local %s and %s have diverged; reconcile them manually before updating", name, t.label())
+		return "", "", "", domain.E("conflict", "local %s and %s have diverged; reconcile them manually before updating", name, t.label())
 	}
 }
 
 // The concrete targets are filled only when their ancestry has been verified.
 type updateActions struct {
 	WorktreeUpdatePlan
-	featureFF, baseFF, rebaseTo string
+	fastForwardTargets
+	rebaseTo       string
+	missingHistory string
+}
+
+type fastForwardTargets struct {
+	featureFF, baseFF string
 }
 
 func (s *Service) worktreeUpdateActions(ctx context.Context, p worktreeUpdate, preview bool) (updateActions, error) {
@@ -347,7 +374,7 @@ func (s *Service) worktreeUpdateActions(ctx context.Context, p worktreeUpdate, p
 	case p.Branch != p.Base.Name && p.Upstream == p.Base && !p.UpdateOnly:
 		plan.FeatureAction = "The feature tracks the rebase target directly."
 	default:
-		plan.FeatureAction, plan.featureFF, err = s.updateTrackingAction(ctx, p.Bare, p.Branch, p.Head, p.Upstream, preview)
+		plan.FeatureAction, plan.featureFF, plan.missingHistory, err = s.updateTrackingAction(ctx, p.Bare, p.Branch, p.Head, p.Upstream, preview)
 		if err != nil {
 			return plan, err
 		}
@@ -357,7 +384,11 @@ func (s *Service) worktreeUpdateActions(ctx context.Context, p worktreeUpdate, p
 	}
 	plan.DefaultAction = p.SkipDefault
 	if p.SkipDefault == "" {
-		plan.DefaultAction, plan.baseFF, err = s.updateTrackingAction(ctx, p.Bare, p.Base.Name, p.LocalBase, p.Base, preview)
+		var missingHistory string
+		plan.DefaultAction, plan.baseFF, missingHistory, err = s.updateTrackingAction(ctx, p.Bare, p.Base.Name, p.LocalBase, p.Base, preview)
+		if plan.missingHistory == "" || missingHistory == "incomplete" {
+			plan.missingHistory = missingHistory
+		}
 		if err != nil {
 			return plan, err
 		}
@@ -373,7 +404,7 @@ func (s *Service) worktreeUpdateActions(ctx context.Context, p worktreeUpdate, p
 	switch relation {
 	case "equal", "ahead":
 		plan.RebaseAction = p.Branch + " already contains " + p.Base.label() + "."
-	case "pending":
+	case "pending", "incomplete":
 		plan.RebaseAction = "Rebase " + p.Branch + " onto " + p.Base.label() + " if needed after fetch."
 	default:
 		plan.RebaseAction = "Rebase " + p.Branch + " onto " + p.Base.label() + "."

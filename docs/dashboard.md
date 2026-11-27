@@ -31,6 +31,7 @@ For first-time setup, follow [authentication](onboarding.md#authenticate-github-
 | `a` | Add registered repositories to the current workspace |
 | `d` / `D` | Preview selected-repository / whole-workspace removal |
 | `s` | Fetch/prune repositories in the current workspace |
+| `U` | Select and review fast-forwards across the workspace |
 | `u` | Preview fast-forwarding the selected repository’s local branches from their remotes |
 | `b` | Preview updating the selected feature branch and rebasing it onto the repository default |
 | `o` | Inspect unfinished operations and review recovery actions |
@@ -69,6 +70,12 @@ If a checkout loses its `.git` link, preview its removal to see where the remain
 Press `d` in the repository pane to preview removing the selected member. Press `D` to preview removal of every member and the workspace definition, including members hidden by filters. Only `y` confirms. Dirty or unsafe worktrees are refused, branches/history are preserved, and unrelated workspace container files remain. A changed preview requires review again. See [safe lifecycle workflows](onboarding.md#diagnose-and-retire-safely).
 
 ## Sync and pull requests
+
+Press `U` to review the whole workspace, including repositories hidden by the dashboard filter. Eligible repositories start checked. Press Space to toggle a repository, Enter to review the selection, and `y` once to apply it. The preview names the checked-out branch and any local default branch that would advance. Each branch advances only to a reviewed commit reachable by fast-forward.
+
+The preview checks the remote tips and uses local history to verify ancestry. If a remote commit is new to this machine, close the preview, press `s` to fetch it, and reopen it. A feature can match its upstream and still trail the repository default. Review that rebase separately with `b`. If a checkout changes after review, the results identify the affected repository. Press `r` in partial results to preview the unfinished selections again.
+
+The **Base** column uses locally cached remote refs. If Git already has the target commit through another branch, a workspace update can fast-forward the local branch while that column still shows an older comparison. Press `s` to refresh the remote refs.
 
 Select a repository and press `u` to review fast-forward updates to its current branch and local default branch. Press `b` to also rebase the current feature branch onto the repository default. Both previews show which branches will move. Press `y` to apply the reviewed update locally. Rebasing can change the IDs of commits already on the feature branch. Publishing those commits is a separate Git operation.
 

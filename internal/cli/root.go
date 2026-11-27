@@ -228,6 +228,15 @@ func (o *options) render(r app.Result) error {
 	if o.output == "json" {
 		return json.NewEncoder(o.out).Encode(r)
 	}
+	if plan, ok := r.Data.(app.WorkspaceUpdatePlan); ok {
+		if err := writeWorkspaceUpdate(o.out, plan, r.Items); err != nil {
+			return err
+		}
+		if r.Problem != nil {
+			return o.diagnostic("Error:", r.Problem.Message)
+		}
+		return nil
+	}
 	if strings.HasPrefix(r.Command, "auth.") {
 		return o.renderAuthentication(r)
 	}
@@ -331,7 +340,11 @@ func (o *options) confirm(ctx context.Context, plan app.Result) error {
 	if o.noInput || o.output != "human" || !isTerminal(o.in) {
 		return domain.E("confirmation", "confirmation required; review --dry-run then use --yes")
 	}
-	if repair, ok := plan.Data.(app.ImportReassociationPlan); ok {
+	if update, ok := plan.Data.(app.WorkspaceUpdatePlan); ok {
+		if err := writeWorkspaceUpdate(o.errOut, update, nil); err != nil {
+			return err
+		}
+	} else if repair, ok := plan.Data.(app.ImportReassociationPlan); ok {
 		if err := o.writeImportReassociationReview(repair); err != nil {
 			return err
 		}

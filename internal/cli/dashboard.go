@@ -59,6 +59,12 @@ func (s dashboardService) RemoveRepositories(ctx context.Context, req app.Remove
 	return service.RemoveRepositories(ctx, req)
 }
 
+func (s dashboardService) ApplyWorkspaceUpdate(ctx context.Context, plan app.WorkspaceUpdatePlan, selected []string, observe func(app.Event)) (app.Result, error) {
+	service := *s.Service
+	service.Observe = observe
+	return service.ApplyWorkspaceUpdate(ctx, plan, selected)
+}
+
 func addDashboardCommand(root *cobra.Command, o *options) {
 	root.AddCommand(&cobra.Command{
 		Use:   "tui [WORKSPACE]",
@@ -70,6 +76,7 @@ func addDashboardCommand(root *cobra.Command, o *options) {
 			"s fetches/prunes all repositories in the current workspace, including filtered rows.\n" +
 			"Sync uses --jobs and shows progress and per-repository results without changing checkouts.\n\n" +
 			"u previews fast-forwarding local branches for the selected repository; b also rebases the feature branch onto the repository default. Press y to apply locally.\n" +
+			"U previews fast-forwards for the whole workspace, including filtered repositories. Space toggles eligible rows, Enter reviews the selection, and y confirms once.\n" +
 			"a opens the registered-repository picker for the current workspace.\n" +
 			"i imports provider repositories, including when the root has no workspaces. Choose a saved connection or guided token setup, then explicitly Load.\n" +
 			"Space selects remote repositories, e edits local IDs, Enter reviews, and y confirms cloning without workspace attachment.\n" +

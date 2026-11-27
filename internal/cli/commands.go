@@ -19,6 +19,7 @@ func addCommands(root *cobra.Command, o *options) {
 	workspace := &cobra.Command{Use: "workspace", Short: "Manage workspaces"}
 	ops := &cobra.Command{Use: "operations", Short: "Inspect and recover interrupted operations"}
 	root.AddCommand(repo, workspace, ops)
+	addWorkspaceUpdateCommand(workspace, o)
 	addRepositoryLifecycleCommands(repo, o)
 	addRepositoryRebindCommand(repo, o)
 	command := func(parent *cobra.Command, use, short string, args cobra.PositionalArgs, git, progress bool, fn func(context.Context, *app.Service, []string) (app.Result, error)) *cobra.Command {

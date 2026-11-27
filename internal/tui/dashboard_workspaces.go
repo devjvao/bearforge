@@ -29,6 +29,7 @@ type workspacePhase uint8
 const (
 	workspaceForm workspacePhase = iota
 	workspacePlanning
+	workspacePicking
 	workspaceReview
 	workspaceExecuting
 	workspaceResults
@@ -42,6 +43,7 @@ const (
 	workspaceRemoveAll  workspaceAction = "Remove workspace"
 	workspaceRebase     workspaceAction = "Rebase current branch"
 	workspaceUpdate     workspaceAction = "Update local branches"
+	workspaceUpdateAll  workspaceAction = "Update workspace branches"
 )
 
 func (action workspaceAction) updatesBranches() bool {
@@ -63,6 +65,7 @@ type dashboardWorkspace struct {
 	err               error
 	states            map[string]string
 	progress          *dashboardProgress
+	batch             workspaceUpdateSelection
 }
 
 type dashboardWorkspacePreviewMsg struct {
@@ -88,6 +91,8 @@ func (m dashboardModel) openWorkspace(action workspaceAction) (tea.Model, tea.Cm
 	_, available := m.reader.source.(DashboardWorkspaceActions)
 	if action.updatesBranches() {
 		_, available = m.reader.source.(dashboardWorktreeUpdater)
+	} else if action == workspaceUpdateAll {
+		_, available = m.reader.source.(dashboardWorkspaceUpdater)
 	}
 	if !available || m.loading || m.loadErr != nil ||
 		len(m.data.PendingOperations) > 0 || (m.syncRun != nil && m.syncRun.running) ||
@@ -134,6 +139,9 @@ func (m dashboardModel) openWorkspace(action workspaceAction) (tea.Model, tea.Cm
 
 func (m dashboardModel) previewWorkspace() (tea.Model, tea.Cmd) {
 	run := m.workspaceRun
+	if run.action == workspaceUpdateAll {
+		return m.previewWorkspaceUpdate()
+	}
 	run.create = app.CreateWorkspaceRequest{Name: run.workspace, Branch: run.branch, DryRun: true}
 	run.remove = app.RemoveRequest{Workspace: run.workspace, Repositories: slices.Clone(run.names), Whole: run.action == workspaceRemoveAll, DryRun: true, MoveUnverified: run.remove.MoveUnverified}
 	run.phase, run.err, run.offset, run.preview = workspacePlanning, nil, 0, app.Result{}
@@ -185,24 +193,34 @@ func (m dashboardModel) workspaceCommand(execute bool) tea.Cmd {
 
 func (m dashboardModel) confirmWorkspace() (tea.Model, tea.Cmd) {
 	run := m.workspaceRun
-	if run.phase != workspaceReview || run.err != nil || run.preview.PlanDigest == "" || m.width < 36 || m.height < 12 {
+	if run.phase != workspaceReview || run.err != nil || m.width < 36 || m.height < 12 {
 		return m, nil
 	}
-	run.phase, run.offset = workspaceExecuting, 0
+	if run.action == workspaceUpdateAll {
+		if len(run.names) == 0 {
+			return m, nil
+		}
+	} else if run.preview.PlanDigest == "" {
+		return m, nil
+	}
+	run.phase, run.offset, run.result = workspaceExecuting, 0, app.Result{}
 	run.states = make(map[string]string, len(run.names))
 	for _, id := range run.names {
 		run.states[id] = "queued"
 	}
-	run.progress = newDashboardProgress(run.names)
 	m.syncRun, m.showSync, m.addRun, m.showAdd = nil, false, nil, false
 	m.workspaceID++
+	run.progress = newDashboardProgress(run.names)
+	if run.action == workspaceUpdateAll {
+		return m, tea.Batch(m.applyWorkspaceUpdateCommand(), m.workspaceProgressCommand())
+	}
 	return m, tea.Batch(m.workspaceCommand(true), m.workspaceProgressCommand())
 }
 
 func (m dashboardModel) workspaceProgressCommand() tea.Cmd {
-	id, run := m.workspaceID, m.workspaceRun
+	id, progress, ctx := m.workspaceID, m.workspaceRun.progress, m.workspaceRun.ctx
 	return func() tea.Msg {
-		if states, ok := run.progress.next(run.ctx); ok {
+		if states, ok := progress.next(ctx); ok {
 			return dashboardWorkspaceProgressMsg{id: id, states: states}
 		}
 		return nil
@@ -329,11 +347,23 @@ func (m dashboardModel) workspaceText(text string) dashboardModel {
 func (m dashboardModel) workspaceKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	run, name := m.workspaceRun, key.String()
 	if name == "esc" && run.phase != workspaceExecuting {
+		if run.action == workspaceUpdateAll && run.phase == workspaceReview && run.err == nil {
+			run.phase, run.offset = workspacePicking, 0
+			return m, nil
+		}
 		if run.phase == workspaceReview && run.action == workspaceCreate {
 			run.phase, run.err, run.preview, run.offset = workspaceForm, nil, app.Result{}, 0
 			return m, nil
 		}
 		return m.closeWorkspace()
+	}
+	if run.action == workspaceUpdateAll {
+		if run.phase == workspacePicking {
+			return m.workspaceUpdatePickerKey(name)
+		}
+		if run.phase == workspaceResults && name == "r" {
+			return m.retryWorkspaceUpdate()
+		}
 	}
 	if name == "pgdown" || name == "pgup" {
 		delta := m.addViewportHeight()

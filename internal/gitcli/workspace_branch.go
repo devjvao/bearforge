@@ -23,7 +23,7 @@ func (c *Client) AdvertisedBranch(ctx context.Context, bare, remote, branch stri
 		return "", nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("look up %s/%s (use --offline for cached branch selection): %w", remote, branch, err)
+		return "", fmt.Errorf("look up %s/%s: %w", remote, branch, err)
 	}
 	// ls-remote patterns can also match suffixes after a slash.
 	for line := range strings.SplitSeq(strings.TrimSpace(string(b)), "\n") {

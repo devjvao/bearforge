@@ -54,6 +54,7 @@ Use `bearforge COMMAND --help` for flags and examples.
 | `repo rebind` | Review a replacement saved connection for registered repositories |
 | `repo remove` / `retire`, `retired`, `restore --operation ID` | Retire and restore bare repositories without deletion |
 | `workspace create` / `init`, `add`, `list`, `show` / `ls`, `path` | Create workspaces and manage membership |
+| `workspace update WORKSPACE` | Preview and apply selected local fast-forwards with one confirmation |
 | `workspace remove-repo`, `remove` | Review safe worktree/workspace removal |
 | `sync`, `status` | Fetch registered repositories or inspect local workspace state |
 | `exec WORKSPACE -- COMMAND ARG...` | Run a command across verified worktrees |
@@ -224,6 +225,17 @@ The dashboard offers provider import, workspace creation, repository selection, 
 Sync fetches/prunes remote-tracking refs. It does not rebase, merge, reset, switch branches or push. Refresh/status/doctor use local observations and do not fetch.
 
 Local status inspection uses the catalog's `defaults.jobs` worker limit (default 4, range 1–64). The dashboard displays repository results as they finish, with a completed/total count. CLI status retains one final result in repository order, including readable repositories when another check fails. Set `defaults.jobs: 1` in `<root>/.bearforge/catalog.yaml` for sequential inspection.
+
+## Update branches across a workspace
+
+```sh
+bearforge workspace update audit-feature --dry-run
+bearforge workspace update audit-feature --repo api --repo web
+```
+
+The first command previews every workspace member. The second reviews only `api` and `web` and asks once before applying eligible fast-forwards. Omit `--repo` to consider all members. For automation, use `--dry-run --json` to inspect the plan and `--yes` to approve the eligible updates in a fresh invocation.
+
+The preview reads advertised remote tips. If a tip is missing from local history, fetch the affected repository with `bearforge sync REPO` and preview again. A dry run reports each repository’s status. An apply exits nonzero when a repository in scope still requires attention, including when other repositories updated successfully. To retry a subset, repeat `--repo` for those IDs. Use the dashboard’s `b` action when an individual feature branch needs rebasing onto its default.
 
 ## Look up pull requests
 
