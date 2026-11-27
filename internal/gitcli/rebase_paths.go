@@ -24,10 +24,14 @@ func (c *Client) checkIgnoredRebasePaths(ctx context.Context, path, old, target 
 		return false, err
 	}
 	defer root.Close()
+	scan := &rebasePathScan{root: root, budget: maxRebasePathChecks}
 	ignored := &ignoredPaths{}
 	for name := range strings.SplitSeq(strings.TrimSuffix(string(files), "\x00"), "\x00") {
 		node := ignored
 		for part := range strings.SplitSeq(strings.TrimSuffix(name, "/"), "/") {
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
 			if node.children == nil {
 				node.children = make(map[string]*ignoredPaths)
 			}
@@ -44,7 +48,7 @@ func (c *Client) checkIgnoredRebasePaths(ctx context.Context, path, old, target 
 	for _, args := range [][]string{
 		{"diff", "--name-only", "--no-renames", "--no-ext-diff", "-z", old, target, "--"},
 		// Signature reports share stdout with the first pathname of each commit.
-		{"log", "--format=", "--no-show-signature", "--name-only", "--no-renames", "-m", "-z", target + ".." + old, "--"},
+		{"log", "--format=", "--no-show-signature", "--name-only", "--no-renames", "--diff-merges=separate", "-z", target + ".." + old, "--"},
 	} {
 		changed, err := c.Run(ctx, path, append([]string{"--no-replace-objects"}, args...)...)
 		if err != nil {
@@ -58,7 +62,7 @@ func (c *Client) checkIgnoredRebasePaths(ctx context.Context, path, old, target 
 				continue
 			}
 			seen[name] = true
-			overlaps, err := ignored.overlaps(root, name)
+			overlaps, err := ignored.overlaps(ctx, scan, name)
 			if err != nil {
 				return false, err
 			}
@@ -66,13 +70,32 @@ func (c *Client) checkIgnoredRebasePaths(ctx context.Context, path, old, target 
 				return false, domain.E("conflict", "rebasing would overwrite ignored working files at %s; move them aside before updating", name)
 			}
 			if conflicts != nil {
-				if err := conflicts.check(ctx, root, ignored, name); err != nil {
+				if err := conflicts.check(ctx, scan, ignored, name); err != nil {
 					return false, err
 				}
 			}
 		}
 	}
 	return true, nil
+}
+
+// Share one limit across alias resolution and generated conflict filenames.
+const maxRebasePathChecks = 250_000
+
+type rebasePathScan struct {
+	root   *os.Root
+	budget int
+}
+
+func (s *rebasePathScan) spend(ctx context.Context, n int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if n > s.budget {
+		return domain.E("conflict", "too many paths to verify ignored working files; move them aside before rebasing")
+	}
+	s.budget -= n
+	return nil
 }
 
 type ignoredPaths struct {
@@ -84,9 +107,12 @@ type ignoredPaths struct {
 	ignored, directory bool
 }
 
-func (node *ignoredPaths) overlaps(root *os.Root, name string) (bool, error) {
+func (node *ignoredPaths) overlaps(ctx context.Context, scan *rebasePathScan, name string) (bool, error) {
 	parent := "."
 	for part := range strings.SplitSeq(name, "/") {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
 		path := filepath.Join(parent, part)
 		if node.ignored {
 			if !node.directory {
@@ -94,7 +120,10 @@ func (node *ignoredPaths) overlaps(root *os.Root, name string) (bool, error) {
 			}
 			// Git collapsed an ignored directory in the inventory. A new path
 			// beneath it is safe until it actually meets an existing entry.
-			info, err := root.Lstat(path)
+			if err := scan.spend(ctx, 1); err != nil {
+				return false, err
+			}
+			info, err := scan.root.Lstat(path)
 			if os.IsNotExist(err) {
 				return false, nil
 			}
@@ -108,7 +137,7 @@ func (node *ignoredPaths) overlaps(root *os.Root, name string) (bool, error) {
 			next := node.children[part]
 			if next == nil {
 				var err error
-				next, err = node.alias(root, parent, part)
+				next, err = node.alias(ctx, scan, parent, part)
 				if err != nil {
 					return false, err
 				}
@@ -124,11 +153,14 @@ func (node *ignoredPaths) overlaps(root *os.Root, name string) (bool, error) {
 	return true, nil
 }
 
-func (node *ignoredPaths) alias(root *os.Root, parent, part string) (*ignoredPaths, error) {
+func (node *ignoredPaths) alias(ctx context.Context, scan *rebasePathScan, parent, part string) (*ignoredPaths, error) {
 	if found, ok := node.aliases[part]; ok {
 		return found, nil
 	}
-	actual, err := root.Lstat(filepath.Join(parent, part))
+	if err := scan.spend(ctx, 1); err != nil {
+		return nil, err
+	}
+	actual, err := scan.root.Lstat(filepath.Join(parent, part))
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -136,20 +168,23 @@ func (node *ignoredPaths) alias(root *os.Root, parent, part string) (*ignoredPat
 		return nil, err
 	}
 	if node.entries == nil {
-		if err := node.readEntries(root, parent); err != nil {
+		if err := node.readEntries(ctx, scan, parent); err != nil {
 			return nil, err
 		}
 	}
 	candidates := node.children
-	if !actual.IsDir() && node.entries[part] {
+	if node.entries[part] {
 		// Two exact spellings identify independent entries, even for hard
-		// links. Only an unlisted spelling could alias this file.
+		// links. Only an unlisted spelling could alias this entry.
 		candidates = node.unlisted
 	}
 	var found *ignoredPaths
 	for spelling, child := range candidates {
+		if err := scan.spend(ctx, 1); err != nil {
+			return nil, err
+		}
 		if child.info == nil {
-			child.info, err = root.Lstat(filepath.Join(parent, spelling))
+			child.info, err = scan.root.Lstat(filepath.Join(parent, spelling))
 			if err != nil {
 				return nil, err
 			}
@@ -168,15 +203,24 @@ func (node *ignoredPaths) alias(root *os.Root, parent, part string) (*ignoredPat
 
 // Git or the filesystem can spell a name differently from its directory entry
 // (case, Unicode normalization or a short name). Index those spellings once.
-func (node *ignoredPaths) readEntries(root *os.Root, parent string) error {
-	dir, err := root.Open(parent)
+func (node *ignoredPaths) readEntries(ctx context.Context, scan *rebasePathScan, parent string) error {
+	if err := scan.spend(ctx, 1); err != nil {
+		return err
+	}
+	dir, err := scan.root.Open(parent)
 	if err != nil {
 		return err
 	}
 	defer dir.Close()
 	entries := make(map[string]bool)
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		names, err := dir.Readdirnames(128)
+		if err := scan.spend(ctx, len(names)); err != nil {
+			return err
+		}
 		for _, name := range names {
 			entries[name] = true
 		}
@@ -187,14 +231,19 @@ func (node *ignoredPaths) readEntries(root *os.Root, parent string) error {
 			return err
 		}
 	}
+	var unlisted map[string]*ignoredPaths
 	for spelling, child := range node.children {
+		if err := scan.spend(ctx, 1); err != nil {
+			return err
+		}
 		if !entries[spelling] {
-			if node.unlisted == nil {
-				node.unlisted = make(map[string]*ignoredPaths)
+			if unlisted == nil {
+				unlisted = make(map[string]*ignoredPaths)
 			}
-			node.unlisted[spelling] = child
+			unlisted[spelling] = child
 		}
 	}
 	node.entries = entries
+	node.unlisted = unlisted
 	return nil
 }

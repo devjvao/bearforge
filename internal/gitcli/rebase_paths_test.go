@@ -1,11 +1,99 @@
 package gitcli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// Cancel after real scan work so the test exercises cancellation inside the
+// directory scan independently of the scheduler or filesystem speed.
+type cancelDuringRebasePathScan struct {
+	context.Context
+	cancel context.CancelFunc
+	scan   *rebasePathScan
+	at     int
+}
+
+func (c cancelDuringRebasePathScan) Err() error {
+	if c.scan.budget <= c.at {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+func TestIgnoredAliasScanBoundsEnumerationAndComparisons(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"tracked", "ignored", "other"} {
+		if err := os.Mkdir(filepath.Join(dir, name), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	t.Run("directory entries share the budget", func(t *testing.T) {
+		scan := &rebasePathScan{root, 2}
+		node := &ignoredPaths{children: map[string]*ignoredPaths{"ignored": {ignored: true}}}
+		if err := node.readEntries(t.Context(), scan, "."); err == nil || !strings.Contains(err.Error(), "too many paths") || node.entries != nil {
+			t.Fatalf("unbounded or partially published directory listing: %v", err)
+		}
+	})
+	t.Run("cancel during directory scan", func(t *testing.T) {
+		scan := &rebasePathScan{root, maxRebasePathChecks}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		during := cancelDuringRebasePathScan{ctx, cancel, scan, scan.budget - 2}
+		node := &ignoredPaths{}
+		if err := node.readEntries(during, scan, "."); !errors.Is(err, context.Canceled) || node.entries != nil {
+			t.Fatalf("directory listing ignored cancellation: %v", err)
+		}
+	})
+	t.Run("charge ambiguous identity comparison", func(t *testing.T) {
+		if _, err := root.Lstat("TRACKED"); os.IsNotExist(err) {
+			t.Skip("filesystem distinguishes these spellings")
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		scan := &rebasePathScan{root, maxRebasePathChecks}
+		node := &ignoredPaths{children: map[string]*ignoredPaths{"ignored": {ignored: true}}}
+		if err := node.readEntries(t.Context(), scan, "."); err != nil {
+			t.Fatal(err)
+		}
+		scan.budget = 1 // Enough to probe the changed entry, but not to compare identities.
+		if _, err := node.overlaps(t.Context(), scan, "TRACKED/new"); err == nil || !strings.Contains(err.Error(), "too many paths") {
+			t.Fatalf("unbounded alias comparison: %v", err)
+		}
+	})
+}
+
+func TestIgnoredPathDistinctDirectoryDoesNotProbeSiblings(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"ignored", "tracked"} {
+		if err := os.Mkdir(filepath.Join(dir, name), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	child := &ignoredPaths{ignored: true, directory: true}
+	node := &ignoredPaths{children: map[string]*ignoredPaths{"ignored": child}}
+	if match, err := node.overlaps(t.Context(), &rebasePathScan{root, maxRebasePathChecks}, "tracked/change"); err != nil || match {
+		t.Fatalf("unexpected overlap: %t, %v", match, err)
+	}
+	if child.info != nil {
+		t.Fatal("checked an ignored directory's identity for an independently named tracked sibling")
+	}
+}
 
 func TestIgnoredPathDirectorySpellings(t *testing.T) {
 	dir := t.TempDir()
@@ -38,7 +126,7 @@ func TestIgnoredPathDirectorySpellings(t *testing.T) {
 				}
 			}
 			node := &ignoredPaths{children: map[string]*ignoredPaths{tc.ignored: {ignored: true}}}
-			got, err := node.overlaps(root, tc.changed)
+			got, err := node.overlaps(t.Context(), &rebasePathScan{root, maxRebasePathChecks}, tc.changed)
 			if err != nil || got != tc.overlap {
 				t.Fatalf("overlap between %q and %q: got %t, want %t, error %v", tc.ignored, tc.changed, got, tc.overlap, err)
 			}
@@ -47,6 +135,12 @@ func TestIgnoredPathDirectorySpellings(t *testing.T) {
 }
 
 func BenchmarkIgnoredPathsDistinctSiblings(b *testing.B) {
+	for _, kind := range []string{"files", "directories"} {
+		b.Run(kind, func(b *testing.B) { benchmarkIgnoredSiblings(b, kind == "directories") })
+	}
+}
+
+func benchmarkIgnoredSiblings(b *testing.B, directories bool) {
 	dir := b.TempDir()
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -60,7 +154,14 @@ func BenchmarkIgnoredPathsDistinctSiblings(b *testing.B) {
 		ignored[i] = fmt.Sprintf("ignored-%d.log", i)
 		changed[i] = fmt.Sprintf("tracked-%d", i)
 		for _, name := range []string{ignored[i], changed[i]} {
-			if err := os.WriteFile(filepath.Join(dir, name), nil, 0600); err != nil {
+			path := filepath.Join(dir, name)
+			var err error
+			if directories {
+				err = os.Mkdir(path, 0700)
+			} else {
+				err = os.WriteFile(path, nil, 0600)
+			}
+			if err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -70,8 +171,9 @@ func BenchmarkIgnoredPathsDistinctSiblings(b *testing.B) {
 		for _, name := range ignored {
 			node.children[name] = &ignoredPaths{ignored: true}
 		}
+		scan := &rebasePathScan{root, maxRebasePathChecks}
 		for _, name := range changed {
-			if conflict, err := node.overlaps(root, name); err != nil || conflict {
+			if conflict, err := node.overlaps(b.Context(), scan, name); err != nil || conflict {
 				b.Fatalf("unexpected overlap for %s: %t %v", name, conflict, err)
 			}
 		}

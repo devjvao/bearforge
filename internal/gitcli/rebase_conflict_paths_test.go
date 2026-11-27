@@ -18,8 +18,8 @@ func TestRebaseConflictDestinationScanLimit(t *testing.T) {
 	}
 	defer root.Close()
 	guard := newRebaseConflictPaths([]byte("file~HEAD\x00"))
-	guard.budget = 1
-	if err := guard.check(t.Context(), root, &ignoredPaths{}, "file"); err == nil || !strings.Contains(err.Error(), "too many paths") {
+	scan := &rebasePathScan{root: root, budget: 1}
+	if err := guard.check(t.Context(), scan, &ignoredPaths{}, "file"); err == nil || !strings.Contains(err.Error(), "too many paths") {
 		t.Fatalf("expected bounded scan to stop the rebase: %v", err)
 	}
 }

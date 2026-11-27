@@ -17,7 +17,6 @@ import (
 type rebaseConflictPaths struct {
 	suffixes map[string][]string
 	checked  map[string]bool
-	budget   int
 }
 
 func newRebaseConflictPaths(ignored []byte) *rebaseConflictPaths {
@@ -27,48 +26,35 @@ func newRebaseConflictPaths(ignored []byte) *rebaseConflictPaths {
 	return &rebaseConflictPaths{
 		suffixes: make(map[string][]string),
 		checked:  make(map[string]bool),
-		// Bound both directory enumeration and candidate probes across the rebase.
-		budget: 250_000,
 	}
 }
 
-func (p *rebaseConflictPaths) spend(n int) error {
-	p.budget -= n
-	if p.budget < 0 {
-		return domain.E("conflict", "too many paths to verify Git conflict filenames; move ignored working files aside before rebasing")
-	}
-	return nil
-}
-
-func (p *rebaseConflictPaths) check(ctx context.Context, root *os.Root, ignored *ignoredPaths, name string) error {
+func (p *rebaseConflictPaths) check(ctx context.Context, scan *rebasePathScan, ignored *ignoredPaths, name string) error {
 	parent := "."
 	for part := range strings.SplitSeq(name, "/") {
 		path := filepath.Join(parent, part)
 		if !p.checked[path] {
-			if err := p.spend(1); err != nil {
+			if err := scan.spend(ctx, 1); err != nil {
 				return err
 			}
 			p.checked[path] = true
 			suffixes, ok := p.suffixes[parent]
 			if !ok {
 				var err error
-				suffixes, err = p.directorySuffixes(ctx, root, ignored, parent)
+				suffixes, err = p.directorySuffixes(ctx, scan, ignored, parent)
 				if err != nil {
 					return err
 				}
 				p.suffixes[parent] = suffixes
 			}
 			for _, suffix := range suffixes {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-				if err := p.spend(1); err != nil {
+				if err := scan.spend(ctx, 1); err != nil {
 					return err
 				}
 				// Let the actual filesystem resolve case and other aliases, including
 				// when the original conflict stem is absent from this checkout.
 				candidate := filepath.ToSlash(path + suffix)
-				matches, err := ignored.overlaps(root, candidate)
+				matches, err := ignored.overlaps(ctx, scan, candidate)
 				if err != nil {
 					return err
 				}
@@ -82,13 +68,16 @@ func (p *rebaseConflictPaths) check(ctx context.Context, root *os.Root, ignored 
 	return nil
 }
 
-func (p *rebaseConflictPaths) directorySuffixes(ctx context.Context, root *os.Root, ignored *ignoredPaths, parent string) ([]string, error) {
+func (p *rebaseConflictPaths) directorySuffixes(ctx context.Context, scan *rebasePathScan, ignored *ignoredPaths, parent string) ([]string, error) {
 	if parent != "." {
-		relevant, err := ignored.overlaps(root, filepath.ToSlash(parent))
+		relevant, err := ignored.overlaps(ctx, scan, filepath.ToSlash(parent))
 		if err != nil || !relevant {
 			return nil, err
 		}
-		info, err := root.Lstat(parent)
+		if err := scan.spend(ctx, 1); err != nil {
+			return nil, err
+		}
+		info, err := scan.root.Lstat(parent)
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
@@ -101,7 +90,10 @@ func (p *rebaseConflictPaths) directorySuffixes(ctx context.Context, root *os.Ro
 	}
 	// Git can collapse a whole ignored directory to one inventory entry.
 	// Read only the immediate siblings of reviewed paths, once per directory.
-	dir, err := root.Open(parent)
+	if err := scan.spend(ctx, 1); err != nil {
+		return nil, err
+	}
+	dir, err := scan.root.Open(parent)
 	if err != nil {
 		return nil, err
 	}
@@ -113,14 +105,14 @@ func (p *rebaseConflictPaths) directorySuffixes(ctx context.Context, root *os.Ro
 			return nil, err
 		}
 		names, readErr := dir.Readdirnames(128)
-		if err := p.spend(len(names)); err != nil {
+		if err := scan.spend(ctx, len(names)); err != nil {
 			return nil, err
 		}
 		for _, name := range names {
 			if !strings.Contains(name, "~") {
 				continue
 			}
-			matches, err := ignored.overlaps(root, filepath.ToSlash(filepath.Join(parent, name)))
+			matches, err := ignored.overlaps(ctx, scan, filepath.ToSlash(filepath.Join(parent, name)))
 			if err != nil {
 				return nil, err
 			}
@@ -129,7 +121,7 @@ func (p *rebaseConflictPaths) directorySuffixes(ctx context.Context, root *os.Ro
 			}
 			for i := 1; i < len(name)-1; i++ {
 				if name[i] == '~' && !seen[name[i:]] {
-					if err := p.spend(1); err != nil {
+					if err := scan.spend(ctx, 1); err != nil {
 						return nil, err
 					}
 					seen[name[i:]] = true
