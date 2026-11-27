@@ -149,6 +149,25 @@ func TestDashboardPRExplicitWorkspaceSelectionAndRefresh(t *testing.T) {
 	}
 }
 
+func TestDashboardPRShowsEachLookupErrorInItsOwnRow(t *testing.T) {
+	err := errors.New("unsupported company host")
+	m := prDashboard(t, func(context.Context, app.PRRequest) (app.Result, error) {
+		return app.Result{Items: []app.Item{
+			{Repository: "api", Outcome: "failed", Problem: app.ProblemFor(err)},
+			{Repository: "web", Outcome: "failed", Problem: app.ProblemFor(err)},
+		}}, errors.Join(err, err)
+	})
+	m, cmd := dashboardKey(m, 'p', "p")
+	u, _ := m.Update(cmd())
+	m = u.(dashboardModel)
+	if count := strings.Count(strings.Join(m.pullRequestContent("api"), "\n"), err.Error()); count != 1 {
+		t.Fatalf("selected repository displayed the lookup error %d times", count)
+	}
+	if !strings.Contains(m.pullRequestHeader(), "2/2 repos") {
+		t.Fatalf("missing workspace failure count: %s", m.pullRequestHeader())
+	}
+}
+
 func TestDashboardPRPartialMetadataAndSanitization(t *testing.T) {
 	observed := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	url := "https://github.com/org/api/pull/42?" + strings.Repeat("long", 40) + "SUFFIX"

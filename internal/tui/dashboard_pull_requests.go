@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -89,10 +90,19 @@ func (m dashboardModel) updatePullRequests(msg dashboardPullRequestsMsg) (tea.Mo
 		return m, nil
 	}
 	m.prItems = make(map[string]app.Item, len(msg.result.Items))
+	var itemErrors []string
 	for _, item := range msg.result.Items {
 		m.prItems[item.Repository] = item
+		if item.Problem != nil {
+			itemErrors = append(itemErrors, item.Problem.Message)
+		}
 	}
 	m.prErr = msg.err
+	// The service joins the per-repository errors in result order. The
+	// selected row already displays its own error; retain independent failures.
+	if m.prErr != nil && len(itemErrors) > 0 && m.prErr.Error() == strings.Join(itemErrors, "\n") {
+		m.prErr = nil
+	}
 	return m, nil
 }
 
@@ -139,6 +149,9 @@ func (m dashboardModel) pullRequestHeader() string {
 	}
 	if failed > 0 || m.prErr != nil {
 		message := "PRs: lookup failed | PgDn details"
+		if failed > 1 {
+			message = fmt.Sprintf("PRs: lookup failed | %d/%d repos", failed, repositories)
+		}
 		if open > 0 {
 			message = fmt.Sprintf("PRs: %d open | lookup error", open)
 			if failed > 0 {

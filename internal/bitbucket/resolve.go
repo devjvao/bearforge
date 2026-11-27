@@ -130,6 +130,34 @@ func parseRemote(raw string, server bool) (remoteIdentity, error) {
 	return identity, nil
 }
 
+// ServerRepositoryAt returns the project and slug for a clone URL belonging to
+// the approved Data Center Git installation. SSH URLs omit the HTTP context
+// and can use a separate port, so callers must disambiguate matching accounts.
+func ServerRepositoryAt(remote, gitBase string) string {
+	identity, err := parseRemote(remote, true)
+	if err != nil {
+		return ""
+	}
+	approved, err := apiURL(gitBase)
+	if err != nil || !strings.EqualFold(approved.Hostname(), identity.host) {
+		return ""
+	}
+	if identity.api != "" {
+		// HTTPS clone paths are <installation>/scm/<project>/<slug>. Some
+		// installations configure the approved Git base including /scm.
+		actual, err := url.Parse(identity.api)
+		if err != nil || domain.HTTPSAuthority(actual) != domain.HTTPSAuthority(approved) {
+			return ""
+		}
+		contextPath := strings.TrimSuffix(actual.Path, "/rest/api/1.0")
+		basePath := strings.TrimRight(approved.Path, "/")
+		if basePath != contextPath && basePath != contextPath+"/scm" {
+			return ""
+		}
+	}
+	return identity.repository
+}
+
 func validRemoteHost(host string, ssh bool) bool {
 	return validHost(host) || (ssh && len(host) <= 253 && sshAliasPattern.MatchString(host))
 }

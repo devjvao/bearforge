@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/auth"
 	"github.com/devjvao/bearforge/internal/config"
 )
 
@@ -169,5 +171,81 @@ func TestDashboardProductionBitbucketCache(t *testing.T) {
 		if got := requests.Load() - before; got != 2 {
 			t.Fatalf("dashboard cache recreated: %d requests", got)
 		}
+	}
+}
+
+func TestDashboardLegacyCompanyBitbucketConnection(t *testing.T) {
+	source, store := dashboardAddFixture(t)
+	ctx := t.Context()
+	if _, err := source.AddRepositories(ctx, app.AddRequest{Workspace: "review", Repositories: []string{"web"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	catalog, rev, err := store.LoadCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := catalog.Repositories["web"]
+	repo.Provider = nil
+	origin := "ssh://git@code.example.com:7999/TEAM/web.git"
+	repo.Remotes[catalog.Remote] = origin
+	catalog.Repositories["web"] = repo
+	if err := store.SaveCatalog(catalog, rev); err != nil {
+		t.Fatal(err)
+	}
+	dashboardGit(t, "-C", filepath.Join(store.Root, "repos", "web.git"), "config", "remote."+catalog.Remote+".url", origin)
+	var lookups atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer fixture-token" {
+			t.Error("missing saved Bitbucket credential")
+		}
+		switch r.URL.Path {
+		case "/bb/rest/api/latest/repos":
+			fmt.Fprint(w, "{}")
+		case "/bb/rest/api/latest/projects/TEAM/repos/web/pull-requests":
+			lookups.Add(1)
+			fmt.Fprint(w, `{"isLastPage":true,"values":[{
+				"id":42,"title":"Company dashboard change","state":"OPEN","updatedDate":1794484800000,
+				"links":{"self":[{"href":"https://bitbucket.example.com:8443/bb/projects/TEAM/repos/web/pull-requests/42"}]},
+				"fromRef":{"id":"refs/heads/review","repository":{"slug":"web","project":{"key":"TEAM"}}},
+				"toRef":{"id":"refs/heads/main","repository":{"slug":"web","project":{"key":"TEAM"}}}
+			}]}`)
+		default:
+			t.Errorf("unexpected request path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	original := http.DefaultTransport
+	http.DefaultTransport = server.Client().Transport
+	t.Cleanup(func() { http.DefaultTransport = original })
+	manager := auth.NewManager(auth.Options{RegistryPath: filepath.Join(t.TempDir(), "connections.json"), Secrets: authTestSecrets{}, HTTPClient: server.Client()})
+	dashboard := newDashboardService(source.Service, &options{authManager: manager})
+	_, err = dashboard.ImportLogin(ctx, auth.LoginRequest{Name: "work", Provider: "bitbucket", Host: "https://bitbucket.example.com:8443/bb",
+		APIURL: server.URL + "/bb/rest/api/latest", GitURL: "https://code.example.com:8443/bb", Username: "alice", NoBrowser: true},
+		auth.LoginHooks{ReadSecret: func(context.Context, string) (string, error) { return "fixture-token", nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ refresh, cached bool }{{false, false}, {false, true}, {true, false}} {
+		result, err := dashboard.PullRequests(ctx, app.PRRequest{Workspace: "review", Refresh: tc.refresh})
+		if err != nil || len(result.Items) != 1 || result.Items[0].Outcome != "found" {
+			t.Fatalf("company lookup: %+v %v", result.Items, err)
+		}
+		obs := result.Items[0].PullRequests
+		if len(obs.PullRequests) != 1 || obs.PullRequests[0].Number != 42 || obs.Cached != tc.cached || obs.Query.Provider != "bitbucket-server" || obs.Query.Repository != "TEAM/web" || obs.Query.APIURL != server.URL+"/bb/rest/api/latest" || obs.Query.Branch != "review" || obs.Query.Connection != "work" || obs.Query.GrantID == "" {
+			t.Fatalf("unexpected provider query: %+v", obs)
+		}
+	}
+	if lookups.Load() != 2 {
+		t.Fatalf("expected two authenticated requests, got %d", lookups.Load())
+	}
+	t.Chdir(store.Root)
+	output, err := authCommand(t, manager, "", "pr", "list", "review", "--repo", "web")
+	if err != nil || !strings.Contains(output, "Company dashboard change") {
+		t.Fatalf("CLI company lookup: %s, %v", output, err)
+	}
+	after, _, err := store.LoadCatalog()
+	if err != nil || len(after.Repositories["web"].Provider) != 0 {
+		t.Fatalf("lookup changed catalog metadata: %+v %v", after.Repositories["web"].Provider, err)
 	}
 }
