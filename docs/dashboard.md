@@ -11,7 +11,7 @@ bearforge tui audit-feature
 
 Starting without a workspace selects the first workspace alphabetically. The dashboard inspects only the selected workspace. The repository table shows working-tree health and a separate **Base** column. For example, a clean feature branch showing `↑3 ↓2` has three commits of its own and is missing two commits from the configured base. `↑0 ↓0` means the tips are synchronized. Counts use local Git history and show `unknown` when the comparison is unavailable. Press `s` to fetch the latest remote refs.
 
-Repository details name the base ref and give exact counts for both the base and the current branch’s upstream. They also show actual and intended branches, staged, modified, untracked and conflicted files, detached or unborn HEAD, and per-repository errors.
+Repository details name the base ref and give exact counts for both the base and the current branch’s upstream when available. In a shallow repository, differing tips show `unknown` because earlier history can change the counts. If an update reports uncertain ancestry, run `git fetch --unshallow` from the checkout and preview again. Details also show actual and intended branches, staged, modified, untracked and conflicted files, detached or unborn HEAD, and per-repository errors.
 
 Local inspection uses `defaults.jobs` in `<root>/.bearforge/catalog.yaml` (default 4, range 1–64). Rows start as `inspecting` and update as each repository finishes; the header counts completed repositories, including failures. Repository order and selection remain stable. Refreshing or switching workspaces cancels the previous inspection; quitting waits for active checks to stop. Refresh stays local and does not fetch.
 

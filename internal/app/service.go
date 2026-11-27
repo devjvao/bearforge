@@ -39,6 +39,7 @@ type Git interface {
 	FetchBranch(context.Context, string, string, string, string) error
 	HasCommit(context.Context, string, string) (bool, error)
 	IsAncestor(context.Context, string, string, string) (bool, error)
+	RequireFullHistory(context.Context, string) error
 	CheckBranchAvailable(context.Context, string, string, string) error
 	AdvanceBranch(context.Context, string, string, string, string) error
 	Resolve(context.Context, string, string) (string, error)

@@ -123,6 +123,10 @@ func (c *Client) CompareBase(ctx context.Context, bare, head, base string) (doma
 	if head == base {
 		return d, nil
 	}
+	// Git counts a shallow boundary as a root, which can inflate either side.
+	if err := c.RequireFullHistory(ctx, bare); err != nil {
+		return d, err
+	}
 	out, err := c.Run(ctx, bare, "--no-replace-objects", "rev-list", "--left-right", "--count", "--end-of-options", head+"..."+base+"^{commit}", "--")
 	if err != nil {
 		return d, err

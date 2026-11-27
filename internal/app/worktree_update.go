@@ -305,6 +305,10 @@ func (s *Service) branchRelation(ctx context.Context, bare, local, remote string
 			return direction.relation, nil
 		}
 	}
+	// A shallow boundary can hide a common parent even when both tips exist.
+	if err := s.Git.RequireFullHistory(ctx, bare); err != nil {
+		return "", err
+	}
 	return "diverged", nil
 }
 

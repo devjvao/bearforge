@@ -85,6 +85,22 @@ func (c *Client) HasCommit(ctx context.Context, bare, oid string) (bool, error) 
 	return err == nil, err
 }
 
+// RequireFullHistory guards conclusions that depend on having seen every parent.
+func (c *Client) RequireFullHistory(ctx context.Context, bare string) error {
+	out, err := c.Run(ctx, bare, "rev-parse", "--is-shallow-repository")
+	if err != nil {
+		return err
+	}
+	switch strings.TrimSpace(string(out)) {
+	case "false":
+		return nil
+	case "true":
+		return domain.E("incomplete_history", "ancestry is uncertain in this shallow repository. Run git fetch --unshallow from the checkout and retry")
+	default:
+		return domain.E("git_failed", "malformed Git shallow repository status")
+	}
+}
+
 func (c *Client) IsAncestor(ctx context.Context, bare, ancestor, descendant string) (bool, error) {
 	c = c.localOnly()
 	_, err := c.Run(ctx, bare, "--no-replace-objects", "merge-base", "--is-ancestor", "--", ancestor, descendant)
