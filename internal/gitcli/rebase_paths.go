@@ -39,6 +39,7 @@ func (c *Client) checkIgnoredRebasePaths(ctx context.Context, path, old, target 
 		node.ignored = true
 		node.directory = strings.HasSuffix(name, "/")
 	}
+	conflicts := newRebaseConflictPaths(files)
 	seen := make(map[string]bool)
 	for _, args := range [][]string{
 		{"diff", "--name-only", "--no-renames", "--no-ext-diff", "-z", old, target, "--"},
@@ -64,6 +65,11 @@ func (c *Client) checkIgnoredRebasePaths(ctx context.Context, path, old, target 
 			if overlaps {
 				return false, domain.E("conflict", "rebasing would overwrite ignored working files at %s; move them aside before updating", name)
 			}
+			if conflicts != nil {
+				if err := conflicts.check(ctx, root, ignored, name); err != nil {
+					return false, err
+				}
+			}
 		}
 	}
 	return true, nil
@@ -72,6 +78,9 @@ func (c *Client) checkIgnoredRebasePaths(ctx context.Context, path, old, target 
 type ignoredPaths struct {
 	children           map[string]*ignoredPaths
 	aliases            map[string]*ignoredPaths
+	entries            map[string]bool
+	unlisted           map[string]*ignoredPaths
+	info               os.FileInfo
 	ignored, directory bool
 }
 
@@ -98,47 +107,11 @@ func (node *ignoredPaths) overlaps(root *os.Root, name string) (bool, error) {
 		} else {
 			next := node.children[part]
 			if next == nil {
-				if known, checked := node.aliases[part]; checked {
-					if known == nil {
-						return false, nil
-					}
-					node = known
-					parent = path
-					continue
-				}
-				// Consult the filesystem for aliases (case, normalization and
-				// short names). Distinct names on case-sensitive volumes remain distinct.
-				actual, err := root.Lstat(path)
-				if os.IsNotExist(err) {
-					return false, nil
-				}
+				var err error
+				next, err = node.alias(root, parent, part)
 				if err != nil {
 					return false, err
 				}
-				for spelling, child := range node.children {
-					known, err := root.Lstat(filepath.Join(parent, spelling))
-					if err != nil {
-						return false, err
-					}
-					if !os.SameFile(known, actual) {
-						continue
-					}
-					if !actual.IsDir() {
-						distinct, err := distinctDirectoryEntries(root, parent, part, spelling)
-						if err != nil {
-							return false, err
-						}
-						if distinct {
-							continue
-						}
-					}
-					next = child
-					break
-				}
-				if node.aliases == nil {
-					node.aliases = make(map[string]*ignoredPaths)
-				}
-				node.aliases[part] = next
 			}
 			if next == nil {
 				return false, nil
@@ -151,30 +124,77 @@ func (node *ignoredPaths) overlaps(root *os.Root, name string) (bool, error) {
 	return true, nil
 }
 
-// Two names for one inode can be independently replaceable hard links. Both
-// spellings in the parent directory prove that they are different entries.
-// A case, normalization or short-name alias occupies only one directory entry.
-func distinctDirectoryEntries(root *os.Root, parent, first, second string) (bool, error) {
+func (node *ignoredPaths) alias(root *os.Root, parent, part string) (*ignoredPaths, error) {
+	if found, ok := node.aliases[part]; ok {
+		return found, nil
+	}
+	actual, err := root.Lstat(filepath.Join(parent, part))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if node.entries == nil {
+		if err := node.readEntries(root, parent); err != nil {
+			return nil, err
+		}
+	}
+	candidates := node.children
+	if !actual.IsDir() && node.entries[part] {
+		// Two exact spellings identify independent entries, even for hard
+		// links. Only an unlisted spelling could alias this file.
+		candidates = node.unlisted
+	}
+	var found *ignoredPaths
+	for spelling, child := range candidates {
+		if child.info == nil {
+			child.info, err = root.Lstat(filepath.Join(parent, spelling))
+			if err != nil {
+				return nil, err
+			}
+		}
+		if os.SameFile(child.info, actual) {
+			found = child
+			break
+		}
+	}
+	if node.aliases == nil {
+		node.aliases = make(map[string]*ignoredPaths)
+	}
+	node.aliases[part] = found
+	return found, nil
+}
+
+// Git or the filesystem can spell a name differently from its directory entry
+// (case, Unicode normalization or a short name). Index those spellings once.
+func (node *ignoredPaths) readEntries(root *os.Root, parent string) error {
 	dir, err := root.Open(parent)
 	if err != nil {
-		return false, err
+		return err
 	}
 	defer dir.Close()
-	var seenFirst, seenSecond bool
+	entries := make(map[string]bool)
 	for {
 		names, err := dir.Readdirnames(128)
 		for _, name := range names {
-			seenFirst = seenFirst || name == first
-			seenSecond = seenSecond || name == second
-			if seenFirst && seenSecond {
-				return true, nil
-			}
+			entries[name] = true
 		}
 		if err == io.EOF {
-			return false, nil
+			break
 		}
 		if err != nil {
-			return false, err
+			return err
 		}
 	}
+	for spelling, child := range node.children {
+		if !entries[spelling] {
+			if node.unlisted == nil {
+				node.unlisted = make(map[string]*ignoredPaths)
+			}
+			node.unlisted[spelling] = child
+		}
+	}
+	node.entries = entries
+	return nil
 }

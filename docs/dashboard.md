@@ -76,7 +76,7 @@ The checkout must be clean. The preview names the checked-out branch and shows t
 
 If the update reports index flags, inspect `git ls-files -v` in the checkout. A lowercase tag marks an assume-unchanged entry. An `S` or `s` tag marks a skip-worktree entry. Clear the corresponding flag with `git update-index --no-assume-unchanged -- <path>` or `git update-index --no-skip-worktree -- <path>`, then review `git status` and commit or stash any edits. For a sparse checkout, back up local edits and update manually with Git, or run `git sparse-checkout disable` and review the full checkout before retrying the dashboard update.
 
-When the checkout contains ignored files, a dashboard rebase keeps newly added files at their committed paths if the other branch renamed their directory. This protects ignored files at destinations Git would otherwise infer.
+When the checkout contains ignored files, a dashboard rebase keeps newly added files at their committed paths if the other branch renamed their directory. Git can also write a conflict file such as `foo~HEAD` next to a changed path. If that could overwrite an ignored file, or there are too many paths to verify, the dashboard stops before rebasing so you can move the ignored files aside.
 
 Press `s` to fetch/prune all repositories in the current workspace, including rows hidden by filters. Sync uses the catalog worker limit or `--jobs`, the mutation lock and fetch safety checks. Only one sync runs at a time; navigating to another workspace does not retarget it. Checked-out branches and files remain unchanged.
 
