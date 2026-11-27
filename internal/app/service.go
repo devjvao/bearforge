@@ -42,6 +42,7 @@ type Git interface {
 	CheckBranchAvailable(context.Context, string, string, string) error
 	AdvanceBranch(context.Context, string, string, string, string) error
 	Resolve(context.Context, string, string) (string, error)
+	LocalBaseRevision(context.Context, string, string) (string, error)
 	BranchExists(context.Context, string, string) (bool, error)
 	RefExists(context.Context, string, string) (bool, error)
 	ValidateBranch(context.Context, string) error

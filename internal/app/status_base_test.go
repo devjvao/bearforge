@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/devjvao/bearforge/internal/app"
@@ -152,4 +153,55 @@ func TestStatusKeepsImportedBaseBranchLiteralAfterDefaultChanges(t *testing.T) {
 	assertLiteral()
 	prGit(t, bare, "branch", "origin/topic", "refs/remotes/origin/topic")
 	assertLiteral()
+}
+
+func TestManualBaseResolvesTagsAndCommitExpressions(t *testing.T) {
+	s, store, remote := fixture(t)
+	ctx := t.Context()
+	const tag = "v1.2.3"
+	prGit(t, remote, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "tag", "-a", tag, "-m", "release")
+	updateCommit(t, remote, "feature", "after release")
+	prGit(t, remote, "branch", tag)
+	if _, err := s.AddRepository(ctx, "api", remote, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateWorkspace(ctx, "review", "main", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddRepositories(ctx, app.AddRequest{Workspace: "review", Repositories: []string{"api"}, Offline: true}); err != nil {
+		t.Fatal(err)
+	}
+	bare := filepath.Join(store.Root, "repos", "api.git")
+	prGit(t, bare, "branch", tag, "main")
+	release, err := s.Git.Resolve(ctx, bare, tag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ base, expected string }{
+		{tag, "refs/tags/" + tag}, {release[:12], release}, {"main^", release},
+	} {
+		t.Run(tc.base, func(t *testing.T) {
+			c, rev, err := store.LoadCatalog()
+			if err != nil {
+				t.Fatal(err)
+			}
+			repo := c.Repositories["api"]
+			repo.Base = tc.base
+			c.Repositories["api"] = repo
+			if err := store.SaveCatalog(c, rev); err != nil {
+				t.Fatal(err)
+			}
+			result, err := s.Status(ctx, "review")
+			if err != nil || len(result.Items) != 1 || result.Items[0].Status == nil {
+				t.Fatalf("status: %+v, %v", result, err)
+			}
+			st := result.Items[0].Status
+			if st.BaseRef != tc.expected || st.BaseDivergence == nil || st.BaseDivergence.Ahead != 1 || st.BaseDivergence.Behind != 0 {
+				t.Errorf("base %q = %q, divergence %+v; want %q one ahead", tc.base, st.BaseRef, st.BaseDivergence, tc.expected)
+			}
+			if _, err := s.UpdateWorktree(ctx, app.UpdateWorktreeRequest{Workspace: "review", Repository: "api", DryRun: true}); err == nil || !strings.Contains(err.Error(), "not a remote-tracking branch") {
+				t.Errorf("nonbranch base accepted as an update target: %v", err)
+			}
+		})
+	}
 }

@@ -76,6 +76,30 @@ func (c *Client) Inspect(ctx context.Context, path string) (domain.Status, error
 	return s, nil
 }
 
+// LocalBaseRevision resolves legacy, manually configured Git revisions to a
+// canonical ref or commit. An unknown name may still be a remote-only branch.
+func (c *Client) LocalBaseRevision(ctx context.Context, bare, base string) (string, error) {
+	c = c.localOnly()
+	// Git uses the first matching ref for ordinary revision lookup. Asking
+	// for its symbolic name with ambiguity warnings enabled can instead
+	// produce an empty result when (for example) a tag and branch coexist.
+	out, err := c.Run(ctx, bare, "--no-replace-objects", "-c", "core.warnAmbiguousRefs=false",
+		"rev-parse", "--symbolic-full-name", "--verify", "--quiet", "--end-of-options", base)
+	if isExit(err, 1) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	ref := strings.TrimSpace(string(out))
+	if strings.HasPrefix(ref, "refs/") {
+		return ref, nil
+	}
+	// An abbreviation or expression such as main^ has no symbolic ref.
+	out, err = c.Run(ctx, bare, "--no-replace-objects", "rev-parse", "--verify", "--end-of-options", base+"^{commit}")
+	return strings.TrimSpace(string(out)), err
+}
+
 // CompareBase counts commits unique to each side of the locally available
 // history. Pin the checkout to the same HEAD observed by porcelain status.
 func (c *Client) CompareBase(ctx context.Context, bare, head, base string) (domain.Divergence, error) {

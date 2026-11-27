@@ -45,21 +45,25 @@ func (s *Service) repositoryBaseRef(ctx context.Context, bare string, repo domai
 	if domain.ValidCommitID(repo.Base) {
 		return repo.Base, nil
 	}
+	// Workspace creation accepts Git revision syntax in manual catalogs.
+	// Use the same native name precedence, including tags over branches.
+	resolved, err := s.Git.LocalBaseRevision(ctx, bare, repo.Base)
+	if err != nil {
+		return "", err
+	}
+	if branch, ok := strings.CutPrefix(resolved, "refs/heads/"); ok {
+		return "refs/remotes/" + remote + "/" + branch, nil
+	}
+	if resolved != "" {
+		return resolved, nil
+	}
+	// On-demand clones may have only a tracking ref for a short branch.
 	prefix, _, hasSlash := strings.Cut(repo.Base, "/")
 	if _, registered := repo.Remotes[prefix]; !hasSlash || !registered {
 		return literal, nil
 	}
-	// Manual catalogs may use remote-tracking shorthand. Git prefers
-	// a same-spelled local branch when both names exist.
-	if local, err := s.Git.RefExists(ctx, bare, "refs/heads/"+repo.Base); local || err != nil {
-		return literal, err
-	}
-	qualified := "refs/remotes/" + repo.Base
-	if exists, err := s.Git.RefExists(ctx, bare, qualified); exists || err != nil {
-		return qualified, err
-	}
 	if exists, err := s.Git.RefExists(ctx, bare, literal); exists || err != nil {
 		return literal, err
 	}
-	return qualified, nil
+	return "refs/remotes/" + repo.Base, nil
 }
