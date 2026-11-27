@@ -116,7 +116,7 @@ func (p *Provider) withServerConnection(repo domain.Repository, remote string) (
 			continue
 		}
 		project := bitbucket.ServerRepositoryAt(remote, c.GitURL)
-		if project == "" && name != "" && bitbucket.ExplicitServerSSHAlias(repo, remote, c.GitURL) {
+		if project == "" && bitbucket.ExplicitServerSSHAlias(repo, remote, c.GitURL) {
 			project = metadata["source_repository"]
 		}
 		if project == "" {
@@ -126,6 +126,9 @@ func (p *Provider) withServerConnection(repo domain.Repository, remote string) (
 			if metadata["token_env"] != "" && selected.Host == c.Host && selected.APIURL == c.APIURL {
 				// The catalog selected its own credential for this installation.
 				continue
+			}
+			if metadata["token_env"] != "" {
+				return repo, domain.E("conflict", "multiple Bitbucket installations match this Git remote; set the repository's provider api_url to select the destination for its environment token")
 			}
 			return repo, domain.E("conflict", "multiple saved connections match this Git remote; select a repository connection")
 		}

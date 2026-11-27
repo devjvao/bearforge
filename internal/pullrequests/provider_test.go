@@ -77,6 +77,7 @@ func TestLegacyBitbucketRoutes(t *testing.T) {
 		{"SCP unique installation", "git@code.company.test:TEST/service.git", savedPRConnections{work}, nil, "work"},
 		{"SSH named installation", "ssh://git@code.company.test:7999/TEST/service.git", savedPRConnections{other, work}, map[string]string{"connection": "work", "grant_id": "w"}, "work"},
 		{"explicit Data Center fork target", "git@code.company.test:TEST/service.git", savedPRConnections{work}, map[string]string{"kind": "bitbucket-server", "repository": "UPSTREAM/service"}, "work"},
+		{"explicit SSH alias and unique installation", "git@company_work:TEST/service.git", savedPRConnections{work}, map[string]string{"kind": "bitbucket-server", "host": "web.company.test", "repository": "UPSTREAM/service", "source_repository": "TEST/service"}, "work"},
 		{"wrong HTTPS port", "https://code.company.test/bb/scm/TEST/service.git", savedPRConnections{work}, nil, ""},
 		{"sibling context", "https://code.company.test:8443/bb2/scm/TEST/service.git", savedPRConnections{work}, nil, ""},
 		{"unrelated host", "git@another.company.test:TEST/service.git", savedPRConnections{work}, nil, ""},
@@ -135,8 +136,10 @@ func TestLegacyBitbucketKeepsExplicitEnvironmentCredential(t *testing.T) {
 	second.APIURL = "https://git.company.test/other/rest/api/latest"
 	p = NewProviderWithResolver(savedPRConnections{account, second})
 	repo := domain.Repository{Provider: map[string]string{"kind": "bitbucket-server", "token_env": "WORK_TOKEN", "connection": "one", "grant_id": "a"}}
-	if q, err := p.Resolve(repo, "git@git.company.test:TEAM/api.git", "feature"); err == nil {
-		t.Fatalf("sent environment credential to an ambiguous installation: %+v", q)
+	repo.Provider["host"], repo.Provider["repository"], repo.Provider["source_repository"] = "git.company.test", "TEAM/api", "TEAM/api"
+	for _, remote := range []string{"git@git.company.test:TEAM/api.git", "git@company_work:TEAM/api.git"} {
+		if q, err := p.Resolve(repo, remote, "feature"); err == nil {
+			t.Fatalf("selected an ambiguous installation for %s: %+v", remote, q)
+		}
 	}
-
 }

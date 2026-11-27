@@ -298,6 +298,7 @@ func TestCompanyBitbucketExplicitCredentialRoutes(t *testing.T) {
 	t.Setenv("PR_OVERRIDE_TOKEN", "environment-token")
 	for _, tc := range []struct{ name, remote, tokenEnv, grant, want string }{
 		{"rotated saved grant with environment override", "git@" + host + ":TEAM/api.git", "PR_OVERRIDE_TOKEN", "removed", "environment-token"},
+		{"SSH alias with environment override", "git@company_work:TEAM/api.git", "PR_OVERRIDE_TOKEN", "removed", "environment-token"},
 		{"explicit SSH alias with named grant", "git@company_work:TEAM/api.git", "", connection.GrantID, "saved-token"},
 		{"explicit SSH alias with named login", "ssh://git@company_work:7999/TEAM/api.git", "", "", "saved-token"},
 	} {
@@ -309,6 +310,9 @@ func TestCompanyBitbucketExplicitCredentialRoutes(t *testing.T) {
 			}
 			if tc.tokenEnv == "" && (q.Connection != connection.Name || q.GrantID != connection.GrantID) {
 				t.Fatalf("alias lookup did not select the current saved grant: %+v", q)
+			}
+			if tc.tokenEnv != "" && (q.Connection != "" || q.GrantID != "" || q.TokenEnv != tc.tokenEnv) {
+				t.Fatalf("environment token unexpectedly bound a saved login: %+v", q)
 			}
 			wantAuth = tc.want
 			before := requests

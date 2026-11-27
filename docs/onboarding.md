@@ -297,7 +297,7 @@ Cloud closed results include merged, declined and superseded PRs. Merged results
 
 ### Company-hosted Bitbucket Server / Data Center
 
-After you sign in to your company Bitbucket Data Center installation with `bearforge auth login`, the dashboard and `pr list` can look up repositories previously added by clone URL. HTTPS remotes must match the saved Git host, port and installation path. SSH remotes use the saved Git hostname and the connection's HTTPS API endpoint. If several Data Center accounts or installations match, select the intended connection with `bearforge repo rebind`.
+After you sign in to your company Bitbucket Data Center installation with `bearforge auth login`, the dashboard and `pr list` can look up repositories previously added by clone URL. HTTPS remotes must match the saved Git host, port and installation path. SSH remotes use the saved Git hostname and the connection's HTTPS API endpoint. If several accounts match, select the intended connection with `bearforge repo rebind`. If you supply an environment token and several installations match, set `provider.api_url` to the intended REST endpoint.
 
 You can also configure the provider explicitly. Coordinates use `PROJECT/repository-slug`, including personal projects such as `~alice/api`. For example, this catalog entry looks up PRs from a personal fork into the TEAM project.
 
