@@ -13,14 +13,15 @@ import (
 // Git may overwrite ignored working files when it switches to the base or
 // replays an intermediate commit. Include merge parents and both sides of
 // renames so a file added and later removed by the feature is covered.
-func (c *Client) checkIgnoredRebasePaths(ctx context.Context, path, old, target string) error {
+// On success it reports whether ignored files are present in the checkout.
+func (c *Client) checkIgnoredRebasePaths(ctx context.Context, path, old, target string) (bool, error) {
 	files, err := c.Run(ctx, path, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "--no-empty-directory", "-z")
 	if err != nil || len(files) == 0 {
-		return err
+		return false, err
 	}
 	root, err := os.OpenRoot(path)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer root.Close()
 	ignored := &ignoredPaths{}
@@ -45,11 +46,11 @@ func (c *Client) checkIgnoredRebasePaths(ctx context.Context, path, old, target 
 	} {
 		changed, err := c.Run(ctx, path, append([]string{"--no-replace-objects"}, args...)...)
 		if err != nil {
-			return err
+			return false, err
 		}
 		for name := range strings.SplitSeq(strings.TrimSuffix(string(changed), "\x00"), "\x00") {
 			if err := ctx.Err(); err != nil {
-				return err
+				return false, err
 			}
 			if name == "" || seen[name] {
 				continue
@@ -57,14 +58,14 @@ func (c *Client) checkIgnoredRebasePaths(ctx context.Context, path, old, target 
 			seen[name] = true
 			overlaps, err := ignored.overlaps(root, name)
 			if err != nil {
-				return err
+				return false, err
 			}
 			if overlaps {
-				return domain.E("conflict", "rebasing would overwrite ignored working files at %s; move them aside before updating", name)
+				return false, domain.E("conflict", "rebasing would overwrite ignored working files at %s; move them aside before updating", name)
 			}
 		}
 	}
-	return nil
+	return true, nil
 }
 
 type ignoredPaths struct {

@@ -83,6 +83,101 @@ func TestUpdateWorktreeDiagnosesDetachedRebase(t *testing.T) {
 	}
 }
 
+func TestRebaseDirectoryRenameWithIgnoredDestination(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		autoMove bool
+		ignored  bool
+	}{
+		{"configured-rename-with-ignored-file", true, true},
+		{"default-conflict-with-ignored-file", false, true},
+		{"configured-rename-without-ignored-file", true, false},
+		{"default-conflict-without-ignored-file", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, bare, path := privateHistoryFixture(t, "files", "sha1")
+			runGit(t, c, path, "config", "user.name", "Test")
+			runGit(t, c, path, "config", "user.email", "test@example.invalid")
+			if tc.autoMove {
+				runGit(t, c, path, "config", "merge.directoryRenames", "true")
+			}
+			if err := os.Mkdir(filepath.Join(path, "old"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(path, "old", "anchor"), []byte("original"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			runGit(t, c, path, "add", "old/anchor")
+			runGit(t, c, path, "commit", "-m", "create directory")
+			runGit(t, c, path, "switch", "-c", "topic")
+			featureFile := filepath.Join(path, "old", "private.log")
+			if err := os.WriteFile(featureFile, []byte("feature content"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			runGit(t, c, path, "add", "-f", "--", "old/private.log")
+			runGit(t, c, path, "commit", "-m", "add feature file")
+			base := filepath.Join(t.TempDir(), "base")
+			runGit(t, c, bare, "worktree", "add", "--", base, "main")
+			runGit(t, c, base, "mv", "old", "new")
+			runGit(t, c, base, "commit", "-m", "rename directory")
+			destination := filepath.Join(path, "new", "private.log")
+			if tc.ignored {
+				exclude := filepath.Join(t.TempDir(), "exclude")
+				if err := os.WriteFile(exclude, []byte("new/private.log\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				runGit(t, c, path, "config", "core.excludesFile", exclude)
+				if err := os.Mkdir(filepath.Dir(destination), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(destination, []byte("ignored local content"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			head, err := c.Resolve(t.Context(), path, "HEAD")
+			if err != nil {
+				t.Fatal(err)
+			}
+			target, err := c.Resolve(t.Context(), bare, "refs/heads/main")
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = c.UpdateCheckedOutBranch(t.Context(), bare, path, "topic", head, target, true)
+			if !tc.autoMove && !tc.ignored {
+				if err == nil || !strings.Contains(err.Error(), "rebase aborted") {
+					t.Fatalf("expected the native directory-rename conflict and abort: %v", err)
+				}
+				st, err := c.Inspect(t.Context(), path)
+				if err != nil || st.Head != head || st.Dirty() {
+					t.Fatalf("conflict failed to restore feature: %+v, %v", st, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("rebase: %v", err)
+			}
+			if tc.ignored {
+				if got, err := os.ReadFile(destination); err != nil || string(got) != "ignored local content" {
+					t.Errorf("lost ignored file: %q, %v", got, err)
+				}
+			} else {
+				featureFile = destination
+			}
+			if got, err := os.ReadFile(featureFile); err != nil || string(got) != "feature content" {
+				t.Errorf("lost feature file: %q, %v", got, err)
+			}
+			status, err := c.Inspect(t.Context(), path)
+			if err != nil || status.Branch != "topic" || status.Dirty() {
+				t.Fatalf("unexpected checkout after rebase: %+v, %v", status, err)
+			}
+			basedOnTarget, err := c.IsAncestor(t.Context(), bare, target, status.Head)
+			if err != nil || !basedOnTarget {
+				t.Errorf("feature did not rebase onto main: %v, %v", basedOnTarget, err)
+			}
+		})
+	}
+}
+
 func TestRebaseProtectsIgnoredWorkingFiles(t *testing.T) {
 	for _, tc := range []string{"directory-to-file", "transient-feature-path", "case-alias", "unrelated-output", "ignored-hard-link"} {
 		t.Run(tc, func(t *testing.T) {

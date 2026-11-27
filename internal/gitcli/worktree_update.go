@@ -102,10 +102,18 @@ func (c *Client) UpdateCheckedOutBranch(ctx context.Context, bare, path, branch,
 		_, err = c.Run(ctx, path, "--no-replace-objects", "-c", "submodule.recurse=false", "merge", "--ff-only", "--no-squash", "--no-autostash", "--no-overwrite-ignore", "--no-edit", "--", target)
 		return err
 	}
-	if err := c.checkIgnoredRebasePaths(ctx, path, old, target); err != nil {
+	hasIgnored, err := c.checkIgnoredRebasePaths(ctx, path, old, target)
+	if err != nil {
 		return err
 	}
-	_, err = c.runWithEnv(ctx, path, []string{"GIT_EDITOR=false", "GIT_SEQUENCE_EDITOR=false", "GIT_MERGE_AUTOEDIT=no"}, "--no-replace-objects", "-c", "submodule.recurse=false", "rebase", "--merge", "--rebase-merges", "--no-autostash", "--no-update-refs", "--no-autosquash", "--no-fork-point", "--", target)
+	args := []string{"--no-replace-objects", "-c", "submodule.recurse=false"}
+	if hasIgnored {
+		// Directory rename detection can invent a destination absent from every
+		// reviewed tree. Even a location conflict can overwrite an ignored file.
+		args = append(args, "-c", "merge.directoryRenames=false")
+	}
+	args = append(args, "rebase", "--merge", "--rebase-merges", "--no-autostash", "--no-update-refs", "--no-autosquash", "--no-fork-point", "--", target)
+	_, err = c.runWithEnv(ctx, path, []string{"GIT_EDITOR=false", "GIT_SEQUENCE_EDITOR=false", "GIT_MERGE_AUTOEDIT=no"}, args...)
 	if err == nil {
 		return nil
 	}
