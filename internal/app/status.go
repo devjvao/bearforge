@@ -116,12 +116,12 @@ func finalizeStatus(r Result, failures []error, ctxErr error) (Result, error) {
 func (s *Service) inspectStatus(ctx context.Context, item Item, catalog domain.Catalog, folder string) (Item, error) {
 	p, err := s.treePath(item.Workspace, item.Repository, folder)
 	item.Path = p
+	repo, ok := catalog.Repositories[item.Repository]
+	var bare string
 	if err == nil {
-		repo, ok := catalog.Repositories[item.Repository]
 		if !ok {
 			err = domain.E("conflict", "repository is no longer registered")
 		} else {
-			var bare string
 			bare, err = s.checkRepository(ctx, repo)
 			if err == nil {
 				err = s.Git.VerifyCommon(ctx, p, bare)
@@ -147,6 +147,7 @@ func (s *Service) inspectStatus(ctx context.Context, item Item, catalog domain.C
 		var status domain.Status
 		status, err = s.Git.Inspect(ctx, p)
 		if err == nil {
+			s.observeBase(ctx, bare, repo, catalog.Remote, &status)
 			item.Status, item.Branch, item.Outcome = &status, status.Branch, "clean"
 			if status.Dirty() {
 				item.Outcome = "changes"

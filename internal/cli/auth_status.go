@@ -101,7 +101,7 @@ func (o *options) authenticationStatus(ctx context.Context, connection, reposito
 			data.Repositories = append(data.Repositories, status)
 			continue
 		}
-		query, resolveErr := pullrequests.NewProvider().Resolve(repo, remote, "main")
+		query, resolveErr := pullrequests.NewProviderWithResolver(manager).Resolve(repo, remote, "main")
 		request := domain.CredentialRequest{Provider: query.Provider, Host: query.Host, APIURL: query.APIURL, Repository: query.SourceRepository, Connection: query.Connection, GrantID: query.GrantID, TokenEnv: query.TokenEnv, AllowRefresh: true}
 		var credential domain.Credential
 		if resolveErr == nil {

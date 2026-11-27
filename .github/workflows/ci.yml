@@ -19,7 +19,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go test ./...
+      # The integration suite starts enough native Git processes to exceed 10m on Windows.
+      - run: go test -timeout=${{ runner.os == 'Windows' && '30m' || '10m' }} ./...
       - run: go vet ./...
       - name: Race tests on Linux
         if: runner.os == 'Linux'

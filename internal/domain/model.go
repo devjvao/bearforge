@@ -54,20 +54,28 @@ type Worktree struct {
 	Prunable bool
 }
 
+// Divergence counts the commits reachable exclusively from the checkout or its base.
+type Divergence struct {
+	Ahead  int `json:"ahead"`
+	Behind int `json:"behind"`
+}
+
 type Status struct {
-	Path         string `json:"path"`
-	Branch       string `json:"branch"`
-	Head         string `json:"head"`
-	Upstream     string `json:"upstream,omitempty"`
-	Ahead        *int   `json:"ahead,omitempty"`
-	Behind       *int   `json:"behind,omitempty"`
-	Staged       int    `json:"staged"`
-	Modified     int    `json:"modified"`
-	Untracked    int    `json:"untracked"`
-	Conflicts    int    `json:"conflicts"`
-	Detached     bool   `json:"detached"`
-	Unborn       bool   `json:"unborn"`
-	UpstreamGone bool   `json:"upstream_gone"`
+	BaseRef        string      `json:"base_ref,omitempty"`
+	BaseDivergence *Divergence `json:"base_divergence,omitempty"`
+	Path           string      `json:"path"`
+	Branch         string      `json:"branch"`
+	Head           string      `json:"head"`
+	Upstream       string      `json:"upstream,omitempty"`
+	Ahead          *int        `json:"ahead,omitempty"`
+	Behind         *int        `json:"behind,omitempty"`
+	Staged         int         `json:"staged"`
+	Modified       int         `json:"modified"`
+	Untracked      int         `json:"untracked"`
+	Conflicts      int         `json:"conflicts"`
+	Detached       bool        `json:"detached"`
+	Unborn         bool        `json:"unborn"`
+	UpstreamGone   bool        `json:"upstream_gone"`
 }
 
 func (s Status) Dirty() bool { return s.Staged+s.Modified+s.Untracked+s.Conflicts > 0 }

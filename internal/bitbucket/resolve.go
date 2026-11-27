@@ -130,6 +130,67 @@ func parseRemote(raw string, server bool) (remoteIdentity, error) {
 	return identity, nil
 }
 
+// ServerRepositoryAt returns the project and slug for a clone URL belonging to
+// the approved Data Center Git installation. SSH URLs omit the HTTP context
+// and can use a separate port, so callers must disambiguate matching accounts.
+func ServerRepositoryAt(remote, gitBase string) string {
+	identity, err := parseRemote(remote, true)
+	if err != nil {
+		return ""
+	}
+	approved, err := apiURL(gitBase)
+	if err != nil || !strings.EqualFold(approved.Hostname(), identity.host) {
+		return ""
+	}
+	if identity.api != "" {
+		// HTTPS clone paths are <installation>/scm/<project>/<slug>. Some
+		// installations configure the approved Git base including /scm.
+		actual, err := url.Parse(identity.api)
+		if err != nil || domain.HTTPSAuthority(actual) != domain.HTTPSAuthority(approved) {
+			return ""
+		}
+		contextPath := strings.TrimSuffix(actual.Path, "/rest/api/1.0")
+		basePath := strings.TrimRight(approved.Path, "/")
+		if basePath != contextPath && basePath != contextPath+"/scm" {
+			return ""
+		}
+	}
+	return identity.repository
+}
+
+// IndependentServerTokenRoute reports whether an explicit environment token
+// can use a configured web host or a Data Center HTTPS clone URL when the
+// connection registry is unavailable. SSH aliases alone identify no web host.
+func IndependentServerTokenRoute(repo domain.Repository, remote string) bool {
+	p := repo.Provider
+	if p["kind"] != "bitbucket-server" || p["token_env"] == "" {
+		return false
+	}
+	identity, err := parseRemote(remote, true)
+	if err != nil {
+		return p["host"] != "" && p["source_repository"] != "" && p["repository"] != ""
+	}
+	if source := p["source_repository"]; source != "" && !strings.EqualFold(source, identity.repository) {
+		return false
+	}
+	return p["host"] != "" || identity.api != ""
+}
+
+// ExplicitServerSSHAlias checks whether a fully configured repository uses an
+// OpenSSH alias for its Git host and names the configured source project/slug.
+func ExplicitServerSSHAlias(repo domain.Repository, remote, gitBase string) bool {
+	p := repo.Provider
+	if p["kind"] != "bitbucket-server" || p["host"] == "" || p["repository"] == "" || p["source_repository"] == "" {
+		return false
+	}
+	approved, err := apiURL(gitBase)
+	if err != nil {
+		return false
+	}
+	identity, err := parseRemote(remote, true)
+	return err == nil && identity.api == "" && !strings.EqualFold(identity.host, approved.Hostname()) && strings.EqualFold(identity.repository, p["source_repository"])
+}
+
 func validRemoteHost(host string, ssh bool) bool {
 	return validHost(host) || (ssh && len(host) <= 253 && sshAliasPattern.MatchString(host))
 }

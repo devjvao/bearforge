@@ -2,6 +2,7 @@ package gitcli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -77,19 +78,58 @@ func (c *Client) FetchBranch(ctx context.Context, bare, remote, branch, oid stri
 }
 
 func (c *Client) HasCommit(ctx context.Context, bare, oid string) (bool, error) {
-	_, err := c.Run(ctx, bare, "rev-parse", "--verify", "--quiet", "--end-of-options", oid+"^{commit}")
+	_, err := c.localOnly().Run(ctx, bare, "--no-replace-objects", "rev-parse", "--verify", "--quiet", "--end-of-options", oid+"^{commit}")
 	if isExit(err, 1) {
 		return false, nil
 	}
 	return err == nil, err
 }
 
+// RequireFullHistory guards conclusions that depend on having seen every parent.
+func (c *Client) RequireFullHistory(ctx context.Context, bare string) error {
+	out, err := c.Run(ctx, bare, "rev-parse", "--is-shallow-repository")
+	if err != nil {
+		return err
+	}
+	switch strings.TrimSpace(string(out)) {
+	case "false":
+		return nil
+	case "true":
+		return domain.E("incomplete_history", "ancestry is uncertain in this shallow repository. Run git fetch --unshallow from the checkout and retry")
+	default:
+		return domain.E("git_failed", "malformed Git shallow repository status")
+	}
+}
+
 func (c *Client) IsAncestor(ctx context.Context, bare, ancestor, descendant string) (bool, error) {
+	c = c.localOnly()
 	_, err := c.Run(ctx, bare, "--no-replace-objects", "merge-base", "--is-ancestor", "--", ancestor, descendant)
-	if isExit(err, 1) {
+	command, ok := errors.AsType[*CommandError](err)
+	if !ok || (command.ExitCode != 1 && command.ExitCode != 128) {
+		return err == nil, err
+	}
+	// Older Git can report a missing parent on stderr and exit 1, the same
+	// status as "not an ancestor". Confirm the named object is actually absent.
+	var diagnostic bool
+	for line := range strings.Lines(command.Detail) {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "error:") || strings.HasPrefix(line, "fatal:") {
+			diagnostic = true
+		}
+		if oid, missing := strings.CutPrefix(line, "error: Could not read "); missing && domain.ValidCommitID(oid) {
+			_, probeErr := c.Run(ctx, bare, "--no-replace-objects", "cat-file", "-e", oid)
+			if isExit(probeErr, 1) {
+				return false, &domain.Error{Code: "incomplete_history", Message: "commit " + oid + " is unavailable in the local history", Cause: err}
+			}
+			if probeErr != nil {
+				return false, probeErr
+			}
+		}
+	}
+	if command.ExitCode == 1 && !diagnostic {
 		return false, nil
 	}
-	return err == nil, err
+	return false, err
 }
 
 // CheckBranchAvailable asks Git about branch reservations, including a detached

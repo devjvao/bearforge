@@ -39,9 +39,11 @@ type Git interface {
 	FetchBranch(context.Context, string, string, string, string) error
 	HasCommit(context.Context, string, string) (bool, error)
 	IsAncestor(context.Context, string, string, string) (bool, error)
+	RequireFullHistory(context.Context, string) error
 	CheckBranchAvailable(context.Context, string, string, string) error
 	AdvanceBranch(context.Context, string, string, string, string) error
 	Resolve(context.Context, string, string) (string, error)
+	LocalBaseRevision(context.Context, string, string) (string, error)
 	BranchExists(context.Context, string, string) (bool, error)
 	RefExists(context.Context, string, string) (bool, error)
 	ValidateBranch(context.Context, string) error
@@ -52,6 +54,7 @@ type Git interface {
 	SetUpstream(context.Context, string, string, string) error
 	HasSubmodules(context.Context, string, string) (bool, error)
 	Inspect(context.Context, string) (domain.Status, error)
+	CompareBase(context.Context, string, string, string) (domain.Divergence, error)
 	CheckRemoval(context.Context, string, string) error
 	PreserveHistory(context.Context, string, string, string, string) error
 	Remove(context.Context, string, string) error

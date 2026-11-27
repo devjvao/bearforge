@@ -297,7 +297,9 @@ Cloud closed results include merged, declined and superseded PRs. Merged results
 
 ### Company-hosted Bitbucket Server / Data Center
 
-Company hosts require an explicit kind; the application does not guess the service from an unfamiliar hostname. Coordinates use `PROJECT/repository-slug`, including personal projects such as `~alice/api`:
+After you sign in to your company Bitbucket Data Center installation with `bearforge auth login`, the dashboard and `pr list` can look up repositories previously added by clone URL. HTTPS remotes must match the saved Git host, port and installation path. SSH remotes use the saved Git hostname and the connection's HTTPS API endpoint. If several accounts match, select the intended connection with `bearforge repo rebind`. If you supply an environment token and several installations match, set `provider.api_url` to the intended REST endpoint.
+
+You can also configure the provider explicitly. Coordinates use `PROJECT/repository-slug`, including personal projects such as `~alice/api`. For example, this catalog entry looks up PRs from a personal fork into the TEAM project.
 
 ```yaml
 repositories:
@@ -313,7 +315,7 @@ repositories:
 
 Use an HTTP access token with repository read permission; the adapter sends Bearer authentication. [Atlassian documents Server/Data Center HTTP access tokens](https://confluence.atlassian.com/bitbucketserver093/http-access-tokens-1472430864.html). A saved connection scoped to the installation can supply it. Alternatively, `token_env` names an environment variable, never its value; it takes precedence over saved credentials, and an unset explicitly selected variable fails authentication. With neither a bound/matching saved connection nor an explicit environment credential, requests are anonymous. Default Cloud and GitHub credentials are never forwarded to company endpoints.
 
-The API URL is the REST root, without a repository path. HTTPS remotes such as `https://git.company.example:8443/bitbucket/scm/TEAM/api.git` infer the HTTPS port and installation context. SSH remotes such as `ssh://git@git.company.example:7999/TEAM/api.git` or `git@git.company.example:TEAM/api.git` default to `https://HOST/rest/api/1.0`; an SSH port does not identify the HTTPS port. Set `api_url` for a proxy, different API host or installation context. If the Git remote uses an SSH alias, provide the real `host`, `repository` and `source_repository` explicitly.
+The API URL is the REST root, without a repository path. HTTPS remotes such as `https://git.company.example:8443/bitbucket/scm/TEAM/api.git` infer the HTTPS port and installation context. Without a matching saved connection, SSH remotes such as `ssh://git@git.company.example:7999/TEAM/api.git` or `git@git.company.example:TEAM/api.git` default to `https://HOST/rest/api/1.0`; an SSH port does not identify the HTTPS port. Set `api_url` for a proxy, different API host or installation context. If the Git remote uses an SSH alias, provide the real `host`, `repository` and `source_repository` explicitly.
 
 API URLs require HTTPS and the system trust store; no TLS-verification bypass is provided. Pagination and redirects retain the configured API origin and exact repository PR-list path. Renames, unsafe pages, access/rate-limit errors and incomplete responses fail per repository without caching an empty result. Mixed GitHub, Cloud and Server members work in one request. The query in JSON/JSONL includes the selected `provider` kind. The repository's [Bitbucket verification evidence](https://github.com/devjvao/bearforge/blob/main/docs/development/bitbucket-pr-lookup-progress.md) records local coverage and deployment limits.
 

@@ -65,7 +65,7 @@ func TestStatusGitLaunchesAndEffectiveRemoteURLs(t *testing.T) {
 				}
 			}
 		}
-		want := map[string]int{"rev-parse": 2, "config": 1, "status": 1}
+		want := map[string]int{"rev-parse": 2, "config": 1, "status": 1, "show-ref": 1}
 		if !reflect.DeepEqual(counts, want) {
 			t.Fatalf("Git launches = %v, want %v", counts, want)
 		}

@@ -9,7 +9,9 @@ bearforge tui
 bearforge tui audit-feature
 ```
 
-Starting without a workspace selects the first workspace alphabetically. The dashboard inspects only the selected workspace. Repository details show actual/intended branches, staged/modified/untracked/conflicted counts, upstream and locally observed ahead/behind, detached/unborn HEAD, and per-repository errors. Observations are snapshots; external Git or editor activity can change state during inspection.
+Starting without a workspace selects the first workspace alphabetically. The dashboard inspects only the selected workspace. The repository table shows working-tree health and a separate **Base** column. For example, a clean feature branch showing `↑3 ↓2` has three commits of its own and is missing two commits from the configured base. `↑0 ↓0` means the tips are synchronized. Counts use local Git history and show `unknown` when the comparison is unavailable. Press `s` to fetch the latest remote refs.
+
+Repository details name the base ref and give exact counts for both the base and the current branch’s upstream when available. In a shallow repository, differing tips show `unknown` because earlier history can change the counts. If an update reports uncertain ancestry, run `git fetch --unshallow` from the checkout and preview again. Details also show actual and intended branches, staged, modified, untracked and conflicted files, detached or unborn HEAD, and per-repository errors.
 
 Local inspection uses `defaults.jobs` in `<root>/.bearforge/catalog.yaml` (default 4, range 1–64). Rows start as `inspecting` and update as each repository finishes; the header counts completed repositories, including failures. Repository order and selection remain stable. Refreshing or switching workspaces cancels the previous inspection; quitting waits for active checks to stop. Refresh stays local and does not fetch.
 
@@ -29,6 +31,8 @@ For first-time setup, follow [authentication](onboarding.md#authenticate-github-
 | `a` | Add registered repositories to the current workspace |
 | `d` / `D` | Preview selected-repository / whole-workspace removal |
 | `s` | Fetch/prune repositories in the current workspace |
+| `u` | Preview fast-forwarding the selected repository’s local branches from their remotes |
+| `b` | Preview updating the selected feature branch and rebasing it onto the repository default |
 | `o` | Inspect unfinished operations and review recovery actions |
 | `v` | Show or hide the latest action results |
 | Page Up / Page Down | Scroll details, previews, results and operation notices |
@@ -65,6 +69,14 @@ If a checkout loses its `.git` link, preview its removal to see where the remain
 Press `d` in the repository pane to preview removing the selected member. Press `D` to preview removal of every member and the workspace definition, including members hidden by filters. Only `y` confirms. Dirty or unsafe worktrees are refused, branches/history are preserved, and unrelated workspace container files remain. A changed preview requires review again. See [safe lifecycle workflows](onboarding.md#diagnose-and-retire-safely).
 
 ## Sync and pull requests
+
+Select a repository and press `u` to review fast-forward updates to its current branch and local default branch. Press `b` to also rebase the current feature branch onto the repository default. Both previews show which branches will move. Press `y` to apply the reviewed update locally. Rebasing can change the IDs of commits already on the feature branch. Publishing those commits is a separate Git operation.
+
+The checkout must be clean. The preview names the checked-out branch and shows the workspace’s intended branch if they differ. If a feature branch and its own published feature branch have diverged, the update reports which branches need reconciliation. A default branch checked out in a different worktree stays there. The selected feature can still rebase onto the fetched remote default.
+
+If the update reports index flags, inspect `git ls-files -v` in the checkout. A lowercase tag marks an assume-unchanged entry. An `S` or `s` tag marks a skip-worktree entry. Clear the corresponding flag with `git update-index --no-assume-unchanged -- <path>` or `git update-index --no-skip-worktree -- <path>`, then review `git status` and commit or stash any edits. For a sparse checkout, back up local edits and update manually with Git, or run `git sparse-checkout disable` and review the full checkout before retrying the dashboard update.
+
+When the checkout contains ignored files, a dashboard rebase keeps newly added files at their committed paths if the other branch renamed their directory. Git can also write a conflict file such as `foo~HEAD` next to a changed path. If that could overwrite an ignored file, or there are too many paths to verify, the dashboard stops before rebasing so you can move the ignored files aside.
 
 Press `s` to fetch/prune all repositories in the current workspace, including rows hidden by filters. Sync uses the catalog worker limit or `--jobs`, the mutation lock and fetch safety checks. Only one sync runs at a time; navigating to another workspace does not retarget it. Checked-out branches and files remain unchanged.
 
