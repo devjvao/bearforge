@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -271,6 +272,9 @@ func (s *Service) updateRemoteTarget(ctx context.Context, bare string, repo doma
 // branchRelation compares immutable tips. An advertised tip can be unavailable
 // locally until the user approves the scoped fetch.
 func (s *Service) branchRelation(ctx context.Context, bare, local, remote string, preview bool) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if local == remote {
 		return "equal", nil
 	}
@@ -286,13 +290,20 @@ func (s *Service) branchRelation(ctx context.Context, bare, local, remote string
 			return "pending", nil
 		}
 	}
-	ahead, err := s.Git.IsAncestor(ctx, bare, remote, local)
-	if err != nil || ahead {
-		return "ahead", err
-	}
-	behind, err := s.Git.IsAncestor(ctx, bare, local, remote)
-	if err != nil || behind {
-		return "behind", err
+	for _, direction := range []struct{ relation, ancestor, descendant string }{
+		{"ahead", remote, local},
+		{"behind", local, remote},
+	} {
+		isAncestor, err := s.Git.IsAncestor(ctx, bare, direction.ancestor, direction.descendant)
+		if err != nil {
+			if problem, ok := errors.AsType[*domain.Error](err); preview && ok && problem.Code == "incomplete_history" {
+				return "pending", nil
+			}
+			return "", err
+		}
+		if isAncestor {
+			return direction.relation, nil
+		}
 	}
 	return "diverged", nil
 }
