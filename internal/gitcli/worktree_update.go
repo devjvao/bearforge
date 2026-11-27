@@ -123,7 +123,6 @@ func (c *Client) UpdateCheckedOutBranch(ctx context.Context, bare, path, branch,
 		return fmt.Errorf("rebase failed; inspect git status at %s: %w", path, err)
 	}
 	if checkErr == nil {
-		defer root.Close()
 		matches := true
 		for name, want := range map[string]string{"orig-head": old, "head-name": "refs/heads/" + branch, "onto": target} {
 			got, e := readPrivateFile(root, name, 128<<10)
@@ -132,7 +131,9 @@ func (c *Client) UpdateCheckedOutBranch(ctx context.Context, bare, path, branch,
 				break
 			}
 		}
-		if matches {
+		// Git removes this directory during abort. An open Root prevents
+		// deletion on Windows, even after all three metadata files are closed.
+		if closeErr := root.Close(); closeErr == nil && matches {
 			if _, e := c.Run(cleanup, path, "rebase", "--abort"); e == nil {
 				return fmt.Errorf("rebase aborted; %s was restored to its pre-rebase tip. Inspect the conflicting commits before retrying: %w", branch, err)
 			} else {

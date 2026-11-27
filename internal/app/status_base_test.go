@@ -98,3 +98,58 @@ func TestStatusComparesCleanTrackingBranchWithCachedRepositoryBase(t *testing.T)
 	prGit(t, bare, "tag", "refs/remotes/origin/main", "refs/heads/topic")
 	assertCounts(-1, -1)
 }
+
+func TestStatusKeepsImportedBaseBranchLiteralAfterDefaultChanges(t *testing.T) {
+	s, store, remote := fixture(t)
+	ctx := t.Context()
+	prGit(t, remote, "branch", "topic")
+	prGit(t, remote, "switch", "-c", "origin/topic")
+	prGit(t, remote, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "literal branch")
+	prGit(t, remote, "switch", "main")
+
+	// Discovery recorded the literal default before the server switched to main.
+	selected := importSelection("api")
+	selected.Repository.DefaultBranch = "origin/topic"
+	s.Git = &importGit{Git: s.Git, local: remote}
+	req := app.ImportRequest{Repositories: []app.ImportRepository{selected}, DryRun: true}
+	preview, err := s.ImportRepositories(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.DryRun, req.ExpectedPlan = false, preview.PlanDigest
+	if _, err := s.ImportRepositories(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	catalog, _, err := store.LoadCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := catalog.Repositories["api"]
+	if repo.Base != "origin/topic" || repo.Provider["remote_id"] != selected.Repository.ID {
+		t.Fatalf("unexpected imported base or identity: %+v", repo)
+	}
+	if _, err := s.CreateWorkspace(ctx, "review", "main", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddRepositories(ctx, app.AddRequest{Workspace: "review", Repositories: []string{"api"}, Offline: true}); err != nil {
+		t.Fatal(err)
+	}
+	bare, err := s.RepositoryPath(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertLiteral := func() {
+		t.Helper()
+		result, err := s.Status(ctx, "review")
+		if err != nil || len(result.Items) != 1 || result.Items[0].Status == nil {
+			t.Fatalf("workspace status: %+v, %v", result, err)
+		}
+		st := result.Items[0].Status
+		if st.BaseRef != "refs/remotes/origin/origin/topic" || st.BaseDivergence == nil || st.BaseDivergence.Ahead != 0 || st.BaseDivergence.Behind != 1 {
+			t.Fatalf("imported base = %q %+v; want literal branch, one behind", st.BaseRef, st.BaseDivergence)
+		}
+	}
+	assertLiteral()
+	prGit(t, bare, "branch", "origin/topic", "refs/remotes/origin/topic")
+	assertLiteral()
+}

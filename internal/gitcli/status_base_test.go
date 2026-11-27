@@ -24,3 +24,23 @@ func TestCompareDetachedSHA256HeadWithExactRefAndOID(t *testing.T) {
 		}
 	}
 }
+
+func TestCompareBaseIgnoresReplacementAncestry(t *testing.T) {
+	c, bare, tree := privateHistoryFixture(t, "files", "sha1")
+	ctx := t.Context()
+	base, err := c.Resolve(ctx, tree, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, c, tree, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "child")
+	head, err := c.Resolve(ctx, tree, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Grafting the child as a root makes the two commits appear unrelated.
+	runGit(t, c, bare, "replace", "--graft", head)
+	d, err := c.CompareBase(ctx, bare, head, base)
+	if err != nil || d.Ahead != 1 || d.Behind != 0 {
+		t.Fatalf("comparison with replaced ancestry = %+v, %v; want 1 ahead only", d, err)
+	}
+}

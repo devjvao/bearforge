@@ -99,7 +99,7 @@ func (c *Client) CompareBase(ctx context.Context, bare, head, base string) (doma
 	if head == base {
 		return d, nil
 	}
-	out, err := c.Run(ctx, bare, "rev-list", "--left-right", "--count", "--end-of-options", head+"..."+base+"^{commit}", "--")
+	out, err := c.Run(ctx, bare, "--no-replace-objects", "rev-list", "--left-right", "--count", "--end-of-options", head+"..."+base+"^{commit}", "--")
 	if err != nil {
 		return d, err
 	}

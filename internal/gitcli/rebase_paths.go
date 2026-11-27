@@ -2,6 +2,7 @@ package gitcli
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -117,10 +118,20 @@ func (node *ignoredPaths) overlaps(root *os.Root, name string) (bool, error) {
 					if err != nil {
 						return false, err
 					}
-					if os.SameFile(known, actual) {
-						next = child
-						break
+					if !os.SameFile(known, actual) {
+						continue
 					}
+					if !actual.IsDir() {
+						distinct, err := distinctDirectoryEntries(root, parent, part, spelling)
+						if err != nil {
+							return false, err
+						}
+						if distinct {
+							continue
+						}
+					}
+					next = child
+					break
 				}
 				if node.aliases == nil {
 					node.aliases = make(map[string]*ignoredPaths)
@@ -136,4 +147,32 @@ func (node *ignoredPaths) overlaps(root *os.Root, name string) (bool, error) {
 	}
 	// A file written here can replace an entire directory of ignored files.
 	return true, nil
+}
+
+// Two names for one inode can be independently replaceable hard links. Both
+// spellings in the parent directory prove that they are different entries.
+// A case, normalization or short-name alias occupies only one directory entry.
+func distinctDirectoryEntries(root *os.Root, parent, first, second string) (bool, error) {
+	dir, err := root.Open(parent)
+	if err != nil {
+		return false, err
+	}
+	defer dir.Close()
+	var seenFirst, seenSecond bool
+	for {
+		names, err := dir.Readdirnames(128)
+		for _, name := range names {
+			seenFirst = seenFirst || name == first
+			seenSecond = seenSecond || name == second
+			if seenFirst && seenSecond {
+				return true, nil
+			}
+		}
+		if err == io.EOF {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+	}
 }

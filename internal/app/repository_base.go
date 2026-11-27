@@ -32,23 +32,25 @@ func (s *Service) repositoryBaseRef(ctx context.Context, bare string, repo domai
 		return s.Git.DefaultBase(ctx, bare, remote)
 	case strings.HasPrefix(repo.Base, "refs/heads/"):
 		return "refs/remotes/" + remote + "/" + strings.TrimPrefix(repo.Base, "refs/heads/"), nil
-	case strings.HasPrefix(repo.Base, "refs/") || domain.ValidCommitID(repo.Base):
+	case strings.HasPrefix(repo.Base, "refs/"):
 		return repo.Base, nil
 	}
 
 	literal := "refs/remotes/" + remote + "/" + repo.Base
+	if repo.Provider["remote_id"] != "" {
+		// Import stores the provider's literal branch name at discovery time.
+		// Later remote HEAD changes and local names cannot reinterpret it.
+		return literal, nil
+	}
+	if domain.ValidCommitID(repo.Base) {
+		return repo.Base, nil
+	}
 	prefix, _, hasSlash := strings.Cut(repo.Base, "/")
 	if _, registered := repo.Remotes[prefix]; !hasSlash || !registered {
 		return literal, nil
 	}
-	// A branch can itself be named "origin/topic". Provider imports record
-	// that literal name, and Git prefers a same-spelled local branch to a
-	// remote-tracking shorthand. Explicit refs/remotes/... is unambiguous.
-	if repo.Provider["remote_id"] != "" {
-		if defaultRef, err := s.Git.DefaultBase(ctx, bare, remote); err == nil && defaultRef == literal {
-			return literal, nil
-		}
-	}
+	// Manual catalogs may use remote-tracking shorthand. Git prefers
+	// a same-spelled local branch when both names exist.
 	if local, err := s.Git.RefExists(ctx, bare, "refs/heads/"+repo.Base); local || err != nil {
 		return literal, err
 	}
