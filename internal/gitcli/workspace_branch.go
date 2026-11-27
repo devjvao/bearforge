@@ -23,7 +23,7 @@ func (c *Client) AdvertisedBranch(ctx context.Context, bare, remote, branch stri
 		return "", nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("look up %s/%s (use --offline for cached branch selection): %w", remote, branch, err)
+		return "", fmt.Errorf("look up %s/%s: %w", remote, branch, err)
 	}
 	// ls-remote patterns can also match suffixes after a slash.
 	for line := range strings.SplitSeq(strings.TrimSpace(string(b)), "\n") {
@@ -165,5 +165,87 @@ func (c *Client) AdvanceBranch(ctx context.Context, bare, branch, old, tip strin
 		return domain.E("conflict", "local %s and remote %s diverged; use --track preserve to keep the local branch or choose another name", old, tip)
 	}
 	_, err = c.Run(ctx, bare, "update-ref", "--no-deref", "-m", "bearforge: fast-forward for workspace", ref, tip, old)
+	return err
+}
+
+// CheckDirectBranch requires the exact ref spelling and rejects symbolic
+// aliases without enumerating unrelated branches of the repository.
+func (c *Client) CheckDirectBranch(ctx context.Context, bare, branch string) error {
+	ref := "refs/heads/" + branch
+	names, err := c.Run(ctx, bare, "for-each-ref", "--format=%(refname)%00%(symref)", "--", ref)
+	if err != nil {
+		return err
+	}
+	for line := range strings.Lines(string(names)) {
+		if strings.TrimRight(line, "\r\n") == ref+"\x00" {
+			return nil
+		}
+	}
+	return domain.E("conflict", "local branch %q is missing or is not an exact direct ref. Inspect its Git reference before updating.", branch)
+}
+
+// AdvanceReviewedBranch fast-forwards a direct, unoccupied ref. Git's ref
+// transaction protects the expected tip. Worktree reservations are separate
+// Git state and must also be checked on each side of publication.
+func (c *Client) AdvanceReviewedBranch(ctx context.Context, bare, branch, old, tip string, checkIntent func() error) error {
+	if err := c.ValidateBranch(ctx, branch); err != nil {
+		return err
+	}
+	if !domain.ValidCommitID(old) || !domain.ValidCommitID(tip) || old == tip {
+		return domain.E("invalid", "the reviewed move requires two distinct full commit IDs")
+	}
+	ok, err := c.IsAncestor(ctx, bare, old, tip)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return domain.E("conflict", "local branch %s cannot fast-forward to the reviewed tip", branch)
+	}
+	ref := "refs/heads/" + branch
+	update := "option no-deref\nupdate " + ref + " " + tip + " " + old
+	ready := false
+	committed, writeErr := c.withPreparedRef(ctx, bare, update, func() error {
+		if err := c.CheckDirectBranch(ctx, bare, branch); err != nil {
+			return err
+		}
+		if err := c.CheckBranchAvailable(ctx, bare, branch, old); err != nil {
+			return err
+		}
+		if checkIntent != nil {
+			if err := checkIntent(); err != nil {
+				return err
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		ready = true
+		return nil
+	})
+	if !ready {
+		return writeErr
+	}
+	// Cancellation or a failed acknowledgment can arrive after Git committed.
+	// Check the named direct ref even when the request context was canceled.
+	observe := context.WithoutCancel(ctx)
+	observationErr := c.CheckDirectBranch(observe, bare, branch)
+	if observationErr == nil {
+		got, err := c.localOnly().Resolve(observe, bare, ref)
+		switch {
+		case err != nil:
+			observationErr = err
+		case got != tip:
+			observationErr = domain.E("conflict", "%s is now at %s; inspect its reflog before retrying the move from %s to %s", ref, got, old, tip)
+		default:
+			committed = true
+			if err := c.CheckBranchAvailable(observe, bare, branch, tip); err != nil {
+				observationErr = fmt.Errorf("could not confirm that %s is still unoccupied; inspect git worktree list and the checkout status before retrying: %w", ref, err)
+			}
+		}
+	}
+	err = errors.Join(writeErr, observationErr, ctx.Err())
+	if committed && err != nil {
+		return &domain.AdvancedBranchError{Cause: err}
+	}
 	return err
 }

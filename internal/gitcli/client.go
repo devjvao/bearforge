@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -80,9 +81,7 @@ func (c *Client) Run(ctx context.Context, dir string, args ...string) ([]byte, e
 	return c.runWithEnv(ctx, dir, nil, args...)
 }
 
-func (c *Client) runWithEnv(ctx context.Context, dir string, env []string, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
-	defer cancel()
+func (c *Client) command(ctx context.Context, dir string, env []string, args ...string) *exec.Cmd {
 	prefix := []string{"--no-pager", "--no-optional-locks"}
 	if runtime.GOOS == "windows" {
 		// A staged clone's packfiles can exceed MAX_PATH before publication.
@@ -113,12 +112,24 @@ func (c *Client) runWithEnv(ctx context.Context, dir string, env []string, args 
 		cmd.Env = append(cmd.Env, "GIT_CONFIG_NOSYSTEM=1")
 	}
 	cmd.Env = append(cmd.Env, env...)
+	configureProcess(cmd)
+	cmd.WaitDelay = 3 * time.Second
+	return cmd
+}
+
+func (c *Client) runWithEnv(ctx context.Context, dir string, env []string, args ...string) ([]byte, error) {
+	return c.runWithInput(ctx, dir, env, nil, args...)
+}
+
+func (c *Client) runWithInput(ctx context.Context, dir string, env []string, input io.Reader, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
+	defer cancel()
+	cmd := c.command(ctx, dir, env, args...)
+	cmd.Stdin = input
 	out := &limitedBuffer{limit: 16 << 20}
 	stderr := &limitedBuffer{limit: 16 << 10}
 	cmd.Stdout = out
 	cmd.Stderr = stderr
-	configureProcess(cmd)
-	cmd.WaitDelay = 3 * time.Second
 	err := cmd.Run()
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
@@ -437,6 +448,9 @@ func (c *Client) ValidateBranch(ctx context.Context, branch string) error {
 		return err
 	}
 	if _, err := c.Run(ctx, "", "check-ref-format", "--branch", branch); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
 		return domain.E("invalid", "invalid Git branch name %q", branch)
 	}
 	return nil

@@ -31,6 +31,7 @@ For first-time setup, follow [authentication](onboarding.md#authenticate-github-
 | `a` | Add registered repositories to the current workspace |
 | `d` / `D` | Preview selected-repository / whole-workspace removal |
 | `s` | Fetch/prune repositories in the current workspace |
+| `U` | Select and review fast-forwards across the workspace |
 | `u` | Preview fast-forwarding the selected repository’s local branches from their remotes |
 | `b` | Preview updating the selected feature branch and rebasing it onto the repository default |
 | `o` | Inspect unfinished operations and review recovery actions |
@@ -70,6 +71,14 @@ Press `d` in the repository pane to preview removing the selected member. Press 
 
 ## Sync and pull requests
 
+Press `U` to review the whole workspace, including repositories hidden by the dashboard filter. Eligible repositories start checked. Press Space to toggle a repository, Enter to review the selection, and `y` once to apply it. The preview names the checked-out branch and any local default branch that would advance. Each branch advances only to a reviewed commit reachable by fast-forward.
+
+The preview checks the remote tips and uses local history to verify ancestry. If a remote commit is new to this machine, close the preview, press `s` to fetch it, and reopen it. A feature can match its upstream and still trail the repository default. Review that rebase separately with `b`. If a checkout changes after review, the results identify the affected repository. Press `r` in partial results to preview the unfinished selections again. When the retry needs a sync, use `v` after syncing to reopen the batch results, then `r` to review those selections. You can apply the ready subset and return to the remaining repositories later.
+
+The **Base** column uses locally cached remote refs. If Git already has the target commit through another branch, a workspace update can fast-forward the local branch while that column still shows an older comparison. Press `s` to refresh the remote refs.
+
+Let Git commands that write to selected checkouts finish before confirming. Also finish any worktree creation or branch switch involving a selected default branch. Git can register a new worktree independently of a branch update. Bearforge checks reservations before publishing a default branch and again afterward. If another checkout claims that branch during publication, inspect its status before retrying. Workspace updates lock the checked-out branch while installing its reviewed Git tree. Use the single-repository `u` action if your project depends on Git’s `post-merge` hook. If workspace membership changes, retry shows which repositories were removed and lets you review the remaining selections. A branch configured with distinct upstream merge refs requires a choice of upstream before Bearforge can update it.
+
 Select a repository and press `u` to review fast-forward updates to its current branch and local default branch. Press `b` to also rebase the current feature branch onto the repository default. Both previews show which branches will move. Press `y` to apply the reviewed update locally. Rebasing can change the IDs of commits already on the feature branch. Publishing those commits is a separate Git operation.
 
 The checkout must be clean. The preview names the checked-out branch and shows the workspace’s intended branch if they differ. If a feature branch and its own published feature branch have diverged, the update reports which branches need reconciliation. A default branch checked out in a different worktree stays there. The selected feature can still rebase onto the fetched remote default.
@@ -87,6 +96,23 @@ Press `p` to look up open GitHub and Bitbucket PRs for every loaded workspace me
 Lookup preserves local status, filters and selection, and keys remain usable during HTTP. Startup, navigation and `r` do not contact provider APIs. Local refresh or workspace changes cancel and invalidate PR results. Repeated `p`/`P` does not queue requests while a lookup is active or draining. Provider clients retain bounded, timestamped observations in memory; refresh still respects rate-limit cooldowns. See [PR authentication, configuration and limits](onboarding.md#look-up-pull-requests).
 
 ## Operations and recovery
+
+### Guarded ref recovery after a workspace update
+
+Git can finish writing the selected tree and then fail to record the branch move, for example if the reflog is unwritable. Bearforge checks the named branch, index, and tracked files. When they match the reviewed transition, it retries the ref write once under Git’s locks. The result identifies any branch that already advanced.
+
+If the ref write still fails, fix the reported Git error first. Enter the reported checkout. Substitute the exact full branch ref and the old and target commit IDs from the result in the commands below.
+
+```sh
+git symbolic-ref HEAD
+git rev-parse REVIEWED_FULL_REF
+git diff-index --cached --quiet --ignore-submodules=none TARGET_COMMIT --
+git --no-optional-locks status --porcelain=v1 --no-branch --no-renames --untracked-files=no --ignore-submodules=none
+```
+
+Continue only if the first command shows the reviewed full ref, the second shows the old commit, and the index comparison exits successfully. The status command must succeed and its second column must be blank on every line. Changes in the first column are expected while the index holds the reviewed target and the branch still points to the old commit. With other Git writers stopped, finish the ref move with `git update-ref --no-deref -m "finish reviewed workspace update" REVIEWED_FULL_REF TARGET_COMMIT OLD_COMMIT`. Git checks the old commit again. If any check differs, inspect `git status` and the reflog and preserve the current edits.
+
+### Interrupted operations
 
 Unfinished mutations block unrelated writes. Press `o` to open **Operations**, including when a partial import prevents other changes. Select an operation to inspect failed steps. Press `r` to review retrying or `a` to review stopping recovery tracking; only `y` executes either action. Retry reuses successful clones and retained directories. Stopping tracking retains registrations, files and Git effects, clears the write block, and prevents resuming that operation afterward.
 

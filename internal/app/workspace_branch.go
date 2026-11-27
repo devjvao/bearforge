@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/devjvao/bearforge/internal/domain"
 )
@@ -28,7 +29,7 @@ func (s *Service) planWorkspaceBranch(ctx context.Context, bare, remote string, 
 	if !req.Offline && req.Base == "" && req.Tracking != "preserve" {
 		oid, err := s.Git.AdvertisedBranch(ctx, bare, remote, step.Branch)
 		if err != nil {
-			return err
+			return fmt.Errorf("select a workspace branch (use --offline for cached branch selection): %w", err)
 		}
 		remoteOID = oid
 		step.RemoteBranch = &RemoteBranchPlan{Remote: remote, URL: repo.Remotes[remote], OID: oid}

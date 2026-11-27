@@ -24,6 +24,7 @@ type IntentStore interface {
 	LoadCatalog() (domain.Catalog, string, error)
 	SaveCatalog(domain.Catalog, string) error
 	LoadWorkspace(string) (domain.Workspace, string, error)
+	CheckWorkspaceRevisions(name, workspaceRevision, catalogRevision string) error
 	SaveWorkspace(domain.Workspace, string) error
 	DeleteWorkspace(string, string) error
 	ListWorkspaces() ([]string, error)
@@ -133,6 +134,7 @@ type Problem struct {
 	Message string `json:"message"`
 }
 type Item struct {
+	AppliedMoves   []WorkspaceBranchMove          `json:"applied_moves,omitempty"`
 	RemovalMode    string                         `json:"removal_mode,omitempty"`
 	RetainedPath   string                         `json:"retained_path,omitempty"`
 	RefFormat      string                         `json:"ref_format,omitempty"`

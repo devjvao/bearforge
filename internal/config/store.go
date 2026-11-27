@@ -565,6 +565,26 @@ func checkRevision(path, rev string) error {
 	return nil
 }
 
+// CheckWorkspaceRevisions compares both intent files with a previously loaded
+// snapshot. This avoids repeatedly decoding the complete documents during a batch.
+func (s *Store) CheckWorkspaceRevisions(name, workspaceRevision, catalogRevision string) error {
+	if err := domain.ValidateID(name); err != nil {
+		return err
+	}
+	path, err := s.SafePath(".bearforge", "workspaces", name+".yaml")
+	if err != nil {
+		return err
+	}
+	if err := checkRevision(path, workspaceRevision); err != nil {
+		return err
+	}
+	path, err = s.SafePath(".bearforge", "catalog.yaml")
+	if err != nil {
+		return err
+	}
+	return checkRevision(path, catalogRevision)
+}
+
 func (s *Store) save(parts []string, value any, previous *yaml.Node, check func(string) error) error {
 	var next yaml.Node
 	if err := next.Encode(value); err != nil {

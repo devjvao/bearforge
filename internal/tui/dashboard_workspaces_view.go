@@ -2,12 +2,12 @@ package tui
 
 import (
 	"fmt"
-	"runtime"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func removalResultPath(item app.Item) string {
@@ -35,6 +35,8 @@ func (m dashboardModel) workspaceView() tea.View {
 		if run.action.updatesBranches() {
 			summary = "Checking local and remote branches..."
 		}
+	case workspacePicking:
+		summary = fmt.Sprintf("%d selected | %d repositories", run.batch.selectedCount, len(run.batch.plan.Rows))
 	case workspaceReview:
 		summary = "Review the plan; y confirms"
 		if run.err != nil {
@@ -46,10 +48,31 @@ func (m dashboardModel) workspaceView() tea.View {
 		summary = "Result: " + displayText(run.result.Outcome)
 		if run.err != nil {
 			summary = "Needs attention; inspect the results"
+		} else if run.action == workspaceUpdateAll {
+			updated, attention, unselected := 0, 0, 0
+			for _, state := range run.states {
+				switch state {
+				case "updated":
+					updated++
+				case "blocked", "sync_required", "failed", "skipped", "deferred", "not_run":
+					attention++
+				case "not_selected":
+					unselected++
+				}
+			}
+			summary = fmt.Sprintf("%d updated | %d need attention | %d not selected", updated, attention, unselected)
+		}
+		if run.action == workspaceUpdateAll && len(run.unfinishedUpdates()) > 0 && len(m.data.PendingOperations) > 0 {
+			summary = "Recovery required | Esc then o"
 		}
 	}
 	lines := []string{m.styles.brand.Render("Bearforge / " + string(run.action)), "Workspace: " + displayText(run.workspace), m.styles.focus.Render(summary)}
-	body := viewportLines(m.workspaceWrappedContent(), run.offset, m.detailWidth(), m.addViewportHeight())
+	var body []string
+	if run.phase == workspacePicking {
+		body = m.workspaceUpdatePickerLines()
+	} else {
+		body = viewportLines(m.workspaceWrappedContent(), run.offset, m.detailWidth(), m.addViewportHeight())
+	}
 	if m.framed() {
 		lines = append(lines, strings.Split(m.pane(body, m.width, true), "\n")...)
 	} else {
@@ -60,6 +83,14 @@ func (m dashboardModel) workspaceView() tea.View {
 	switch run.phase {
 	case workspaceForm:
 		first, second = "Tab field | Enter preview", "Esc dashboard | Ctrl-C cancel"
+	case workspacePicking:
+		if m.width < 60 {
+			lines = append(lines,
+				keyboardHelp(actionBindings("Space select", "Enter review", "j/k move"), m.width, " ", m.styles),
+				keyboardHelp(actionBindings("PgUp/PgDn details", "Esc back", "r refresh"), m.width, " ", m.styles))
+			return dashboardView(lines, m.width)
+		}
+		first, second = "Space select | Enter review | j/k move", "Esc back | r refresh | PgUp/PgDn details | q quit"
 	case workspaceReview:
 		first = "PgUp/PgDn review | y confirm"
 		if run.err != nil {
@@ -69,6 +100,9 @@ func (m dashboardModel) workspaceView() tea.View {
 		second = "q cancel/quit | Ctrl-C cancel"
 	case workspaceResults:
 		second = "Esc dashboard | v view | q quit"
+		if run.action == workspaceUpdateAll && len(run.unfinishedUpdates()) > 0 && m.workspaceWritesReady() && run.workspace == m.workspace && m.data.Workspace == run.workspace {
+			first = "r retry unfinished | PgUp/PgDn details"
+		}
 	}
 	lines = append(lines, actionHelp(first, m.width, m.styles), actionHelp(second, m.width, m.styles))
 	return dashboardView(lines, m.width)
@@ -82,7 +116,7 @@ func (m dashboardModel) workspaceContent() []string {
 	run := m.workspaceRun
 	lines := []string{}
 	if run.err != nil {
-		lines = append(lines, m.styles.bad.Render("Error: "+displayText(run.err.Error())))
+		lines = append(lines, m.styles.bad.Render("Error: "+updateDetailText(run.err.Error())))
 	}
 	switch run.phase {
 	case workspaceForm:
@@ -92,6 +126,9 @@ func (m dashboardModel) workspaceContent() []string {
 		}
 		return append(lines, name, branch, "Leave branch blank to use the name.", "Creates an empty workspace. Add repositories afterward with a.")
 	case workspacePlanning:
+		if run.action == workspaceUpdateAll {
+			return append(lines, "Checking workspace branches and their remote tips...")
+		}
 		if run.action.updatesBranches() {
 			return append(lines, "Looking up the latest branch tips for "+displayText(run.names[0])+".")
 		}
@@ -99,6 +136,15 @@ func (m dashboardModel) workspaceContent() []string {
 	case workspaceReview:
 		if run.err != nil {
 			return append(lines, "Retry with r; Escape returns without changes.")
+		}
+		if run.action == workspaceUpdateAll {
+			lines = append(lines, fmt.Sprintf("Fast-forward branches in %d selected repositories.", len(run.names)))
+			for _, row := range run.batch.plan.Rows {
+				if row.Eligible && !run.batch.excluded[row.Repository] {
+					lines = append(lines, "", updateRowDetails(row))
+				}
+			}
+			return append(lines, "", "Press y to apply these fast-forwards or Escape to edit the selection.")
 		}
 		if run.action == workspaceCreate {
 			item := run.preview.Items[0]
@@ -155,9 +201,9 @@ func (m dashboardModel) workspaceContent() []string {
 			completed, failed := 0, 0
 			for _, id := range run.names {
 				switch run.states[id] {
-				case "removed", "succeeded":
+				case "removed", "succeeded", "updated":
 					completed++
-				case "failed":
+				case "failed", "skipped":
 					completed++
 					failed++
 				}
@@ -171,7 +217,36 @@ func (m dashboardModel) workspaceContent() []string {
 			}
 		}
 		if run.result.Problem != nil && run.err == nil {
-			lines = append(lines, m.styles.bad.Render("Error: "+displayText(run.result.Problem.Message)))
+			lines = append(lines, m.styles.bad.Render("Error: "+updateDetailText(run.result.Problem.Message)))
+		}
+		if run.action == workspaceUpdateAll && run.phase == workspaceResults {
+			itemsByID := make(map[string]app.Item, len(run.result.Items))
+			for _, item := range run.result.Items {
+				itemsByID[item.Repository] = item
+			}
+			for _, row := range run.batch.plan.Rows {
+				outcome, selected := run.states[row.Repository]
+				if !selected {
+					continue
+				}
+				lines = append(lines, "", m.styles.title.Render(displayText(row.Repository))+"  "+m.styles.outcome(outcome))
+				switch outcome {
+				case "not_selected", "deferred", "blocked", "sync_required", "removed", "no_update":
+					lines = append(lines, workspaceUpdateAdvice(row.Detail))
+				}
+				item := itemsByID[row.Repository]
+				for _, move := range item.AppliedMoves {
+					lines = append(lines, fmt.Sprintf("Fast-forwarded %s from %s to %s.", domain.DisplayRef(move.Branch), displayText(move.From), displayText(move.To)))
+				}
+				if problem := item.Problem; problem != nil {
+					label := "Error: "
+					if outcome != item.Outcome {
+						label = "Previous apply error: "
+					}
+					lines = append(lines, m.styles.bad.Render(label+updateDetailText(problem.Message)))
+				}
+			}
+			return lines
 		}
 		for _, id := range run.names {
 			lines = append(lines, "", m.styles.title.Render(displayText(id))+"  "+m.styles.outcome(run.states[id]))
@@ -217,6 +292,8 @@ func (m dashboardModel) workspaceProgressAction() string {
 		return "Updating and rebasing the selected branch"
 	case workspaceUpdate:
 		return "Updating local branches"
+	case workspaceUpdateAll:
+		return "Fast-forwarding selected branches"
 	case workspaceCreate:
 		return "Creating workspace"
 	case workspaceRemoveRepo:
@@ -253,8 +330,5 @@ func dashboardRecoveryLines(root, id string, resumable bool) []string {
 // Quote for PowerShell on Windows and a POSIX shell elsewhere, keeping arguments
 // with spaces, quotes or shell metacharacters literal in copied commands.
 func workspaceShellQuote(value string) string {
-	if runtime.GOOS == "windows" {
-		return "'" + strings.ReplaceAll(value, "'", "''") + "'"
-	}
-	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+	return domain.QuoteShellArgument(value)
 }

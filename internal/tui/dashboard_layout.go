@@ -141,13 +141,13 @@ func (m dashboardModel) footerLines() []string {
 		return []string{m.styles.muted.Render("Type to filter"), actionHelp("Enter apply | Esc clear | Ctrl-C cancel", m.width, m.styles)}
 	}
 	actions := actionHelp("p PRs | P refresh | n new | d repo | D workspace | PgUp/PgDn details | Ctrl-C cancel", m.width, m.styles)
-	footer := actionHelp("q quit | i import | Tab panes | j/k move | / filter | r refresh | s sync | a add | v view", m.width, m.styles)
+	footer := "q quit | i import | Tab panes | j/k move | / filter | r refresh | s sync | a add | v view"
 	if m.width < 70 {
 		actions = keyboardHelp(actionBindings("p PRs", "P refresh", "PgUp/PgDn", "^C", "n new", "d/D remove"), m.width, " ", m.styles)
-		footer = actionHelp("q quit | i import | s sync | a add | Tab panes | / filter | r refresh | v view", m.width, m.styles)
+		footer = "q quit | i import | s sync | a add | Tab panes | / filter | r refresh | v view"
 	}
 	if _, ok := m.reader.source.(DashboardRecoverer); ok {
-		footer = actionHelp("o operations | q quit | i import | s sync | a add | Tab panes | r refresh | v view", m.width, m.styles)
+		footer = "o operations | q quit | i import | s sync | a add | Tab panes | r refresh | v view"
 	}
 	if _, ok := m.reader.source.(dashboardWorktreeUpdater); ok && m.focus == 1 && m.repositoryCount() > 0 {
 		if m.width < 70 {
@@ -156,7 +156,20 @@ func (m dashboardModel) footerLines() []string {
 			actions = actionHelp("p PRs | P refresh | u update | b rebase | PgUp/PgDn details | n new | d/D remove", m.width, m.styles)
 		}
 	}
-	return []string{actions, footer}
+	if _, ok := m.reader.source.(DashboardWorkspaceUpdater); ok && m.workspace != "" {
+		footer = strings.Replace(footer, "q quit", "q quit | U workspace", 1)
+		if m.workspaceRun != nil && m.workspaceRun.phase == workspaceResults {
+			footer = strings.Replace(footer, " | v view", "", 1)
+			footer = strings.Replace(footer, "q quit", "q quit | v view", 1)
+		}
+		if len(footer) > m.width {
+			if m.width < 60 {
+				footer = strings.Replace(footer, "o operations", "o ops", 1)
+			}
+			return []string{actions, keyboardHelp(actionBindings(strings.Split(footer, " | ")...), m.width, " ", m.styles)}
+		}
+	}
+	return []string{actions, actionHelp(footer, m.width, m.styles)}
 }
 
 func (m dashboardModel) framed() bool { return m.width >= 60 && m.height >= 18 }

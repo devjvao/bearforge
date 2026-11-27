@@ -69,7 +69,7 @@ bearforge tui
    load the list, select repositories, then press Enter to preview and `y` to import.
 2. Press `n` to create a named workspace.
 3. Press `a` to add imported repositories to that workspace.
-4. Use `s` to fetch updates. The **Base** column shows commits ahead and behind. Select a repository and press `u` to preview a local update, `b` to preview a rebase onto the default branch, or `p` to look up pull requests for the workspace.
+4. Use `s` to fetch updates. The **Base** column shows commits ahead and behind. Press `U` to select and review fast-forwards across the workspace. For one repository, use `u` to update or `b` to preview a rebase onto its default branch. Press `p` for workspace pull requests.
 
 Import registers repositories; adding them to a workspace creates the working
 directories for your task. The [dashboard guide](docs/dashboard.md) covers the

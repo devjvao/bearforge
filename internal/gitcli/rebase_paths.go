@@ -15,6 +15,10 @@ import (
 // renames so a file added and later removed by the feature is covered.
 // On success it reports whether ignored files are present in the checkout.
 func (c *Client) checkIgnoredRebasePaths(ctx context.Context, path, old, target string) (bool, error) {
+	return c.checkIgnoredUpdatePaths(ctx, path, old, target, true)
+}
+
+func (c *Client) checkIgnoredUpdatePaths(ctx context.Context, path, old, target string, rebase bool) (bool, error) {
 	files, err := c.Run(ctx, path, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "--no-empty-directory", "-z")
 	if err != nil || len(files) == 0 {
 		return false, err
@@ -43,13 +47,17 @@ func (c *Client) checkIgnoredRebasePaths(ctx context.Context, path, old, target 
 		node.ignored = true
 		node.directory = strings.HasSuffix(name, "/")
 	}
-	conflicts := newRebaseConflictPaths(files)
-	seen := make(map[string]bool)
-	for _, args := range [][]string{
-		{"diff", "--name-only", "--no-renames", "--no-ext-diff", "-z", old, target, "--"},
+	var conflicts *rebaseConflictPaths
+	action := "updating"
+	commands := [][]string{{"diff", "--name-only", "--no-renames", "--no-ext-diff", "--ignore-submodules=none", "-z", old, target, "--"}}
+	if rebase {
+		action = "rebasing"
+		conflicts = newRebaseConflictPaths(files)
 		// Signature reports share stdout with the first pathname of each commit.
-		{"log", "--format=", "--no-show-signature", "--name-only", "--no-renames", "--diff-merges=separate", "-z", target + ".." + old, "--"},
-	} {
+		commands = append(commands, []string{"log", "--format=", "--no-show-signature", "--name-only", "--no-renames", "--diff-merges=separate", "-z", target + ".." + old, "--"})
+	}
+	seen := make(map[string]bool)
+	for _, args := range commands {
 		changed, err := c.Run(ctx, path, append([]string{"--no-replace-objects"}, args...)...)
 		if err != nil {
 			return false, err
@@ -67,7 +75,7 @@ func (c *Client) checkIgnoredRebasePaths(ctx context.Context, path, old, target 
 				return false, err
 			}
 			if overlaps {
-				return false, domain.E("conflict", "rebasing would overwrite ignored working files at %s; move them aside before updating", name)
+				return false, domain.E("conflict", "%s would overwrite ignored working files at %s; move them aside before updating", action, name)
 			}
 			if conflicts != nil {
 				if err := conflicts.check(ctx, scan, ignored, name); err != nil {
@@ -92,7 +100,7 @@ func (s *rebasePathScan) spend(ctx context.Context, n int) error {
 		return err
 	}
 	if n > s.budget {
-		return domain.E("conflict", "too many paths to verify ignored working files; move them aside before rebasing")
+		return domain.E("conflict", "too many paths to verify ignored working files; move them aside before updating")
 	}
 	s.budget -= n
 	return nil

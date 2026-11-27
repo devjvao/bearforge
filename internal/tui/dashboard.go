@@ -238,6 +238,8 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateWorkspace(v)
 	case dashboardWorkspacePreviewMsg, dashboardWorkspaceProgressMsg:
 		return m.updateWorkspace(msg)
+	case workspaceUpdatePreviewMsg:
+		return m.receiveWorkspaceUpdatePreview(v)
 	case dashboardAddedMsg:
 		if m.addRun != nil && v.id == m.addID && m.addRun.phase == addExecuting {
 			m.discardImportResults()
@@ -345,11 +347,11 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.invalidatePullRequests()
 			return m.startSync()
 		case "b":
-			m.invalidatePullRequests()
 			return m.openWorkspace(workspaceRebase)
 		case "u":
-			m.invalidatePullRequests()
 			return m.openWorkspace(workspaceUpdate)
+		case "U":
+			return m.openWorkspace(workspaceUpdateAll)
 		case "a":
 			m.invalidatePullRequests()
 			return m.openAdd()
@@ -357,23 +359,23 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.invalidatePullRequests()
 			return m.openImport()
 		case "n":
-			m.invalidatePullRequests()
 			return m.openWorkspace(workspaceCreate)
 		case "d":
-			m.invalidatePullRequests()
 			return m.openWorkspace(workspaceRemoveRepo)
 		case "D":
-			m.invalidatePullRequests()
 			return m.openWorkspace(workspaceRemoveAll)
 		case "p", "P":
 			return m.startPullRequests(key == "P")
 		case "v":
-			if m.operationsRun != nil && m.operationsRun.phase == operationsResults {
+			if m.syncRun != nil && m.syncRun.running {
+				m.showSync, m.detailOffset = !m.showSync, 0
+			} else if m.operationsRun != nil && m.operationsRun.phase == operationsResults {
 				m.showOperations, m.operationsRun.offset = !m.showOperations, 0
 			} else if m.importRun != nil && m.importRun.phase == importResults {
 				m.showImport, m.importRun.offset = !m.showImport, 0
 			} else if m.workspaceRun != nil && m.workspaceRun.phase == workspaceResults {
 				m.showWorkspace, m.workspaceRun.offset = !m.showWorkspace, 0
+				m.showSync = false
 			} else if m.addRun != nil && m.addRun.phase == addResults {
 				m.showAdd = !m.showAdd
 				m.addRun.offset = 0

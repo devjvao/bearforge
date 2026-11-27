@@ -69,20 +69,28 @@ func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 	}
 	var de *domain.Error
 	if errors.As(err, &de) {
-		switch de.Code {
-		case "invalid":
-			return 2
-		case "conflict", "unsafe_path", "unsafe_removal", "confirmation", "unhealthy":
-			return 3
-		case "unavailable":
-			return 4
-		}
-		return 1
+		return domainExitCode(de.Code)
 	}
 	if !o.rendered {
 		return 2
 	}
 	return 1
+}
+
+func domainExitCode(code string) int {
+	if domain.IsSafetyRefusal(code) {
+		return 3
+	}
+	switch code {
+	case "invalid":
+		return 2
+	case "cancelled":
+		return 130
+	case "unavailable":
+		return 4
+	default:
+		return 1
+	}
 }
 
 func newRoot(o *options) *cobra.Command {
@@ -228,6 +236,15 @@ func (o *options) render(r app.Result) error {
 	if o.output == "json" {
 		return json.NewEncoder(o.out).Encode(r)
 	}
+	if plan, ok := r.Data.(app.WorkspaceUpdatePlan); ok {
+		if err := writeWorkspaceUpdate(o.out, plan, r.Items, r.Outcome == "planned" && r.Problem == nil); err != nil {
+			return err
+		}
+		if r.Problem != nil {
+			return o.diagnostic("Error:", r.Problem.Message)
+		}
+		return nil
+	}
 	if strings.HasPrefix(r.Command, "auth.") {
 		return o.renderAuthentication(r)
 	}
@@ -331,7 +348,11 @@ func (o *options) confirm(ctx context.Context, plan app.Result) error {
 	if o.noInput || o.output != "human" || !isTerminal(o.in) {
 		return domain.E("confirmation", "confirmation required; review --dry-run then use --yes")
 	}
-	if repair, ok := plan.Data.(app.ImportReassociationPlan); ok {
+	if update, ok := plan.Data.(app.WorkspaceUpdatePlan); ok {
+		if err := writeWorkspaceUpdate(o.errOut, update, nil, true); err != nil {
+			return err
+		}
+	} else if repair, ok := plan.Data.(app.ImportReassociationPlan); ok {
 		if err := o.writeImportReassociationReview(repair); err != nil {
 			return err
 		}
