@@ -158,6 +158,24 @@ func ServerRepositoryAt(remote, gitBase string) string {
 	return identity.repository
 }
 
+// IndependentServerTokenRoute reports whether an explicit environment token
+// can use a configured web host or a Data Center HTTPS clone URL when the
+// connection registry is unavailable. SSH aliases alone identify no web host.
+func IndependentServerTokenRoute(repo domain.Repository, remote string) bool {
+	p := repo.Provider
+	if p["kind"] != "bitbucket-server" || p["token_env"] == "" {
+		return false
+	}
+	identity, err := parseRemote(remote, true)
+	if err != nil {
+		return p["host"] != "" && p["source_repository"] != "" && p["repository"] != ""
+	}
+	if source := p["source_repository"]; source != "" && !strings.EqualFold(source, identity.repository) {
+		return false
+	}
+	return p["host"] != "" || identity.api != ""
+}
+
 // ExplicitServerSSHAlias checks whether a fully configured repository uses an
 // OpenSSH alias for its Git host and names the configured source project/slug.
 func ExplicitServerSSHAlias(repo domain.Repository, remote, gitBase string) bool {

@@ -76,10 +76,6 @@ func (p *Provider) Resolve(repo domain.Repository, remote, branch string) (domai
 // Read public routing metadata only. The client resolves the actual credential
 // at lookup time and checks the exact saved grant and API scope.
 func (p *Provider) withServerConnection(repo domain.Repository, remote string) (domain.Repository, error) {
-	connections, err := p.connections(context.Background())
-	if err != nil {
-		return repo, err
-	}
 	metadata := maps.Clone(repo.Provider)
 	if metadata == nil {
 		metadata = make(map[string]string)
@@ -91,6 +87,13 @@ func (p *Provider) withServerConnection(repo domain.Repository, remote string) (
 		delete(metadata, "grant_id")
 	}
 	repo.Provider = metadata
+	connections, err := p.connections(context.Background())
+	if err != nil {
+		if bitbucket.IndependentServerTokenRoute(repo, remote) {
+			return repo, nil
+		}
+		return repo, err
+	}
 	name := metadata["connection"]
 	if name == "" && metadata["grant_id"] != "" {
 		return repo, auth.ErrDisconnected
@@ -113,13 +116,10 @@ func (p *Provider) withServerConnection(repo domain.Repository, remote string) (
 			continue
 		}
 		project := bitbucket.ServerRepositoryAt(remote, c.GitURL)
+		if project == "" && name != "" && bitbucket.ExplicitServerSSHAlias(repo, remote, c.GitURL) {
+			project = metadata["source_repository"]
+		}
 		if project == "" {
-			// A named connection and explicit coordinates can describe an
-			// OpenSSH alias. Use the configured host's default API; Lookup
-			// still verifies its exact scope against the saved grant.
-			if name != "" && bitbucket.ExplicitServerSSHAlias(repo, remote, c.GitURL) {
-				return repo, nil
-			}
 			continue
 		}
 		if selected != nil {

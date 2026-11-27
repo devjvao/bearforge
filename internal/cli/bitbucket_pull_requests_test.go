@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -262,19 +263,21 @@ func (transport companyPRTransport) RoundTrip(r *http.Request) (*http.Response, 
 
 func TestCompanyBitbucketExplicitCredentialRoutes(t *testing.T) {
 	const host = "git.company.test"
-	const api = "https://" + host + "/rest/api/1.0"
+	const apiHost = "api.company.test:8443"
+	const apiPath = "/bitbucket/rest/api/latest"
+	const api = "https://" + apiHost + apiPath
 	var wantAuth string
 	var requests int
 	transport := companyPRTransport(func(r *http.Request) (*http.Response, error) {
 		requests++
-		if r.URL.Host != host || r.URL.Scheme != "https" || r.Header.Get("Authorization") != "Bearer "+wantAuth {
+		if r.URL.Host != apiHost || r.URL.Scheme != "https" || r.Header.Get("Authorization") != "Bearer "+wantAuth {
 			return nil, fmt.Errorf("unexpected API destination or authentication for %s", r.URL)
 		}
 		var body string
 		switch r.URL.Path {
-		case "/rest/api/1.0/repos":
+		case apiPath + "/repos":
 			body = "{}"
-		case "/rest/api/1.0/projects/UPSTREAM/repos/api/pull-requests":
+		case apiPath + "/projects/UPSTREAM/repos/api/pull-requests":
 			body = `{"isLastPage":true,"values":[]}`
 		default:
 			return nil, fmt.Errorf("unexpected path %s", r.URL.Path)
@@ -296,12 +299,16 @@ func TestCompanyBitbucketExplicitCredentialRoutes(t *testing.T) {
 	for _, tc := range []struct{ name, remote, tokenEnv, grant, want string }{
 		{"rotated saved grant with environment override", "git@" + host + ":TEAM/api.git", "PR_OVERRIDE_TOKEN", "removed", "environment-token"},
 		{"explicit SSH alias with named grant", "git@company_work:TEAM/api.git", "", connection.GrantID, "saved-token"},
+		{"explicit SSH alias with named login", "ssh://git@company_work:7999/TEAM/api.git", "", "", "saved-token"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := domain.Repository{Provider: map[string]string{"kind": "bitbucket-server", "host": host, "repository": "UPSTREAM/api", "source_repository": "TEAM/api", "connection": "work", "grant_id": tc.grant, "token_env": tc.tokenEnv}}
 			q, err := p.Resolve(repo, tc.remote, "feature")
 			if err != nil || q.APIURL != api || q.SourceRepository != "TEAM/api" || q.Repository != "UPSTREAM/api" {
 				t.Fatalf("wrong route %+v: %v", q, err)
+			}
+			if tc.tokenEnv == "" && (q.Connection != connection.Name || q.GrantID != connection.GrantID) {
+				t.Fatalf("alias lookup did not select the current saved grant: %+v", q)
 			}
 			wantAuth = tc.want
 			before := requests
@@ -327,6 +334,54 @@ func TestCompanyBitbucketExplicitCredentialRoutes(t *testing.T) {
 						t.Fatalf("lookup bypassed saved %s verification: %v", field, err)
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestCompanyBitbucketExplicitTokenWithUnavailableRegistry(t *testing.T) {
+	registry := filepath.Join(t.TempDir(), "connections.json")
+	if err := os.WriteFile(registry, []byte("{malformed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager := auth.NewManager(auth.Options{RegistryPath: registry, Secrets: authTestSecrets{}})
+	p := pullrequests.NewProviderWithResolver(manager)
+	t.Setenv("PR_OVERRIDE_TOKEN", "environment-token")
+	const kind = "bitbucket-server"
+	const host = "git.company.test"
+	original := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = original })
+	for _, tc := range []struct{ name, kind, remote, configuredHost, source, api string }{
+		{"HTTPS installation from clone URL", kind, "https://git.company.test:8443/bitbucket/scm/TEAM/api.git", "", "", "https://git.company.test:8443/bitbucket/rest/api/1.0"},
+		{"SSH alias with explicit host and source", kind, "git@company_work:TEAM/api.git", host, "TEAM/api", "https://git.company.test/rest/api/1.0"},
+		{"unknown provider", "", "https://unknown.test/scm/TEAM/api.git", "", "", ""},
+		{"SSH alias without web coordinates", kind, "git@alias:TEAM/api.git", "", "", ""},
+		{"unsupported HTTPS path without web coordinates", kind, "https://unknown.test/other/TEAM/api.git", "", "TEAM/api", ""},
+		{"ambiguous source", kind, "https://git.company.test/scm/OTHER/api.git", host, "TEAM/api", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			count := 0
+			http.DefaultTransport = companyPRTransport(func(r *http.Request) (*http.Response, error) {
+				count++
+				want := tc.api + "/projects/UPSTREAM/repos/api/pull-requests"
+				if tc.api == "" || r.URL.Scheme+"://"+r.URL.Host+r.URL.Path != want || r.Header.Get("Authorization") != "Bearer environment-token" {
+					return nil, fmt.Errorf("unexpected authenticated API destination %s", r.URL)
+				}
+				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"isLastPage":true,"values":[]}`)), Request: r}, nil
+			})
+			repo := domain.Repository{Provider: map[string]string{"kind": tc.kind, "host": tc.configuredHost, "repository": "UPSTREAM/api", "source_repository": tc.source, "token_env": "PR_OVERRIDE_TOKEN", "connection": "missing", "grant_id": "old"}}
+			q, err := p.Resolve(repo, tc.remote, "feature")
+			if tc.api == "" {
+				if err == nil || count != 0 {
+					t.Fatalf("unexpected route %+v, requests=%d, err=%v", q, count, err)
+				}
+				return
+			}
+			if err != nil || q.APIURL != tc.api || q.SourceRepository != "TEAM/api" || q.Connection != "" || q.GrantID != "" {
+				t.Fatalf("wrong independent route %+v: %v", q, err)
+			}
+			if _, err := p.Lookup(t.Context(), q, true); err != nil || count != 1 {
+				t.Fatalf("lookup failed: %v, requests=%d", err, count)
 			}
 		})
 	}
