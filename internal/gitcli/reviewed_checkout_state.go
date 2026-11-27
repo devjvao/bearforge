@@ -75,11 +75,24 @@ func (c *Client) checkInstalledTree(ctx context.Context, path, ref, target strin
 	if err != nil {
 		return err
 	}
-	// Porcelain diff verifies content when only index stat information is stale.
-	// diff-files --quiet can report an mtime-only change as a dirty checkout.
-	_, err = c.Run(ctx, path, "--no-replace-objects", "-c", "diff.autoRefreshIndex=true", "diff", "--quiet", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "--")
-	if isExit(err, 1) {
-		return domain.E("conflict", "tracked files differ from the installed index")
+	// Under --no-optional-locks, status verifies content with stale stat data
+	// without rewriting the index or triggering post-index-change hooks.
+	out, err := c.Run(ctx, path, "--no-replace-objects", "status", "--porcelain=v1", "-z", "--no-branch", "--no-renames", "--untracked-files=no", "--ignore-submodules=none")
+	if err != nil {
+		return err
 	}
-	return err
+	for record := range strings.SplitSeq(string(out), "\x00") {
+		if record == "" {
+			continue
+		}
+		// Staged additions and deletions relative to the old HEAD are expected.
+		// With renames disabled, every record is a single XY + space + path.
+		if len(record) < 4 || record[2] != ' ' {
+			return domain.E("git_failed", "malformed Git status")
+		}
+		if record[1] != ' ' {
+			return domain.E("conflict", "tracked files differ from the installed index")
+		}
+	}
+	return nil
 }

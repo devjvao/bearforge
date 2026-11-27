@@ -107,10 +107,10 @@ If the ref write still fails, fix the reported Git error first. Enter the report
 git symbolic-ref HEAD
 git rev-parse REVIEWED_FULL_REF
 git diff-index --cached --quiet --ignore-submodules=none TARGET_COMMIT --
-git -c diff.autoRefreshIndex=true diff --quiet --no-ext-diff --no-textconv --ignore-submodules=none --
+git --no-optional-locks status --porcelain=v1 --no-branch --no-renames --untracked-files=no --ignore-submodules=none
 ```
 
-Continue only if the first command shows the reviewed full ref, the second shows the old commit, and both comparisons exit successfully. With other Git writers stopped, finish the ref move with `git update-ref --no-deref -m "finish reviewed workspace update" REVIEWED_FULL_REF TARGET_COMMIT OLD_COMMIT`. Git checks the old commit again. The command writes only that ref and its reflog. If any check differs, inspect `git status` and the reflog and preserve the current edits.
+Continue only if the first command shows the reviewed full ref, the second shows the old commit, and the index comparison exits successfully. The status command must succeed and its second column must be blank on every line. Changes in the first column are expected while the index holds the reviewed target and the branch still points to the old commit. With other Git writers stopped, finish the ref move with `git update-ref --no-deref -m "finish reviewed workspace update" REVIEWED_FULL_REF TARGET_COMMIT OLD_COMMIT`. Git checks the old commit again. If any check differs, inspect `git status` and the reflog and preserve the current edits.
 
 ### Interrupted operations
 

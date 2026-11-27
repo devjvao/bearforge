@@ -20,6 +20,19 @@ func TestCheckoutObjectProbeClassifiesOnlyRequestedMissingBlobs(t *testing.T) {
 	}
 	prior := &CommandError{Operation: "cat-file", ExitCode: 128, Detail: "fatal: transport 'file' not allowed\nfatal: could not fetch " + id + " from promisor remote"}
 	local := c.localOnly()
+	// Re-enable Git's lazy-fetch logic while keeping all transports blocked
+	// to exercise the behavior of versions predating GIT_NO_LAZY_FETCH.
+	runGit(t, c, path, "config", "remote.preflight-test.url", filepath.ToSlash(bare))
+	runGit(t, c, path, "config", "remote.preflight-test.promisor", "true")
+	out, lazyErr := local.runWithInput(ctx, path, []string{"GIT_NO_LAZY_FETCH=0"}, strings.NewReader(id+"\n"), "--no-replace-objects", "cat-file", "--batch-check=%(objecttype)")
+	if lazyErr != nil {
+		got := local.checkoutReadError(ctx, path, old, target, map[string]bool{id: true}, lazyErr)
+		if problem, ok := errors.AsType[*domain.Error](got); !ok || problem.Code != "incomplete_history" {
+			t.Fatalf("blocked local-only Git probe: %v", got)
+		}
+	} else if strings.TrimSpace(string(out)) != id+" missing" {
+		t.Fatalf("expected a missing blob record, got %q", out)
+	}
 	missing := local.checkoutReadError(ctx, path, old, target, map[string]bool{id: true}, prior)
 	if issue, ok := errors.AsType[*domain.Error](missing); !ok || issue.Code != "incomplete_history" {
 		t.Fatalf("legacy missing-blob diagnostic: %v", missing)

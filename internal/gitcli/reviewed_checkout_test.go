@@ -1,6 +1,7 @@
 package gitcli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -269,14 +270,48 @@ func TestInstalledTreeIgnoresStatOnlyChanges(t *testing.T) {
 	if err := os.Chtimes(file, earlier, earlier); err != nil {
 		t.Fatal(err)
 	}
+	index := strings.TrimSpace(string(runGit(t, c, path, "rev-parse", "--path-format=absolute", "--git-path", "index")))
+	before, err := os.ReadFile(index)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := c.checkInstalledTree(t.Context(), path, "refs/heads/main", target); err != nil {
 		t.Fatalf("stat-only change rejected: %v", err)
+	}
+	after, err := os.ReadFile(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("verifying the checkout rewrote its index")
 	}
 	if err := os.WriteFile(file, []byte("real content"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.checkInstalledTree(t.Context(), path, "refs/heads/main", target); err == nil {
 		t.Fatal("actual worktree edit passed verification")
+	}
+}
+
+func TestInstalledTreeAcceptsReviewedStagingAndDetectsDirtySubmodule(t *testing.T) {
+	c, _, path, _, incoming := reviewedCheckoutFixture(t, "files")
+	runGit(t, c, path, "switch", "-c", "review", incoming)
+	runGit(t, c, path, "rm", "incoming.txt")
+	runGit(t, c, path, "init", "module")
+	module := filepath.Join(path, "module")
+	runGit(t, c, module, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "module")
+	oid := strings.TrimSpace(string(runGit(t, c, module, "rev-parse", "HEAD")))
+	runGit(t, c, path, "update-index", "--add", "--cacheinfo", "160000,"+oid+",module")
+	targetTree := strings.TrimSpace(string(runGit(t, c, path, "write-tree")))
+	runGit(t, c, path, "config", "diff.ignoreSubmodules", "all")
+	if err := c.checkInstalledTree(t.Context(), path, "refs/heads/review", targetTree); err != nil {
+		t.Fatalf("rejected the reviewed staged addition and deletion: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(module, "local"), []byte("personal edit"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.checkInstalledTree(t.Context(), path, "refs/heads/review", targetTree); err == nil {
+		t.Fatal("accepted independently modified submodule")
 	}
 }
 
