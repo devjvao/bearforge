@@ -202,21 +202,8 @@ func (c *Client) CheckRemoval(ctx context.Context, bare, path string) error {
 	if len(b) > 0 {
 		return domain.E("unsafe_removal", "worktree contains ignored files: %s", path)
 	}
-	b, err = c.Run(ctx, path, "ls-files", "-v", "-z")
-	if err != nil {
+	if err := c.checkIndexVisibility(ctx, path, "unsafe_removal"); err != nil {
 		return err
-	}
-	for _, entry := range strings.Split(string(b), "\x00") {
-		if len(entry) > 0 && (entry[0] == 'S' || entry[0] >= 'a' && entry[0] <= 'z') {
-			return domain.E("unsafe_removal", "special index flags may hide edits; resolve them before removal")
-		}
-	}
-	v, err := c.Config(ctx, path, "core.sparseCheckout")
-	if err != nil {
-		return err
-	}
-	if v != "" && v != "false" {
-		return domain.E("unsafe_removal", "sparse checkouts require manual removal")
 	}
 	b, err = c.Run(ctx, path, "ls-files", "--stage", "-z")
 	if err != nil {
@@ -225,6 +212,27 @@ func (c *Client) CheckRemoval(ctx context.Context, bare, path string) error {
 	for _, entry := range strings.Split(string(b), "\x00") {
 		if strings.HasPrefix(entry, "160000 ") {
 			return domain.E("unsafe_removal", "submodules require manual handling")
+		}
+	}
+	return nil
+}
+
+// Porcelain status can report a clean checkout while index flags hide local edits.
+func (c *Client) checkIndexVisibility(ctx context.Context, path, code string) error {
+	sparse, err := c.Run(ctx, path, "config", "--bool", "--get", "core.sparseCheckout")
+	if err != nil && !isExit(err, 1) {
+		return err
+	}
+	if strings.TrimSpace(string(sparse)) == "true" {
+		return domain.E(code, "sparse checkout is enabled. Back up local edits and use Git directly, or disable sparse checkout and review git status before retrying")
+	}
+	files, err := c.Run(ctx, path, "ls-files", "-v", "-z")
+	if err != nil {
+		return err
+	}
+	for entry := range strings.SplitSeq(string(files), "\x00") {
+		if len(entry) > 0 && (entry[0] == 'S' || entry[0] >= 'a' && entry[0] <= 'z') {
+			return domain.E(code, "index flags may hide edits. Inspect git ls-files -v, clear the relevant assume-unchanged or skip-worktree flags, then commit or stash local changes before retrying")
 		}
 	}
 	return nil

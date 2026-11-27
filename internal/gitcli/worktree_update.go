@@ -65,6 +65,9 @@ func (c *Client) CheckUpdateWorktree(ctx context.Context, bare, path, branch str
 	if status.Dirty() {
 		return status, domain.E("conflict", "checkout has uncommitted changes; commit or stash them before updating")
 	}
+	if err := c.checkIndexVisibility(ctx, path, "conflict"); err != nil {
+		return status, err
+	}
 	if err := c.verifyFetchedRefs(ctx, bare, []string{"refs/heads/" + branch}); err != nil {
 		return status, err
 	}
