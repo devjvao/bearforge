@@ -318,3 +318,45 @@ func TestCloudCompletePaginationMetadata(t *testing.T) {
 		t.Fatalf("complete pages: %+v %v calls=%d", obs, err, calls)
 	}
 }
+
+func TestCloudPullsCountRawRowsAcrossShortPages(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		sizes     [2]int // Negative means the response omits the optional size.
+		wantError bool
+	}{
+		{"short earlier page", [2]int{3, 3}, true},
+		{"omitted final size", [2]int{3, -1}, true},
+		{"filtered entry counts toward total", [2]int{2, 2}, false},
+		{"revised final size", [2]int{3, 2}, false},
+		{"iterator", [2]int{-1, -1}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			client, q, _ := testServer(t, "bitbucket", func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				branch := "feature/pr"
+				if calls == 1 {
+					branch = "other"
+				}
+				page := map[string]any{"values": []any{cloudPR(calls, "OPEN", "alice/fork", branch, "upstream/api", "main")}}
+				if size := tc.sizes[calls-1]; size >= 0 {
+					page["size"], page["page"], page["pagelen"] = size, calls, 2
+				}
+				if calls == 1 {
+					page["next"] = "?page=2"
+				}
+				writePage(t, w, page)
+			})
+			obs, err := client.Lookup(t.Context(), q, false)
+			if tc.wantError {
+				assertCode(t, err, "provider_failed")
+				if obs.PullRequests != nil {
+					t.Fatal("partial PRs returned")
+				}
+			} else if err != nil || len(obs.PullRequests) != 1 {
+				t.Fatalf("PRs=%v err=%v", obs.PullRequests, err)
+			}
+		})
+	}
+}
