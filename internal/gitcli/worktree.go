@@ -163,6 +163,10 @@ func (c *Client) HasSubmodules(ctx context.Context, bare, ref string) (bool, err
 }
 
 func (c *Client) CheckRemoval(ctx context.Context, bare, path string) error {
+	return c.checkRemoval(ctx, bare, path, false)
+}
+
+func (c *Client) checkRemoval(ctx context.Context, bare, path string, requireProtected bool) error {
 	if err := c.VerifyCommon(ctx, path, bare); err != nil {
 		return err
 	}
@@ -214,6 +218,23 @@ func (c *Client) CheckRemoval(ctx context.Context, bare, path string) error {
 			return domain.E("unsafe_removal", "submodules require manual handling")
 		}
 	}
+	tips, err := c.intactWorktreeTips(ctx, bare, path)
+	if err != nil {
+		return err
+	}
+	if requireProtected {
+		// A private ref or reflog can change after PreserveHistory. Include
+		// detached HEAD even in a files repository with reflogs disabled.
+		for _, tip := range append(tips, status.Head) {
+			durable, err := c.objectHasRecoveryRef(ctx, bare, tip)
+			if err != nil {
+				return err
+			}
+			if !durable {
+				return domain.E("conflict", "private worktree history changed before removal; review and preserve %s", tip)
+			}
+		}
+	}
 	return nil
 }
 
@@ -239,7 +260,7 @@ func (c *Client) checkIndexVisibility(ctx context.Context, path, code string) er
 }
 
 // Clean porcelain status does not expose paused operations or autostashes.
-var operationStateNames = []string{"rebase-merge", "rebase-apply", "sequencer", "MERGE_HEAD", "MERGE_AUTOSTASH", "CHERRY_PICK_HEAD", "REVERT_HEAD"}
+var operationStateNames = []string{"rebase-merge", "rebase-apply", "sequencer", "MERGE_HEAD", "MERGE_AUTOSTASH", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_START"}
 
 func (c *Client) checkOperationState(ctx context.Context, path string) error {
 	for _, state := range operationStateNames {
@@ -261,6 +282,10 @@ func (c *Client) checkOperationState(ctx context.Context, path string) error {
 }
 
 func (c *Client) PreserveHistory(ctx context.Context, bare, path, operation, repo string) error {
+	tips, err := c.intactWorktreeTips(ctx, bare, path)
+	if err != nil {
+		return err
+	}
 	status, err := c.Inspect(ctx, path)
 	if err != nil {
 		return err
@@ -269,8 +294,23 @@ func (c *Client) PreserveHistory(ctx context.Context, bare, path, operation, rep
 	if err != nil {
 		return err
 	}
-	_, err = c.preserveTips(ctx, bare, operation, repo, status.Head, b)
-	return err
+	protected, err := c.preserveTips(ctx, bare, operation, repo, status.Head, b)
+	if err != nil {
+		return err
+	}
+	return c.preserveRootTips(ctx, bare, operation, repo, tips, protected)
+}
+
+func (c *Client) intactWorktreeTips(ctx context.Context, bare, path string) ([]string, error) {
+	id, err := c.FindWorktreeRegistration(ctx, bare, path)
+	if err != nil {
+		return nil, err
+	}
+	format, err := c.ReferenceFormat(ctx, bare)
+	if err != nil {
+		return nil, err
+	}
+	return c.privateRootTips(ctx, bare, filepath.Join(bare, "worktrees", id), format)
 }
 
 // Portable IDs cannot contain '%'. Use it for dots in otherwise invalid
@@ -324,7 +364,7 @@ func (c *Client) preserveTips(ctx context.Context, bare, operation, repo, head s
 }
 
 func (c *Client) Remove(ctx context.Context, bare, path string) error {
-	if err := c.CheckRemoval(ctx, bare, path); err != nil {
+	if err := c.checkRemoval(ctx, bare, path, true); err != nil {
 		return err
 	}
 	_, err := c.Run(ctx, bare, "worktree", "remove", "--", path)

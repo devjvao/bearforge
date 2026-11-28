@@ -29,7 +29,11 @@ var _ tui.DashboardWorkspaceUpdater = dashboardService{}
 
 func newDashboardService(service *app.Service, o *options) dashboardService {
 	configured := *service
-	manager, authErr := o.configureServiceAuthentication(&configured)
+	credentials := o.configureServiceAuthentication(&configured)
+	manager, authErr := credentials()
+	if authErr == nil {
+		configured.Credentials = manager
+	}
 	configured.PRs = o.pullRequestProvider
 	if configured.PRs == nil {
 		configured.PRs = pullrequests.NewProviderWithResolver(configured.Credentials)

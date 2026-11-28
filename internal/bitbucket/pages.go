@@ -48,6 +48,7 @@ func (c *Client) readPages(ctx context.Context, origin, endpoint *url.URL, q dom
 	prs := []domain.PullRequest{}
 	seen, ids := make(map[string]bool), make(map[int]bool)
 	path := endpoint.Path
+	var progress cloudPageProgress
 	for range 100 {
 		if seen[endpoint.String()] {
 			return nil, domain.E("provider_failed", "Bitbucket pagination repeated a page")
@@ -62,7 +63,7 @@ func (c *Client) readPages(ctx context.Context, origin, endpoint *url.URL, q dom
 		if q.Provider == "bitbucket-server" {
 			entries, next, err = serverPage(body, current, q)
 		} else {
-			entries, next, err = cloudPage(body, current, q)
+			entries, next, err = cloudPage(body, current, q, &progress)
 		}
 		if err != nil {
 			return nil, err

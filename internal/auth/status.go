@@ -72,24 +72,24 @@ func (m *Manager) Logout(ctx context.Context, name string) (LogoutResult, error)
 		return LogoutResult{}, e
 	}
 	c, ok := r.Connections[name]
-	if !ok {
+	pending, retry := r.PendingCleanup[name]
+	if !ok && !retry {
 		return LogoutResult{}, ErrDisconnected
 	}
-	delete(r.Connections, name)
+	management := pending.ManagementURL
+	if ok {
+		management = managementURL(c)
+		delete(r.Connections, name)
+		r.retireSecrets(c)
+	}
+	// A previous publication may have returned a durability error. Re-publish
+	// even when resuming cleanup before deleting keys from the older generation.
 	if e = m.writeRegistry(r); e != nil {
 		return LogoutResult{}, e
 	}
-	var failed bool
-	for _, key := range []string{c.SecretRef, c.RefreshRef, c.ClientSecretRef} {
-		if key != "" {
-			if e = m.secrets.Delete(ctx, key); e != nil && !errors.Is(e, ErrSecretMissing) {
-				failed = true
-			}
-		}
-	}
-	result := LogoutResult{Connection: name, ManagementURL: managementURL(c), LocalOnly: true}
-	if failed {
-		return result, fmt.Errorf("connection disconnected but secure-store cleanup failed: %w", ErrSecureStore)
+	result := LogoutResult{Connection: name, ManagementURL: management, LocalOnly: true}
+	if e := m.finishCleanup(ctx, r); e != nil {
+		return result, fmt.Errorf("connection disconnected: %w", e)
 	}
 	return result, nil
 }

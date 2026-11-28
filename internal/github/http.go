@@ -65,7 +65,9 @@ func (c *Client) readPages(ctx context.Context, origin, endpoint *url.URL, q dom
 			if pr.Head.Repo == nil || pr.Base.Repo == nil || !strings.EqualFold(pr.Head.Repo.FullName, q.SourceRepository) || !strings.EqualFold(pr.Base.Repo.FullName, q.Repository) || pr.Head.Ref != q.Branch || (q.Base != "" && pr.Base.Ref != q.Base) {
 				continue
 			}
-			if pr.Number <= 0 || (pr.State != "open" && pr.State != "closed") {
+			link, err := url.Parse(pr.URL)
+			if pr.Number <= 0 || (pr.State != "open" && pr.State != "closed") || pr.Title == "" || pr.UpdatedAt.IsZero() || !validBranch(pr.Base.Ref) ||
+				err != nil || (link.Scheme != "https" && link.Scheme != "http") || link.Hostname() == "" || link.User != nil {
 				return nil, domain.E("provider_failed", "GitHub returned invalid pull-request metadata")
 			}
 			if q.State != "all" && pr.State != q.State {

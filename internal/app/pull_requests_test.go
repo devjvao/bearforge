@@ -63,7 +63,16 @@ func prFixture(t *testing.T, ids ...string) (*app.Service, *config.Store) {
 		}
 	}
 	for _, id := range ids {
-		prGit(t, filepath.Join(store.Root, "repos", id+".git"), "config", "extensions.worktreeConfig", "true")
+		bare := filepath.Join(store.Root, "repos", id+".git")
+		original, err := s.Git.FetchURL(ctx, bare, "origin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Give each worktree its own first fetch URL. A shared origin URL
+		// would take precedence over every worktree-specific URL.
+		prGit(t, bare, "config", "extensions.worktreeConfig", "true")
+		prGit(t, bare, "config", "--worktree", "remote.origin.url", original)
+		prGit(t, bare, "config", "--local", "--unset-all", "remote.origin.url")
 		prGit(t, filepath.Join(store.Root, "feature", id), "config", "--worktree", "core.bare", "false")
 		prGit(t, filepath.Join(store.Root, "feature", id), "config", "--worktree", "remote.origin.url", "https://github.com/fork/"+id+".git")
 	}
@@ -96,6 +105,7 @@ func prSnapshot(t *testing.T, root string) map[string][32]byte {
 func TestPullRequestsUsesVerifiedActualBranchRemoteAndTarget(t *testing.T) {
 	s, store := prFixture(t, "api")
 	path := filepath.Join(store.Root, "feature", "api")
+	prGit(t, path, "config", "--worktree", "--add", "remote.origin.url", "https://github.com/secondary/api.git")
 	prGit(t, path, "switch", "-c", "actual")
 	w, rev, err := store.LoadWorkspace("feature")
 	if err != nil {

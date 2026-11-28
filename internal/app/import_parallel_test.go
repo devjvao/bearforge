@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,7 +50,7 @@ func (g *gatedImportGit) Clone(ctx context.Context, remote, path string) error {
 		return err
 	}
 	if output, err := exec.CommandContext(ctx, "git", "-C", path, "remote", "set-url", "origin", remote).CombinedOutput(); err != nil {
-		return errors.New(string(output))
+		return fmt.Errorf("set origin before opening clone gate for %s: %w: %s", id, err, output)
 	}
 	g.started <- id
 	select {
@@ -84,45 +85,66 @@ type importParallelResult struct {
 	err    error
 }
 
-func startParallelImport(t *testing.T, s *app.Service, req app.ImportRequest) (context.CancelFunc, <-chan importParallelResult) {
+type parallelImportRun struct {
+	wait     context.Context
+	finished chan struct{}
+	result   importParallelResult // Published by closing finished.
+}
+
+func startParallelImport(t *testing.T, s *app.Service, req app.ImportRequest) (context.CancelFunc, *parallelImportRun) {
 	t.Helper()
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan importParallelResult, 1)
-	finished := make(chan struct{})
+	wait := t.Context()
+	if deadline, ok := t.Deadline(); ok {
+		// Leave time to cancel and join the real Git children after a failed wait.
+		grace := min(5*time.Second, time.Until(deadline)/10)
+		var stop context.CancelFunc
+		wait, stop = context.WithDeadline(wait, deadline.Add(-grace))
+		t.Cleanup(stop)
+	}
+	ctx, cancel := context.WithCancel(wait)
+	run := &parallelImportRun{wait: wait, finished: make(chan struct{})}
 	go func() {
-		defer close(finished)
-		r, err := s.ImportRepositories(ctx, req)
-		done <- importParallelResult{r, err}
+		defer close(run.finished)
+		run.result.result, run.result.err = s.ImportRepositories(ctx, req)
 	}()
 	t.Cleanup(func() {
 		cancel()
 		select {
-		case <-finished:
+		case <-run.finished:
 		case <-time.After(5 * time.Second):
 			t.Error("import workers outlived cancellation")
 		}
 	})
-	return cancel, done
+	return cancel, run
 }
 
-func nextImportName(t *testing.T, names <-chan string) string {
+func (run *parallelImportRun) nextName(t *testing.T, names <-chan string, phase string) string {
 	t.Helper()
 	select {
 	case name := <-names:
 		return name
-	case <-time.After(5 * time.Second):
-		t.Fatal("another repository did not make progress while a clone was blocked")
-		return ""
+	case <-run.finished:
+		// The last buffered event can be ready together with the final result.
+		select {
+		case name := <-names:
+			return name
+		default:
+			t.Fatalf("import finished before %s (operation %q, outcome %q): %v", phase,
+				run.result.result.OperationID, run.result.result.Outcome, run.result.err)
+		}
+	case <-run.wait.Done():
+		t.Fatalf("waiting for %s: %v", phase, run.wait.Err())
 	}
+	return ""
 }
 
-func nextImportResult(t *testing.T, done <-chan importParallelResult) importParallelResult {
+func (run *parallelImportRun) awaitResult(t *testing.T) importParallelResult {
 	t.Helper()
 	select {
-	case result := <-done:
-		return result
-	case <-time.After(5 * time.Second):
-		t.Fatal("import did not drain its workers")
+	case <-run.finished:
+		return run.result
+	case <-run.wait.Done():
+		t.Fatalf("waiting for import to drain its workers: %v", run.wait.Err())
 		return importParallelResult{}
 	}
 }
@@ -154,8 +176,8 @@ func TestImportParallelPublishesFastSuccessAndRetainsIndependentFailureForResume
 			completed <- event.Repository
 		}
 	}
-	_, done := startParallelImport(t, s, req)
-	first, second := nextImportName(t, g.started), nextImportName(t, g.started)
+	_, run := startParallelImport(t, s, req)
+	first, second := run.nextName(t, g.started, "first clone gate"), run.nextName(t, g.started, "second clone gate")
 	if !((first == "a" && second == "b") || (first == "b" && second == "a")) {
 		t.Fatalf("first clones %s, %s; want a and b", first, second)
 	}
@@ -165,25 +187,25 @@ func TestImportParallelPublishesFastSuccessAndRetainsIndependentFailureForResume
 	default:
 	}
 	close(g.gates["b"])
-	if id := nextImportName(t, completed); id != "b" {
+	if id := run.nextName(t, completed, "b completion"); id != "b" {
 		t.Fatalf("first completion = %s, want b while a is blocked", id)
 	}
 	catalog, _, err = store.LoadCatalog()
 	if err != nil || len(catalog.Repositories) != 1 || catalog.Repositories["b"].ID != "b" {
 		t.Fatalf("completed repository not registered before slow clone: %+v, %v", catalog.Repositories, err)
 	}
-	if id := nextImportName(t, g.started); id != "c" {
+	if id := run.nextName(t, g.started, "c clone gate"); id != "c" {
 		t.Fatalf("next clone = %s, want c", id)
 	}
 	close(g.gates["c"])
-	if id := nextImportName(t, completed); id != "c" {
+	if id := run.nextName(t, completed, "c completion"); id != "c" {
 		t.Fatalf("failed completion = %s, want c", id)
 	}
 	close(g.gates["a"])
-	if id := nextImportName(t, completed); id != "a" {
+	if id := run.nextName(t, completed, "a completion"); id != "a" {
 		t.Fatalf("last completion = %s, want a", id)
 	}
-	result := nextImportResult(t, done)
+	result := run.awaitResult(t)
 	if result.err == nil || result.result.Outcome != "partial" {
 		t.Fatalf("independent failure hidden: %+v, %v", result.result, result.err)
 	}
@@ -250,9 +272,9 @@ func confirmParallelImport(t *testing.T, s *app.Service, req app.ImportRequest) 
 	return req
 }
 
-func assertInitialImportPair(t *testing.T, started <-chan string) {
+func (run *parallelImportRun) assertInitialPair(t *testing.T, started <-chan string) {
 	t.Helper()
-	first, second := nextImportName(t, started), nextImportName(t, started)
+	first, second := run.nextName(t, started, "first clone gate"), run.nextName(t, started, "second clone gate")
 	if !((first == "a" && second == "b") || (first == "b" && second == "a")) {
 		t.Fatalf("first imports = %s, %s; want a and b", first, second)
 	}
@@ -267,11 +289,11 @@ func TestImportParallelCancellationKeepsPublishedSuccessAndDrainsTransfers(t *te
 			cancel()
 		}
 	}
-	var done <-chan importParallelResult
-	cancel, done = startParallelImport(t, s, req)
-	assertInitialImportPair(t, g.started)
+	var run *parallelImportRun
+	cancel, run = startParallelImport(t, s, req)
+	run.assertInitialPair(t, g.started)
 	close(g.gates["b"])
-	result := nextImportResult(t, done)
+	result := run.awaitResult(t)
 	if !errors.Is(result.err, context.Canceled) || result.result.Outcome != "partial" {
 		t.Fatalf("cancelled result: %+v, %v", result.result, result.err)
 	}
@@ -395,27 +417,18 @@ func TestImportParallelPlanningDoesNotBlockAnotherRepositoryCompletion(t *testin
 			completed <- event.Repository
 		}
 	}
-	_, done := startParallelImport(t, s, req)
-	var planned []string
-	for range 2 {
-		select {
-		case id := <-planner.startedPlans:
-			planned = append(planned, id)
-		case result := <-done:
-			t.Fatalf("import returned before parallel planning: %+v, %v", result.result, result.err)
-		case <-time.After(5 * time.Second):
-			t.Fatalf("parallel planning did not start both repositories: %v", planned)
-		}
-	}
+	_, run := startParallelImport(t, s, req)
+	run.nextName(t, planner.startedPlans, "first ref-format plan")
+	run.nextName(t, planner.startedPlans, "second ref-format plan")
 	close(planner.planGates["b"])
-	if id := nextImportName(t, completed); id != "b" {
+	if id := run.nextName(t, completed, "b completion"); id != "b" {
 		t.Fatalf("first completed = %s, want b while a planning is blocked", id)
 	}
 	if clones, _ := git.counts("a"); clones != 0 {
 		t.Fatal("blocked planning already cloned its repository")
 	}
 	close(planner.planGates["a"])
-	result := nextImportResult(t, done)
+	result := run.awaitResult(t)
 	if result.err != nil || result.result.Outcome != "success" {
 		t.Fatalf("planning result: %+v, %v", result.result, result.err)
 	}
@@ -443,10 +456,10 @@ func TestImportParallelCatalogFailureStopsAdmissionAndCanResumeOwnedClones(t *te
 	failing.fail.Store(true)
 	s.Store = failing
 	req = confirmParallelImport(t, s, req)
-	_, done := startParallelImport(t, s, req)
-	assertInitialImportPair(t, g.started)
+	_, run := startParallelImport(t, s, req)
+	run.assertInitialPair(t, g.started)
 	close(g.gates["b"])
-	result := nextImportResult(t, done)
+	result := run.awaitResult(t)
 	if !errors.Is(result.err, failing.err) || result.result.Outcome != "partial" {
 		t.Fatalf("catalog failure hidden: %+v, %v", result.result, result.err)
 	}
@@ -493,8 +506,8 @@ func TestImportRechecksExternalCatalogChangesDuringTransfer(t *testing.T) {
 					succeeded = append(succeeded, event.Repository)
 				}
 			}
-			_, done := startParallelImport(t, s, req)
-			if id := nextImportName(t, git.started); id != "a" {
+			_, run := startParallelImport(t, s, req)
+			if id := run.nextName(t, git.started, "first local clone and origin rewrite for a"); id != "a" {
 				t.Fatalf("first clone = %q", id)
 			}
 			// Another editor claims the same remote under a different ID.
@@ -514,7 +527,7 @@ func TestImportRechecksExternalCatalogChangesDuringTransfer(t *testing.T) {
 			}
 			close(git.gates["a"])
 			close(git.gates["b"])
-			result := nextImportResult(t, done)
+			result := run.awaitResult(t)
 			var conflict *domain.Error
 			if !errors.As(result.err, &conflict) || conflict.Code != "conflict" || result.result.Outcome != "partial" {
 				t.Fatalf("external change accepted: %+v, %v", result.result, result.err)
@@ -602,10 +615,10 @@ func TestConcurrentCloneCompletionsPreserveRegistrationOrder(t *testing.T) {
 		}
 	}
 	req = confirmParallelImport(t, s, req)
-	_, done := startParallelImport(t, s, req)
-	assertInitialImportPair(t, git.started)
+	_, run := startParallelImport(t, s, req)
+	run.assertInitialPair(t, git.started)
 	close(git.gates["a"])
-	result := nextImportResult(t, done)
+	result := run.awaitResult(t)
 	if result.err != nil || result.result.Outcome != "success" || !reflect.DeepEqual(succeeded, map[string]int{"a": 1, "b": 1}) {
 		t.Fatalf("completions: %v, result %+v, error %v", succeeded, result.result, result.err)
 	}
@@ -624,11 +637,11 @@ func TestImportJobsOverrideCatalogWithoutChangingReviewedPlan(t *testing.T) {
 		t.Fatalf("worker count changed reviewed destinations: %q != %q, %v", other.PlanDigest, preview.PlanDigest, err)
 	}
 	req.DryRun, req.ExpectedPlan = false, preview.PlanDigest
-	_, done := startParallelImport(t, s, req)
-	assertInitialImportPair(t, g.started)
+	_, run := startParallelImport(t, s, req)
+	run.assertInitialPair(t, g.started)
 	close(g.gates["a"])
 	close(g.gates["b"])
-	result := nextImportResult(t, done)
+	result := run.awaitResult(t)
 	if result.err != nil || result.result.Outcome != "success" || g.peak.Load() != 2 {
 		t.Fatalf("override did not run two workers: peak=%d, %+v, %v", g.peak.Load(), result.result, result.err)
 	}
@@ -682,8 +695,8 @@ func TestImportFolderRecheckedBeforeCredentialBinding(t *testing.T) {
 	var bound bool
 	s.BindConnection = func(context.Context, string, domain.CredentialRequest) error { bound = true; return nil }
 	req = confirmParallelImport(t, s, req)
-	_, done := startParallelImport(t, s, req)
-	if name := nextImportName(t, git.started); name != "a" {
+	_, run := startParallelImport(t, s, req)
+	if name := run.nextName(t, git.started, "first local clone and origin rewrite for a"); name != "a" {
 		t.Fatal(name)
 	}
 	external := config.New(s.Store.RootPath())
@@ -696,7 +709,7 @@ func TestImportFolderRecheckedBeforeCredentialBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	close(git.gates["a"])
-	result := nextImportResult(t, done)
+	result := run.awaitResult(t)
 	if result.err == nil || bound {
 		t.Fatalf("folder conflict must precede credential binding: bound=%v error=%v", bound, result.err)
 	}

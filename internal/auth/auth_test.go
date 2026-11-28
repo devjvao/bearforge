@@ -249,13 +249,13 @@ func TestServerRepositoryReadNeverAttestsSuppliedUsername(t *testing.T) {
 
 func TestHostnameMetadataUsesAPIURLForPortAndContext(t *testing.T) {
 	c := Connection{Provider: "bitbucket-server", Host: "https://bb.example:8443/context", APIURL: "https://bb.example:8443/context/rest/api/latest", GitURL: "https://bb.example:8443/context"}
-	if !c.matches(domain.CredentialRequest{Provider: "bitbucket", Host: "bb.example", APIURL: c.APIURL}) {
+	if ok, err := c.matches(domain.CredentialRequest{Provider: "bitbucket", Host: "bb.example", APIURL: c.APIURL}); !ok || err != nil {
 		t.Fatal("hostname metadata rejected approved API port/context")
 	}
-	if c.matches(domain.CredentialRequest{Provider: "bitbucket", Host: "evil.example", APIURL: c.APIURL}) {
+	if ok, err := c.matches(domain.CredentialRequest{Provider: "bitbucket", Host: "evil.example", APIURL: c.APIURL}); ok || err != nil {
 		t.Fatal("mismatched hostname accepted")
 	}
-	if c.matches(domain.CredentialRequest{Provider: "bitbucket", Host: "bb.example", APIURL: "https://bb.example:8443/other/rest/api/latest"}) {
+	if ok, err := c.matches(domain.CredentialRequest{Provider: "bitbucket", Host: "bb.example", APIURL: "https://bb.example:8443/other/rest/api/latest"}); ok || err != nil {
 		t.Fatal("hostname bypassed installation context")
 	}
 }

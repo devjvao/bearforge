@@ -65,6 +65,16 @@ func rebindFixture(t *testing.T, connected bool) (*app.Service, *config.Store, s
 
 type noRebindTransfers struct{ app.Git }
 
+func TestRepositoryRebindRefusesDifferentFirstOrigin(t *testing.T) {
+	s, _, path, _ := rebindFixture(t, true)
+	prGit(t, path, "remote", "set-url", "origin", "https://github.com/other/api.git")
+	prGit(t, path, "config", "--add", "remote.origin.url", "https://github.com/team/api.git")
+	req := app.RepositoryRebindRequest{Repositories: []string{"api"}, Connection: "replacement", GrantID: "new-grant", DryRun: true}
+	if _, err := s.RebindRepositories(t.Context(), req); err == nil || app.ProblemFor(err).Code != "conflict" {
+		t.Fatalf("rebind admitted different fetch URL: %v", err)
+	}
+}
+
 func (noRebindTransfers) Clone(context.Context, string, string) error { panic("rebind cloned") }
 func (noRebindTransfers) Fetch(context.Context, string) error         { panic("rebind fetched") }
 

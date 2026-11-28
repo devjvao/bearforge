@@ -35,4 +35,14 @@ func TestWorkspaceBranchJournalCompatibility(t *testing.T) {
 	if err := store.Save(op); err == nil {
 		t.Fatal("fast-forward journal accepted mutable branch as old tip")
 	}
+	op.Steps[0].RemoteBranch = nil
+	op.Steps[0].Tracking = "same-name"
+	op.Steps[0].TrackingRemote = "origin"
+	if err := store.Save(op); err != nil {
+		t.Fatal(err)
+	}
+	op.Steps[0].TrackingRemote = "origin/topic"
+	if err := store.Save(op); err == nil {
+		t.Fatal("offline journal accepted an invalid tracking remote")
+	}
 }

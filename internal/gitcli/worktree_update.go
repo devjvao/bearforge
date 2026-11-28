@@ -27,7 +27,7 @@ func (c *Client) CheckUpdateWorktree(ctx context.Context, bare, path, branch str
 		return status, err
 	}
 	dir := strings.TrimRight(string(admin), "\r\n")
-	for _, state := range append([]string{"BISECT_START", "index.lock"}, operationStateNames...) {
+	for _, state := range append([]string{"index.lock"}, operationStateNames...) {
 		if _, err := os.Lstat(filepath.Join(dir, state)); err == nil {
 			return status, domain.E("conflict", "checkout %s has an unfinished Git operation (%s); finish it before updating", path, state)
 		} else if !os.IsNotExist(err) {

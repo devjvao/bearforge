@@ -32,31 +32,52 @@ type cloudPullRequest struct {
 	} `json:"links"`
 }
 
-func cloudPage(body []byte, current *url.URL, q domain.PullRequestQuery) ([]domain.PullRequest, *url.URL, error) {
-	var page struct {
-		Values []cloudPullRequest `json:"values"`
-		Next   string             `json:"next"`
-		Page   *int64             `json:"page"`
-		Length *int64             `json:"pagelen"`
-		Size   *int64             `json:"size"`
-	}
-	if err := json.Unmarshal(body, &page); err != nil || page.Values == nil {
-		return nil, nil, invalidResponse()
-	}
+type cloudPagination struct {
+	Next   string `json:"next"`
+	Page   *int64 `json:"page"`
+	Length *int64 `json:"pagelen"`
+	Size   *int64 `json:"size"`
+}
+
+type cloudPageProgress struct {
+	rawRows        int64
+	advertisedSize int64
+}
+
+// Count rows before filtering or deduplication. An omitted size leaves the
+// last advertised total in effect, including across shorter intermediate pages.
+func (progress *cloudPageProgress) accept(page cloudPagination, rows int) bool {
 	if (page.Page != nil && *page.Page <= 0) || (page.Length != nil && *page.Length <= 0) || (page.Size != nil && *page.Size < 0) {
-		return nil, nil, invalidResponse()
+		return false
 	}
-	// Cloud may omit these controls. When a total advertises more results,
-	// accepting completion requires enough metadata to account for them.
-	if page.Next == "" && page.Size != nil && *page.Size > int64(len(page.Values)) {
-		if page.Page == nil || page.Length == nil || *page.Page-1 > *page.Size / *page.Length {
-			return nil, nil, invalidResponse()
+	if page.Size != nil {
+		progress.advertisedSize = *page.Size
+	}
+	progress.rawRows += int64(rows)
+	if page.Next == "" && progress.advertisedSize > int64(rows) {
+		if progress.rawRows < progress.advertisedSize {
+			return false
+		}
+		if page.Page == nil || page.Length == nil {
+			return true // Iterator responses can omit positional controls.
+		}
+		if *page.Page-1 > progress.advertisedSize / *page.Length {
+			return false
 		}
 		// The division guard bounds multiplication by size, avoiding overflow.
 		previous := (*page.Page - 1) * *page.Length
-		if *page.Size-previous > int64(len(page.Values)) {
-			return nil, nil, invalidResponse()
-		}
+		return progress.advertisedSize-previous <= int64(rows)
+	}
+	return true
+}
+
+func cloudPage(body []byte, current *url.URL, q domain.PullRequestQuery, progress *cloudPageProgress) ([]domain.PullRequest, *url.URL, error) {
+	var page struct {
+		cloudPagination
+		Values []cloudPullRequest `json:"values"`
+	}
+	if err := json.Unmarshal(body, &page); err != nil || page.Values == nil || !progress.accept(page.cloudPagination, len(page.Values)) {
+		return nil, nil, invalidResponse()
 	}
 	prs := []domain.PullRequest{}
 	for _, entry := range page.Values {

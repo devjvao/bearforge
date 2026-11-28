@@ -8,6 +8,15 @@ import (
 )
 
 func TestMissingCheckoutRetainsFetchAndOriginalHeads(t *testing.T) {
+	checkRetainedFetchAndOriginalHeads(t, true)
+}
+
+func TestIntactCheckoutRetainsFetchAndOriginalHeads(t *testing.T) {
+	checkRetainedFetchAndOriginalHeads(t, false)
+}
+
+func checkRetainedFetchAndOriginalHeads(t *testing.T, missing bool) {
+	t.Helper()
 	for _, format := range []string{"files", "reftable"} {
 		t.Run(format, func(t *testing.T) {
 			c, bare, root := fixture(t)
@@ -52,12 +61,7 @@ func TestMissingCheckoutRetainsFetchAndOriginalHeads(t *testing.T) {
 					t.Fatalf("fixture already retained %s: %s", oid, b)
 				}
 			}
-			if err := os.Rename(path, filepath.Join(t.TempDir(), "moved")); err != nil {
-				t.Fatal(err)
-			}
-			if err := c.ReleaseMissingWorktree(ctx, bare, path, id, "main", head, "op", "repo"); err != nil {
-				t.Fatal(err)
-			}
+			removePrivateHistoryFixture(t, c, bare, path, id, head, missing)
 			runGit(t, c, bare, "reflog", "expire", "--expire=now", "--all")
 			runGit(t, c, bare, "gc", "--prune=now")
 			for _, oid := range targets {

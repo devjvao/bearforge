@@ -68,7 +68,7 @@ func TestOversizedReplacementRetainsPreviousGrantAndCleansNewSecret(t *testing.T
 	replacement := old
 	replacement.Account = strings.Repeat("x", 2<<20)
 	replacement.GrantID = "replacement-grant"
-	if _, err := m.save(t.Context(), replacement, "replacement-token"); err == nil {
+	if _, err := m.save(t.Context(), replacement, "replacement-token", &old); err == nil {
 		t.Fatal("oversized replacement succeeded")
 	}
 	current, err := os.ReadFile(m.path())
@@ -114,7 +114,7 @@ func TestReplacementRetainsEveryPossiblyReferencedSecretOnPublicationError(t *te
 				}
 				return false, failure
 			}
-			if _, err := m.save(t.Context(), Connection{Name: "work", GrantID: "new-grant"}, "replacement-token"); !errors.Is(err, failure) {
+			if _, err := m.save(t.Context(), Connection{Name: "work", GrantID: "new-grant"}, "replacement-token", &old); !errors.Is(err, failure) {
 				t.Fatalf("publication error was not reported: %v", err)
 			}
 			current, err := m.Connection(t.Context(), "work")

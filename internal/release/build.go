@@ -7,6 +7,7 @@ import (
 	binaryinfo "debug/buildinfo"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -79,8 +80,8 @@ func runBuildTool(ctx context.Context, root string, environment, argv []string) 
 	return r.Stdout, nil
 }
 
-func Build(ctx context.Context, options Options) (Manifest, error) {
-	manifest := Manifest{Schema: 1, Version: options.Version, Snapshot: options.Snapshot}
+func Build(ctx context.Context, options Options) (manifest Manifest, buildErr error) {
+	manifest = Manifest{Schema: 1, Version: options.Version, Snapshot: options.Snapshot}
 	if !ValidVersion(options.Version) {
 		return manifest, fmt.Errorf("version must be a safe semantic version such as v0.2.0")
 	}
@@ -171,16 +172,18 @@ func Build(ctx context.Context, options Options) (Manifest, error) {
 	if err != nil {
 		return manifest, err
 	}
-	if err := os.MkdirAll(output, 0755); err != nil {
+	staging, err := reserveOutput(output)
+	if err != nil {
 		return manifest, err
 	}
+	defer func() { buildErr = errors.Join(buildErr, os.Remove(staging)) }()
 	artifacts := map[string][]byte{}
 	for _, platform := range targets {
 		if err := ctx.Err(); err != nil {
 			return manifest, err
 		}
 		goos, arch, _ := strings.Cut(platform, "/")
-		binary, sbom, err := buildBinary(ctx, root, output, goPath, goos, arch, manifest)
+		binary, sbom, err := buildBinary(ctx, root, staging, goPath, goos, arch, manifest)
 		if err != nil {
 			return manifest, err
 		}
@@ -225,15 +228,91 @@ func Build(ctx context.Context, options Options) (Manifest, error) {
 	if err != nil {
 		return manifest, err
 	}
+	return manifest, publishArtifacts(ctx, output, artifacts, checksums)
+}
+
+const stagingDirectory = ".bearforge-release-build"
+
+// A fixed private staging directory reserves an output even when it already
+// exists and is empty. Recheck after acquiring it in case another build finished.
+func reserveOutput(output string) (string, error) {
+	if err := os.MkdirAll(output, 0755); err != nil {
+		return "", err
+	}
+	staging := filepath.Join(output, stagingDirectory)
+	if err := os.Mkdir(staging, 0700); err != nil {
+		return "", fmt.Errorf("reserve release output: %w", err)
+	}
+	entries, err := os.ReadDir(output)
+	if err == nil && (len(entries) != 1 || entries[0].Name() != stagingDirectory) {
+		err = fmt.Errorf("output directory must be new or empty; existing artifacts are never overwritten")
+	}
+	if err != nil {
+		return "", errors.Join(err, os.Remove(staging))
+	}
+	return staging, nil
+}
+
+// Artifacts are fully assembled in memory. Publish the checksum manifest last
+// and roll back only files still owned by this publisher on an ordinary failure.
+func publishArtifacts(ctx context.Context, output string, artifacts map[string][]byte, checksums []byte) (err error) {
+	owned := make(map[string]os.FileInfo)
+	defer func() {
+		if err == nil {
+			return
+		}
+		for _, original := range owned {
+			path := filepath.Join(output, original.Name())
+			if current, statErr := os.Lstat(path); statErr == nil && os.SameFile(original, current) {
+				err = errors.Join(err, os.Remove(path))
+			} else if statErr != nil && !os.IsNotExist(statErr) {
+				err = errors.Join(err, statErr)
+			}
+		}
+	}()
+	write := func(name string, data []byte) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		file, err := os.OpenFile(filepath.Join(output, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+		if err != nil {
+			return err
+		}
+		info, err := file.Stat()
+		if err == nil {
+			owned[name] = info
+			_, err = file.Write(data)
+		}
+		return errors.Join(err, file.Close())
+	}
 	for name, data := range artifacts {
-		if err := os.WriteFile(filepath.Join(output, name), data, 0644); err != nil {
-			return manifest, err
+		if err := write(name, data); err != nil {
+			return err
 		}
 	}
-	if err := os.WriteFile(filepath.Join(output, "checksums.txt"), checksums, 0644); err != nil {
-		return manifest, err
+	if err := write("checksums.txt", checksums); err != nil {
+		return err
 	}
-	return manifest, nil
+	entries, err := os.ReadDir(output)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() == stagingDirectory && entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if original := owned[entry.Name()]; original == nil || !os.SameFile(original, info) {
+			return fmt.Errorf("unexpected entry in release output: %q", entry.Name())
+		}
+	}
+	if len(entries)-1 != len(owned) {
+		return fmt.Errorf("a release output entry disappeared during publication")
+	}
+	return nil
 }
 
 func readReleaseDocuments(root string) ([]File, error) {

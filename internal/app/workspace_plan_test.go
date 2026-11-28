@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/devjvao/bearforge/internal/app"
@@ -173,6 +174,62 @@ func TestWholeRemovalPreviewAndRetainedContainer(t *testing.T) {
 	}
 	if data, err := os.ReadFile(file); err != nil || string(data) != "keep" {
 		t.Fatalf("lost unrelated file: %v", err)
+	}
+}
+
+func TestWholeRemovalRetainsFileReplacingWorkspace(t *testing.T) {
+	s, store, _ := fixture(t)
+	if _, err := s.CreateWorkspace(t.Context(), "review", "", false); err != nil {
+		t.Fatal(err)
+	}
+	req := app.RemoveRequest{Workspace: "review", Whole: true, DryRun: true}
+	preview, err := s.RemoveRepositories(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(store.Root, "review")
+	if err := os.Rename(path, filepath.Join(store.Root, "moved")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("retain"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	req.DryRun, req.ExpectedPlan = false, preview.PlanDigest
+	result, err := s.RemoveRepositories(t.Context(), req)
+	if err != nil || len(result.Items) != 1 || result.Items[0].Outcome != "container_retained" {
+		t.Errorf("retained workspace file: %+v, %v", result, err)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "retain" {
+		t.Fatalf("lost replacement file: %q, %v", data, err)
+	}
+}
+
+func TestRemovalRetainsActiveBisect(t *testing.T) {
+	s, _, bare, path, checkout := updateFixture(t)
+	ctx := t.Context()
+	req := app.RemoveRequest{Workspace: checkout.Workspace, Repositories: []string{checkout.Repository}, DryRun: true}
+	preview, err := s.RemoveRepositories(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prGit(t, path, "bisect", "start")
+	if _, err := s.RemoveRepositories(ctx, req); err == nil || !strings.Contains(err.Error(), "BISECT_START") {
+		t.Errorf("preview accepted bisect: %v", err)
+	}
+	req.DryRun, req.ExpectedPlan = false, preview.PlanDigest
+	if _, err := s.RemoveRepositories(ctx, req); err == nil || !strings.Contains(err.Error(), "BISECT_START") {
+		t.Fatalf("confirmation accepted bisect: %v", err)
+	}
+	w, _, err := s.Store.LoadWorkspace(checkout.Workspace)
+	if err != nil || w.Repositories[checkout.Repository].Branch != checkout.Workspace {
+		t.Fatalf("bisect mapping changed: %+v, %v", w, err)
+	}
+	if err := s.Git.VerifyCommon(ctx, path, bare); err != nil {
+		t.Fatal(err)
+	}
+	prGit(t, path, "bisect", "reset")
+	if _, err := s.RemoveRepositories(ctx, req); err != nil {
+		t.Fatalf("removal after reset: %v", err)
 	}
 }
 

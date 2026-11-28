@@ -66,16 +66,24 @@ func baseURL(raw string) (string, error) {
 	if !strings.Contains(raw, "://") {
 		raw = "https://" + raw
 	}
+	u, err := parseBaseURL(raw)
+	if err != nil {
+		return "", err
+	}
+	return u.String(), nil
+}
+
+func parseBaseURL(raw string) (*url.URL, error) {
 	u, e := url.Parse(raw)
-	if e != nil || u.Host == "" || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
-		return "", ErrScope
+	if e != nil || u.Hostname() == "" || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
+		return nil, ErrScope
 	}
 	u.Host = strings.ToLower(u.Host)
 	u.Path = strings.TrimRight(u.Path, "/")
 	if !within(u.String(), u) {
-		return "", ErrScope
+		return nil, ErrScope
 	}
-	return u.String(), nil
+	return u, nil
 }
 func NormalizeLoginRequest(r LoginRequest) (LoginRequest, error) {
 	r.Provider = strings.ToLower(r.Provider)
@@ -138,15 +146,18 @@ func NormalizeLoginRequest(r LoginRequest) (LoginRequest, error) {
 func sameProvider(a, b string) bool {
 	return a == b || (a == "bitbucket" && strings.HasPrefix(b, "bitbucket-")) || (b == "bitbucket" && strings.HasPrefix(a, "bitbucket-"))
 }
-func (c Connection) matches(r domain.CredentialRequest) bool {
+func (c Connection) matches(r domain.CredentialRequest) (bool, error) {
 	if r.Provider != "" && !sameProvider(r.Provider, c.Provider) {
-		return false
+		return false, nil
+	}
+	approved, err := parseBaseURL(c.Host)
+	if err != nil {
+		return false, errors.New("invalid host in saved authentication connection")
 	}
 	if r.Host != "" && !strings.Contains(r.Host, "://") {
 		requested, err := url.Parse("https://" + r.Host)
-		approved, _ := url.Parse(c.Host)
 		if err != nil || requested.User != nil || requested.Path != "" || !strings.EqualFold(requested.Hostname(), approved.Hostname()) || (requested.Port() != "" && requested.Port() != approved.Port()) {
-			return false
+			return false, nil
 		}
 		r.Host = ""
 	}
@@ -154,17 +165,17 @@ func (c Connection) matches(r domain.CredentialRequest) bool {
 		if pair[0] != "" {
 			v, e := baseURL(pair[0])
 			if e != nil || v != pair[1] {
-				return false
+				return false, nil
 			}
 		}
 	}
 	if r.GitURL != "" {
 		u, e := url.Parse(r.GitURL)
 		if e != nil || !within(c.GitURL, u) {
-			return false
+			return false, nil
 		}
 	}
-	return true
+	return true, nil
 }
 func credentialFor(c Connection, secret string) *credential {
 	v := &credential{secret: secret, username: c.Username, api: c.APIURL, git: c.GitURL, scheme: "bearer", gitUsername: c.Username}
@@ -201,7 +212,11 @@ func (m *Manager) Resolve(ctx context.Context, r domain.CredentialRequest) (doma
 		if r.GrantID != "" && r.GrantID != c.GrantID {
 			return nil, ErrDisconnected
 		}
-		if !c.matches(r) {
+		matches, err := c.matches(r)
+		if err != nil {
+			return nil, err
+		}
+		if !matches {
 			return nil, ErrScope
 		}
 		return m.resolveSaved(ctx, c, r.AllowRefresh)
@@ -237,7 +252,11 @@ func (m *Manager) Resolve(ctx context.Context, r domain.CredentialRequest) (doma
 	}
 	var found *Connection
 	for _, c := range cs {
-		if c.matches(r) {
+		matches, err := c.matches(r)
+		if err != nil {
+			return nil, err
+		}
+		if matches {
 			if found != nil {
 				return nil, errors.New("multiple saved connections match; select a connection")
 			}

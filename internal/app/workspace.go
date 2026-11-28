@@ -338,18 +338,14 @@ func (s *Service) checkTracking(ctx context.Context, bare, branch, remote, polic
 	if policy == "" || policy == "preserve" {
 		return nil
 	}
-	actualRemote, err := s.Git.Config(ctx, bare, "branch."+branch+".remote")
+	actualRemote, target, err := s.Git.BranchTracking(ctx, bare, branch)
 	if err != nil {
 		return err
 	}
-	merge, err := s.Git.Config(ctx, bare, "branch."+branch+".merge")
-	if err != nil {
-		return err
-	}
-	if policy == "none" && actualRemote == "" && merge == "" {
+	if policy == "none" && actualRemote == "" && target == "" {
 		return nil
 	}
-	if policy == "same-name" && actualRemote == remote && merge == "refs/heads/"+branch {
+	if policy == "same-name" && actualRemote == remote && target == branch {
 		exists, err := s.Git.RefExists(ctx, bare, "refs/remotes/"+remote+"/"+branch)
 		if err != nil {
 			return err
@@ -469,12 +465,24 @@ func (s *Service) applyAddStep(ctx context.Context, op *Operation, step *Step, w
 		if status.Head != step.Start {
 			return domain.E("conflict", "uncommitted membership has a changed HEAD; inspect before recovery")
 		}
-	} else {
-		if step.RemoteBranch != nil {
-			if err := s.prepareRemoteBranch(ctx, bare, repo, step); err != nil {
-				return err
-			}
+	} else if step.RemoteBranch != nil {
+		if err := s.prepareRemoteBranch(ctx, bare, repo, step); err != nil {
+			return err
 		}
+	}
+	if !step.Create {
+		// Fetch can block while an external Git writer edits the upstream.
+		// Recheck here before moving the local ref or publishing membership.
+		if step.RemoteBranch != nil && step.RemoteBranch.LocalOID != "" {
+			err = s.requireMatchingUpstream(ctx, bare, step)
+		} else {
+			err = s.checkTracking(ctx, bare, step.Branch, step.TrackingRemote, step.Tracking)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if !exists {
 		local, err := s.Git.BranchExists(ctx, bare, step.Branch)
 		if err != nil {
 			return err

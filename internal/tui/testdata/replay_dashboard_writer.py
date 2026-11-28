@@ -74,9 +74,17 @@ def measure(path):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        sys.exit("usage: replay_dashboard_writer.py CAPTURE_DIRECTORY")
+    directory = Path(sys.argv[1])
+    if not directory.is_dir():
+        sys.exit(f"capture directory does not exist: {directory}")
+    captures = sorted(path for path in directory.glob("*.json") if path.is_file())
+    if not captures:
+        sys.exit(f"no JSON captures in {directory}")
     writer = csv.writer(sys.stdout, lineterminator="\n")
     writer.writerow(["comparison", "pair", "jobs", "commit", "inspecting_ms",
                      "first_completed_row_ms", "final_refresh_ms"])
-    for path in sorted(Path(sys.argv[1]).glob("*.json")):
+    for path in captures:
         comparison, pair, jobs, commit = path.stem.split("_")
         writer.writerow([comparison, pair, jobs, commit, *measure(path)])

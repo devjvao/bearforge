@@ -106,7 +106,7 @@ func (s *Service) stageClone(ctx context.Context, git stagedClonePlanner, mover 
 		if exists {
 			// Only origin-verified bare repositories may be resumed in place.
 			if err := s.Git.VerifyBare(ctx, stagePath); err == nil {
-				origin, err := s.Git.Config(ctx, stagePath, "remote.origin.url")
+				origin, err := s.Git.FetchURL(ctx, stagePath, "origin")
 				if err != nil {
 					return err
 				}

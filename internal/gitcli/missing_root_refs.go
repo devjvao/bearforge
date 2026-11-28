@@ -42,7 +42,7 @@ func readPrivateFile(root *os.Root, name string, limit int) ([]byte, error) {
 	return data, err
 }
 
-func (c *Client) missingRootTips(ctx context.Context, bare, admin, format string) ([]string, error) {
+func (c *Client) privateRootTips(ctx context.Context, bare, admin, format string) ([]string, error) {
 	root, err := os.OpenRoot(admin)
 	if err != nil {
 		return nil, err
@@ -131,15 +131,7 @@ func (c *Client) preserveRootTips(ctx context.Context, bare, operation, repo str
 		if protected[oid] {
 			continue
 		}
-		kind, err := c.Run(ctx, bare, "--no-replace-objects", "cat-file", "-t", oid)
-		if err != nil {
-			return err
-		}
-		match := "--points-at=" + oid
-		if strings.TrimSpace(string(kind)) == "commit" {
-			match = "--contains=" + oid
-		}
-		durable, err := c.hasDirectRecoveryRef(ctx, bare, match)
+		durable, err := c.objectHasRecoveryRef(ctx, bare, oid)
 		if err != nil {
 			return err
 		}
@@ -153,4 +145,16 @@ func (c *Client) preserveRootTips(ctx context.Context, bare, operation, repo str
 		}
 	}
 	return nil
+}
+
+func (c *Client) objectHasRecoveryRef(ctx context.Context, bare, oid string) (bool, error) {
+	kind, err := c.Run(ctx, bare, "--no-replace-objects", "cat-file", "-t", oid)
+	if err != nil {
+		return false, err
+	}
+	match := "--points-at=" + oid
+	if strings.TrimSpace(string(kind)) == "commit" {
+		match = "--contains=" + oid
+	}
+	return c.hasDirectRecoveryRef(ctx, bare, match)
 }

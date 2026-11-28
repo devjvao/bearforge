@@ -110,7 +110,7 @@ func (c *Client) inspectMissingRegistration(ctx context.Context, bare, path stri
 	if len(undo) != 0 {
 		return "", nil, domain.E("unsafe_removal", "missing checkout %s retains resolve-undo records in its Git index; recover the conflict stages before removing the registration", path)
 	}
-	tips, err := c.missingRootTips(ctx, bare, admin, format)
+	tips, err := c.privateRootTips(ctx, bare, admin, format)
 	if err != nil {
 		return "", nil, err
 	}
@@ -147,8 +147,10 @@ func (c *Client) checkPrivateAdmin(ctx context.Context, bare string, root *os.Ro
 				}
 			}
 		case "COMMIT_EDITMSG":
-			// This ordinary message file can itself be overwritten by update-ref.
-			_, err := c.Run(ctx, bare, "--git-dir="+admin, "show-ref", "--verify", "--quiet", name)
+			// Older Git cannot use show-ref to query root refs. Qualify this
+			// lookup so a shared branch named COMMIT_EDITMSG cannot match.
+			ref := "worktrees/" + filepath.Base(admin) + "/" + name
+			_, err := c.Run(ctx, bare, "rev-parse", "--verify", "--quiet", "--end-of-options", ref)
 			if !entry.Type().IsRegular() || err == nil {
 				return privateRefError(admin, name)
 			}

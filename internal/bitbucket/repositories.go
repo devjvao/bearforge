@@ -203,6 +203,7 @@ func (c *Client) repositoryPages(ctx context.Context, s domain.RepositorySource,
 	httpClient, guardError := safety.HTTPClient(c.httpClient, &first, pagination)
 	guarded := &Client{httpClient: httpClient, now: c.now}
 	seen := map[string]bool{}
+	var progress cloudPageProgress
 	for range 100 {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -216,13 +217,16 @@ func (c *Client) repositoryPages(ctx context.Context, s domain.RepositorySource,
 			return guardError(err)
 		}
 		var page struct {
+			cloudPagination
 			Values        []json.RawMessage `json:"values"`
-			Next          string            `json:"next"`
 			IsLastPage    *bool             `json:"isLastPage"`
 			NextPageStart *int              `json:"nextPageStart"`
 		}
 		if json.Unmarshal(body, &page) != nil || page.Values == nil {
 			return domain.E("provider_failed", "Bitbucket returned invalid discovery response")
+		}
+		if s.Provider == "bitbucket" && !progress.accept(page.cloudPagination, len(page.Values)) {
+			return domain.E("provider_failed", "Bitbucket returned incomplete discovery pagination")
 		}
 		for _, raw := range page.Values {
 			if err := consume(raw); err != nil {

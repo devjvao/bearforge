@@ -45,6 +45,71 @@ func TestRepositoryDiscoveryCloudWorkspacesAndRepositories(t *testing.T) {
 	}
 }
 
+func TestCloudDiscoveryChecksAdvertisedTotal(t *testing.T) {
+	for _, endpoint := range []string{"repositories", "workspaces"} {
+		for _, tc := range []struct {
+			name       string
+			pageLength int
+			sizes      []int // Negative means the response omits the optional size.
+			wantError  bool
+		}{
+			{"truncated first", 1, []int{2}, true},
+			{"truncated later", 1, []int{3, 3}, true},
+			{"short earlier page", 2, []int{3, 3}, true},
+			{"omitted final size", 2, []int{3, -1}, true},
+			{"complete", 1, []int{2, 2}, false},
+			{"revised final size", 1, []int{3, 2}, false},
+			{"iterator", 0, []int{-1, -1}, false},
+		} {
+			t.Run(endpoint+"/"+tc.name, func(t *testing.T) {
+				calls := 0
+				client, q, _ := testServer(t, "bitbucket", func(w http.ResponseWriter, r *http.Request) {
+					calls++
+					item := fmt.Sprintf(`{"workspace":{"slug":"work%d"}}`, calls)
+					if endpoint == "repositories" {
+						item = fmt.Sprintf(`{"uuid":"id%d","full_name":"team/repo%d","links":{"clone":[{"name":"https","href":"https://bitbucket.org/team/repo%d.git"}]}}`, calls, calls, calls)
+					}
+					next := ""
+					if calls < len(tc.sizes) {
+						next = `,"next":"?page=2"`
+					}
+					controls := ""
+					if tc.pageLength > 0 {
+						controls = fmt.Sprintf(`,"page":%d,"pagelen":%d`, calls, tc.pageLength)
+					}
+					if size := tc.sizes[calls-1]; size >= 0 {
+						controls += fmt.Sprintf(`,"size":%d`, size)
+					}
+					fmt.Fprintf(w, `{"values":[%s]%s%s}`, item, next, controls)
+				})
+				source := domain.RepositorySource{Provider: q.Provider, Host: q.Host, APIURL: q.APIURL, Scope: "team"}
+				var count int
+				var err error
+				if endpoint == "repositories" {
+					var rows []domain.RemoteRepository
+					rows, err = client.ListRepositories(t.Context(), source)
+					count = len(rows)
+				} else {
+					var rows []domain.ProviderWorkspace
+					rows, err = client.ListWorkspaces(t.Context(), source)
+					count = len(rows)
+				}
+				if tc.wantError {
+					var problem *domain.Error
+					if !errors.As(err, &problem) || problem.Code != "provider_failed" || count != 0 {
+						t.Fatalf("rows=%d error=%v", count, err)
+					}
+				} else if err != nil || count != len(tc.sizes) {
+					t.Fatalf("rows=%d error=%v", count, err)
+				}
+				if calls != len(tc.sizes) {
+					t.Fatalf("got %d requests, want %d", calls, len(tc.sizes))
+				}
+			})
+		}
+	}
+}
+
 func TestRepositoryDiscoveryServerContextAndPort(t *testing.T) {
 	calls := 0
 	c, q, _ := testServer(t, "bitbucket-server", func(w http.ResponseWriter, r *http.Request) {

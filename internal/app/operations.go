@@ -64,6 +64,9 @@ func (s *Service) Abandon(ctx context.Context, id string) (Result, error) {
 	if op.State == "complete" {
 		return r, domain.E("conflict", "operation already completed")
 	}
+	if err := ctx.Err(); err != nil {
+		return r, err
+	}
 	op.State = "abandoned"
 	if err := s.Journal.Save(op); err != nil {
 		return r, err

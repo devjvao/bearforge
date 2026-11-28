@@ -88,6 +88,43 @@ func TestMalformedMatchingStateCannotBecomeNoMatches(t *testing.T) {
 	errorCode(t, err, "provider_failed")
 }
 
+func TestIncompleteMatchingPRIsNotCached(t *testing.T) {
+	for _, tc := range []struct{ name, before, after string }{
+		{"title", `"A useful PR"`, `""`},
+		{"url", `"https://github.com/upstream/project/pull/2"`, `""`},
+		{"url scheme", `"https://github.com/upstream/project/pull/2"`, `"file:///metadata"`},
+		{"updated time", `"2026-11-12T10:00:00Z"`, `null`},
+		{"target branch", `"ref":"main"`, `"ref":""`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			c, q, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if r.URL.Query().Get("page") == "1" {
+					w.Header().Set("Link", `<?page=2>; rel="next"`)
+					fmt.Fprint(w, "["+pullJSON(1, "alice/fork", "feature/pr", "upstream/project", "main", "open", "null")+"]")
+					return
+				}
+				row := pullJSON(2, "alice/fork", "feature/pr", "upstream/project", "main", "open", "null")
+				if calls == 2 {
+					row = strings.Replace(row, tc.before, tc.after, 1)
+				}
+				fmt.Fprint(w, "["+row+"]")
+			})
+			q.Base = ""
+			obs, err := c.Lookup(t.Context(), q, false)
+			errorCode(t, err, "provider_failed")
+			if obs.PullRequests != nil || !obs.ObservedAt.IsZero() {
+				t.Fatal("partial page escaped")
+			}
+			obs, err = c.Lookup(t.Context(), q, false)
+			if err != nil || obs.Cached || len(obs.PullRequests) != 2 || calls != 4 {
+				t.Fatalf("retry: calls=%d, observation=%#v, err=%v", calls, obs, err)
+			}
+		})
+	}
+}
+
 func TestLookupRetainsFirstPRWhenPagesOverlap(t *testing.T) {
 	requests := 0
 	c, q, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {

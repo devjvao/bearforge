@@ -108,21 +108,21 @@ func (c *Client) IsAncestor(ctx context.Context, bare, ancestor, descendant stri
 	if !ok || (command.ExitCode != 1 && command.ExitCode != 128) {
 		return err == nil, err
 	}
-	// Older Git can report a missing parent on stderr and exit 1, the same
-	// status as "not an ancestor". Confirm the named object is actually absent.
+	// Git can report either an unreadable parent or a blocked lazy fetch.
+	// Probe the local object index without triggering another lazy fetch.
 	var diagnostic bool
 	for line := range strings.Lines(command.Detail) {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "error:") || strings.HasPrefix(line, "fatal:") {
 			diagnostic = true
 		}
-		if oid, missing := strings.CutPrefix(line, "error: Could not read "); missing && domain.ValidCommitID(oid) {
-			_, probeErr := c.Run(ctx, bare, "--no-replace-objects", "cat-file", "-e", oid)
-			if isExit(probeErr, 1) {
-				return false, &domain.Error{Code: "incomplete_history", Message: "commit " + oid + " is unavailable in the local history", Cause: err}
-			}
+		if oid := reportedMissingObject(line); oid != "" {
+			out, probeErr := c.Run(ctx, bare, "rev-parse", "--disambiguate="+oid)
 			if probeErr != nil {
 				return false, probeErr
+			}
+			if len(out) == 0 {
+				return false, &domain.Error{Code: "incomplete_history", Message: "commit " + oid + " is unavailable in the local history", Cause: err}
 			}
 		}
 	}

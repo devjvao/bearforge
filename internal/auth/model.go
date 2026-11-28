@@ -127,7 +127,7 @@ type LoginRequest struct {
 type LoginHooks struct {
 	ReadSecret func(context.Context, string) (string, error)
 	Notify     func(string)
-	Confirm    func(context.Context, Connection) error
+	Confirm    func(ctx context.Context, proposed Connection, replacing bool) error
 }
 type StatusRequest struct {
 	Connection string

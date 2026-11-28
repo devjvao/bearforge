@@ -1,18 +1,43 @@
 package auth
 
 import (
+	"errors"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/devjvao/bearforge/internal/domain"
 )
 
+func TestResolveRejectsDamagedStoredHost(t *testing.T) {
+	m, secrets, server := fixture(t, "github")
+	c := loginFixture(t, m, server, "github")
+	r, err := m.readRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range []string{"fixture-private-note", "https://fixture.invalid/bad%"} {
+		c.Host = host
+		r.Connections[c.Name] = c
+		if err := m.writeRegistry(r); err != nil {
+			t.Fatal(err)
+		}
+		for _, connection := range []string{c.Name, ""} {
+			req := domain.CredentialRequest{Provider: c.Provider, Connection: connection, Host: "github.com", APIURL: c.APIURL}
+			_, err := m.Resolve(t.Context(), req)
+			if err == nil || errors.Is(err, ErrScope) || strings.Contains(err.Error(), c.Host) || secrets.reads != 0 {
+				t.Fatalf("expected sanitized registry diagnostic before secret access, got %v", err)
+			}
+		}
+	}
+}
+
 func TestResolveHostnameMetadataPreservesInstallationScope(t *testing.T) {
 	secrets := &memorySecrets{values: map[string]string{}}
 	m := NewManager(Options{RegistryPath: filepath.Join(t.TempDir(), "connections.json"), Secrets: secrets, LookupEnv: func(string) (string, bool) { return "public-env-token", true }})
 	c := Connection{Name: "server", Provider: "bitbucket-server", Host: "https://bb.example:8443/context", APIURL: "https://bb.example:8443/context/rest/api/latest", GitURL: "https://bb.example:8443/context", GrantID: "grant", Method: MethodToken, TokenKind: "bitbucket-user-token"}
-	if _, err := m.save(t.Context(), c, "saved-token"); err != nil {
+	if _, err := m.save(t.Context(), c, "saved-token", nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
@@ -49,7 +74,7 @@ func TestResolveHostnameMetadataRefusesAmbiguousSavedGrants(t *testing.T) {
 	m := NewManager(Options{RegistryPath: filepath.Join(t.TempDir(), "connections.json"), Secrets: secrets, LookupEnv: func(string) (string, bool) { return "", false }})
 	for _, name := range []string{"first", "second"} {
 		c := Connection{Name: name, Provider: "bitbucket-server", Host: "https://bb.example:8443/context", APIURL: "https://bb.example:8443/context/rest/api/latest", GrantID: name, Method: MethodToken}
-		if _, err := m.save(t.Context(), c, name+"-token"); err != nil {
+		if _, err := m.save(t.Context(), c, name+"-token", nil); err != nil {
 			t.Fatal(err)
 		}
 	}

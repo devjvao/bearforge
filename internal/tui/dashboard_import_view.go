@@ -156,7 +156,7 @@ func (m dashboardModel) importContent() []string {
 				lines = append(lines, displayText(run.prompt.text)+": "+strings.Repeat("*", min(32, utf8RuneCount(run.secret))), "Enter submits hidden token.")
 			case "confirm":
 				c := run.prompt.connection
-				lines = append(lines, "Confirm provider: "+displayText(c.Provider), "Installation: "+displayText(c.Host), "API: "+displayText(c.APIURL), "Git: "+displayText(c.GitURL), "Press y to authorize this provider and origin.")
+				lines = append(lines, "Confirm provider: "+displayText(c.Provider), "Installation: "+displayText(c.Host), "API: "+displayText(c.APIURL), "Git: "+displayText(c.GitURL), displayText(run.prompt.text))
 			}
 		}
 	case importLoading:

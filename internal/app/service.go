@@ -35,6 +35,7 @@ type Git interface {
 	Initialize(context.Context, string) error
 	VerifyBare(context.Context, string) error
 	Config(context.Context, string, string) (string, error)
+	FetchURL(context.Context, string, string) (string, error)
 	Fetch(context.Context, string) error
 	AdvertisedBranch(context.Context, string, string, string) (string, error)
 	FetchBranch(context.Context, string, string, string, string) error
@@ -46,6 +47,7 @@ type Git interface {
 	Resolve(context.Context, string, string) (string, error)
 	LocalBaseRevision(context.Context, string, string) (string, error)
 	BranchExists(context.Context, string, string) (bool, error)
+	BranchTracking(context.Context, string, string) (string, string, error)
 	RefExists(context.Context, string, string) (bool, error)
 	ValidateBranch(context.Context, string) error
 	DefaultBase(context.Context, string, string) (string, error)
@@ -120,6 +122,7 @@ type Step struct {
 	Branch                     string                 `json:"branch,omitempty"`
 	Base                       string                 `json:"base,omitempty"`
 	Tracking                   string                 `json:"tracking,omitempty"`
+	TrackingRemote             string                 `json:"tracking_remote,omitempty"`
 	Start                      string                 `json:"start,omitempty"`
 	Upstream                   string                 `json:"upstream,omitempty"`
 	RemoteBranch               *RemoteBranchPlan      `json:"remote_branch,omitempty"`
@@ -227,13 +230,16 @@ func (s *Service) lock(ctx context.Context, resumeID string) (func() error, erro
 	if err != nil {
 		return nil, err
 	}
-	ops, err := s.Journal.List()
+	ops, err := s.pendingOperations(ctx)
+	if err == nil {
+		err = ctx.Err()
+	}
 	if err != nil {
 		release()
 		return nil, err
 	}
 	for _, op := range ops {
-		if op.ID != resumeID && op.State != "complete" && op.State != "abandoned" {
+		if op.ID != resumeID {
 			release()
 			return nil, domain.E("conflict", "operation %s is unfinished; inspect and resume it first", op.ID)
 		}
@@ -297,7 +303,7 @@ func (s *Service) verifyRepositoryAt(ctx context.Context, r domain.Repository, p
 		got := urls[name]
 		if urls == nil {
 			var err error
-			got, err = s.Git.Config(ctx, p, "remote."+name+".url")
+			got, err = s.Git.FetchURL(ctx, p, name)
 			if err != nil {
 				return err
 			}

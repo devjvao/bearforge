@@ -105,7 +105,7 @@ func addAuthCommands(root *cobra.Command, o *options) {
 						}
 						return value, nil
 					}
-					if tokenStdin {
+					if tokenStdin && !isTerminal(o.in) {
 						return readAuthInput(ctx, o.in, func(input io.Reader) (string, error) { return readAuthLine(input, 64<<10) })
 					}
 					return o.authSecret(ctx, label)
@@ -120,12 +120,8 @@ func addAuthCommands(root *cobra.Command, o *options) {
 						_, _ = fmt.Fprintln(p, terminalDocument(strings.Join(lines, "\n"), outputWidth(o.errOut)))
 					}
 				},
-				Confirm: func(ctx context.Context, connection auth.Connection) error {
-					_, previousErr := manager.Connection(ctx, connection.Name)
-					if previousErr != nil && !errors.Is(previousErr, auth.ErrDisconnected) {
-						return previousErr
-					}
-					if previousErr == nil && !o.yes {
+				Confirm: func(ctx context.Context, connection auth.Connection, replacing bool) error {
+					if replacing && !o.yes {
 						if !o.interactive() {
 							return domain.E("confirmation", "connection already exists; use --yes to replace its grant")
 						}
@@ -247,15 +243,16 @@ func (o *options) authSecret(ctx context.Context, label string) (string, error) 
 	if !ok || !term.IsTerminal(int(input.Fd())) {
 		return "", domain.E("invalid", "hidden token input requires a terminal; use --token-stdin or --token-env")
 	}
-	if _, err := fmt.Fprint(o.errOut, label+": "); err != nil {
-		return "", err
-	}
 	secret, err := readAuthHidden(ctx, input, func() (func() error, error) {
 		state, err := term.MakeRaw(int(input.Fd()))
 		if err != nil {
 			return nil, err
 		}
-		return func() error { return term.Restore(int(input.Fd()), state) }, nil
+		restore := func() error { return term.Restore(int(input.Fd()), state) }
+		if _, err := fmt.Fprint(o.errOut, label+": "); err != nil {
+			return nil, errors.Join(err, restore())
+		}
+		return restore, nil
 	})
 	_, _ = fmt.Fprintln(o.errOut)
 	if err != nil {

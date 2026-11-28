@@ -201,6 +201,75 @@ func TestWorkspaceAddRejectsRemoteMovementDuringFetch(t *testing.T) {
 	}
 }
 
+type changeTrackingAfterFetch struct {
+	app.Git
+	change func()
+}
+
+func (g changeTrackingAfterFetch) FetchBranch(ctx context.Context, bare, remote, branch, oid string) error {
+	if err := g.Git.FetchBranch(ctx, bare, remote, branch, oid); err != nil {
+		return err
+	}
+	g.change()
+	return nil
+}
+
+func TestWorkspaceAddRefusesAmbiguousUpstream(t *testing.T) {
+	s, store, remote := fixture(t)
+	ctx := t.Context()
+	if _, err := s.AddRepository(ctx, "api", remote, false); err != nil {
+		t.Fatal(err)
+	}
+	bare := filepath.Join(store.Root, "repos", "api.git")
+	old, err := s.Git.Resolve(ctx, bare, "refs/heads/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	updateCommit(t, remote, "new", "remote advances")
+	if _, err := s.Sync(ctx, []string{"api"}, 1, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateWorkspace(ctx, "review", "main", false); err != nil {
+		t.Fatal(err)
+	}
+	req := app.AddRequest{Workspace: "review", Repositories: []string{"api"}, DryRun: true}
+	preview, err := s.AddRepositories(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ambiguous := func() {
+		prGit(t, bare, "config", "--replace-all", "branch.main.merge", "refs/heads/other")
+		prGit(t, bare, "config", "--add", "branch.main.merge", "refs/heads/main")
+	}
+	ambiguous()
+	checkConflict := func(result app.Result, err error) {
+		t.Helper()
+		if err == nil || app.ProblemFor(err).Code != "conflict" {
+			t.Errorf("ambiguous upstream accepted: %+v, %v", result, err)
+		}
+		got, err := s.Git.Resolve(ctx, bare, "refs/heads/main")
+		if err != nil || got != old {
+			t.Fatalf("local main moved from %s to %s: %v", old, got, err)
+		}
+	}
+	checkConflict(s.AddRepositories(ctx, req))
+	offline := req
+	offline.Tracking, offline.Offline = "same-name", true
+	checkConflict(s.AddRepositories(ctx, offline))
+	req.DryRun, req.ExpectedPlan = false, preview.PlanDigest
+	checkConflict(s.AddRepositories(ctx, req))
+	prGit(t, bare, "config", "--replace-all", "branch.main.merge", "refs/heads/main")
+	client := s.Git
+	s.Git = changeTrackingAfterFetch{client, ambiguous}
+	partial, err := s.AddRepositories(ctx, req)
+	checkConflict(partial, err)
+	s.Git = client
+	if partial.OperationID == "" {
+		t.Fatal("expected an interrupted journal")
+	}
+	checkConflict(s.Resume(ctx, partial.OperationID))
+}
+
 func TestWorkspaceAddKeepsBranchReservedByBisect(t *testing.T) {
 	s, store, remote := fixture(t)
 	ctx := t.Context()

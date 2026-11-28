@@ -208,7 +208,7 @@ func (s *Service) verifyInterruptedClone(ctx context.Context, path, remote strin
 	if err := s.Git.VerifyBare(ctx, path); err != nil {
 		return err
 	}
-	actual, err := s.Git.Config(ctx, path, "remote.origin.url")
+	actual, err := s.Git.FetchURL(ctx, path, "origin")
 	if err != nil {
 		return err
 	}

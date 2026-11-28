@@ -57,10 +57,16 @@ func (s *Service) planWorkspaceBranch(ctx context.Context, bare, remote string, 
 		if err != nil {
 			return err
 		}
-		step.Start, step.Base, step.Tracking = oid, repo.Base, "preserve"
+		step.Start, step.Base, step.Tracking = oid, repo.Base, req.Tracking
+		if step.Tracking == "" {
+			step.Tracking = "preserve"
+		}
 		if step.RemoteBranch != nil && remoteOID != "" && req.Tracking != "none" {
 			err = s.planTrackedLocal(ctx, bare, step)
 		} else {
+			if req.Tracking == "same-name" {
+				step.TrackingRemote = remote
+			}
 			err = s.checkTracking(ctx, bare, step.Branch, remote, req.Tracking)
 		}
 		if err != nil {
@@ -156,16 +162,12 @@ func (s *Service) planTrackedLocal(ctx context.Context, bare string, step *Step)
 }
 
 func (s *Service) requireMatchingUpstream(ctx context.Context, bare string, step *Step) error {
-	remote, err := s.Git.Config(ctx, bare, "branch."+step.Branch+".remote")
-	if err != nil {
-		return err
-	}
-	merge, err := s.Git.Config(ctx, bare, "branch."+step.Branch+".merge")
+	remote, branch, err := s.Git.BranchTracking(ctx, bare, step.Branch)
 	if err != nil {
 		return err
 	}
 	pin := step.RemoteBranch
-	if remote != pin.Remote || merge != "refs/heads/"+step.Branch {
+	if remote != pin.Remote || branch != step.Branch {
 		return domain.E("conflict", "local %s (%s) does not track %s/%s (%s); use --track preserve to keep the local branch or choose another name", step.Branch, pin.LocalOID, pin.Remote, step.Branch, pin.OID)
 	}
 	return nil
@@ -196,11 +198,6 @@ func (s *Service) prepareRemoteBranch(ctx context.Context, bare string, repo dom
 	}
 	if oid != "" {
 		if err := s.Git.FetchBranch(ctx, bare, pin.Remote, step.Branch, oid); err != nil {
-			return err
-		}
-	}
-	if pin.LocalOID != "" {
-		if err := s.requireMatchingUpstream(ctx, bare, step); err != nil {
 			return err
 		}
 	}
