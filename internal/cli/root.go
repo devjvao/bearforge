@@ -168,16 +168,13 @@ func (o *options) perform(ctx context.Context, needsGit, progress bool, work fun
 	service := app.New(store, git, operation.New(store))
 	service.PRs = o.pullRequestProvider
 	if service.PRs == nil {
-		manager, authErr := o.configureServiceAuthentication(service)
-		if authErr != nil {
-			return authErr
-		}
-		service.PRs = pullrequests.NewProviderWithResolver(manager)
+		credentials := o.configureServiceAuthentication(service)
+		service.PRs = pullrequests.NewProviderWithResolver(credentials)
 	}
 	o.activeRoot = store.RootPath()
 	service.Executor = process.Runner{Input: o.in, Output: o.out, Error: o.errOut}
 	var result app.Result
-	var observerErr error
+	var outputErr, diagnosticErr error
 	if progress && !o.dry && o.ui != "plain" && o.interactive() {
 		result, err = tui.Run(ctx, o.in, o.errOut, func(ctx context.Context, observe func(app.Event)) (app.Result, error) {
 			service.Observe = observe
@@ -189,6 +186,9 @@ func (o *options) perform(ctx context.Context, needsGit, progress bool, work fun
 			mu.Lock()
 			defer mu.Unlock()
 			if o.output == "jsonl" {
+				if outputErr != nil {
+					return
+				}
 				o.sequence++
 				kind := "progress"
 				if e.Output != nil {
@@ -196,25 +196,26 @@ func (o *options) perform(ctx context.Context, needsGit, progress bool, work fun
 				} else if e.State == "started" || e.State == "completed" {
 					kind = e.State
 				}
-				observerErr = errors.Join(observerErr, json.NewEncoder(o.out).Encode(map[string]any{"schema_version": 1, "sequence": o.sequence, "type": kind, "event": e}))
+				outputErr = json.NewEncoder(o.out).Encode(map[string]any{"schema_version": 1, "sequence": o.sequence, "type": kind, "event": e})
 			} else if o.output == "human" && e.Output != nil {
-				writer := o.out
+				writer, failure := o.out, &outputErr
 				if e.Output.Stream == "stderr" {
-					writer = o.errOut
+					writer, failure = o.errOut, &diagnosticErr
 				}
-				_, writeErr := fmt.Fprintf(writer, "[%s] %s", e.Repository, e.Output.Data)
-				observerErr = errors.Join(observerErr, writeErr)
-				if len(e.Output.Data) > 0 && e.Output.Data[len(e.Output.Data)-1] != '\n' {
-					_, writeErr = fmt.Fprintln(writer)
-					observerErr = errors.Join(observerErr, writeErr)
+				if *failure != nil {
+					return
 				}
-			} else if o.output == "human" && !o.quiet {
-				observerErr = errors.Join(observerErr, o.progressLine(e.Repository, e.State))
+				_, *failure = fmt.Fprintf(writer, "[%s] %s", e.Repository, e.Output.Data)
+				if *failure == nil && len(e.Output.Data) > 0 && e.Output.Data[len(e.Output.Data)-1] != '\n' {
+					_, *failure = fmt.Fprintln(writer)
+				}
+			} else if o.output == "human" && !o.quiet && diagnosticErr == nil {
+				diagnosticErr = o.progressLine(e.Repository, e.State)
 			}
 		}
 		result, err = work(ctx, service)
 	}
-	err = errors.Join(err, observerErr)
+	err = errors.Join(err, outputErr, diagnosticErr)
 	if err != nil {
 		if result.Outcome == "success" {
 			result.Outcome = "failed"
@@ -222,7 +223,14 @@ func (o *options) perform(ctx context.Context, needsGit, progress bool, work fun
 		result.Problem = app.ProblemFor(err)
 	}
 	o.rendered = true
-	return errors.Join(err, o.render(result))
+	renderer := *o
+	if outputErr != nil {
+		renderer.out = io.Discard
+	}
+	if diagnosticErr != nil {
+		renderer.errOut = io.Discard
+	}
+	return errors.Join(err, renderer.render(result))
 }
 func (o *options) render(r app.Result) error {
 	if o.output == "jsonl" {

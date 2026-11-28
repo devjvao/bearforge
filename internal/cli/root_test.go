@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/devjvao/bearforge/internal/app"
+	"github.com/devjvao/bearforge/internal/domain"
 )
 
 func TestHelpDoesNotCreateState(t *testing.T) {
@@ -22,6 +25,35 @@ func TestHelpDoesNotCreateState(t *testing.T) {
 		t.Fatalf("%d: %s", code, errOut.String())
 	}
 	assertNoCLIState(t, root)
+}
+
+func TestLocalCommandsDoNotRequireAnAuthRegistry(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("Unix configuration directory semantics")
+	}
+	t.Chdir(cliFixtureDir(t))
+	if code := Run(t.Context(), []string{"--no-input", "workspace", "create", "local"}, nil, io.Discard, io.Discard); code != 0 {
+		t.Fatalf("create workspace: exit %d", code)
+	}
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	_, configErr := os.UserConfigDir()
+	if configErr == nil {
+		t.Fatal("expected no user configuration directory")
+	}
+	for _, args := range [][]string{{"workspace", "list"}, {"repo", "list"}, {"config", "validate"}} {
+		var result, diagnostic bytes.Buffer
+		if code := Run(t.Context(), args, nil, &result, &diagnostic); code != 0 {
+			t.Fatalf("%v: exit %d, %s", args, code, diagnostic.String())
+		}
+		if args[0] == "workspace" && !strings.Contains(result.String(), "local") {
+			t.Fatalf("missing registered workspace: %q", result.String())
+		}
+	}
+	var diagnostic bytes.Buffer
+	if code := Run(t.Context(), []string{"--no-input", "auth", "login", "--provider", "github", "--token-stdin"}, nil, io.Discard, &diagnostic); code == 0 || !strings.Contains(diagnostic.String(), configErr.Error()) {
+		t.Fatalf("saved login: exit %d, diagnostic %q", code, diagnostic.String())
+	}
 }
 
 func TestConfirmationCancellation(t *testing.T) {
@@ -147,9 +179,11 @@ func TestEarlyMachineFailureResult(t *testing.T) {
 
 type closedPipeAfter struct {
 	remaining int
+	attempts  int
 }
 
 func (w *closedPipeAfter) Write(p []byte) (int, error) {
+	w.attempts++
 	if len(p) > w.remaining {
 		n := w.remaining
 		w.remaining = 0
@@ -157,6 +191,31 @@ func (w *closedPipeAfter) Write(p []byte) (int, error) {
 	}
 	w.remaining -= len(p)
 	return len(p), nil
+}
+
+func TestObserverRetainsFirstStreamFailure(t *testing.T) {
+	t.Chdir(cliFixtureDir(t))
+	for _, mode := range []string{"human", "jsonl"} {
+		t.Run(mode, func(t *testing.T) {
+			failed := &closedPipeAfter{}
+			var diagnostic bytes.Buffer
+			opts := &options{output: mode, out: failed, errOut: &diagnostic}
+			jobErr := errors.New("job failed after output")
+			err := opts.perform(t.Context(), false, false, func(_ context.Context, s *app.Service) (app.Result, error) {
+				for range 128 {
+					s.Observe(app.Event{Repository: "api", Output: &domain.OutputChunk{Stream: "stdout", Data: []byte("output")}})
+				}
+				s.Observe(app.Event{Repository: "api", Output: &domain.OutputChunk{Stream: "stderr", Data: []byte("other stream")}})
+				return app.NewResult("exec"), jobErr
+			})
+			if !errors.Is(err, io.ErrClosedPipe) || !errors.Is(err, jobErr) || failed.attempts != 1 {
+				t.Fatalf("stream failure = %v, write attempts = %d", err, failed.attempts)
+			}
+			if mode == "human" && !strings.Contains(diagnostic.String(), "other stream") {
+				t.Fatal("lost a healthy output stream")
+			}
+		})
+	}
 }
 
 func TestPlainRenderPropagatesWriteFailures(t *testing.T) {

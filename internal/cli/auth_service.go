@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/devjvao/bearforge/internal/app"
 	"github.com/devjvao/bearforge/internal/auth"
@@ -11,14 +12,29 @@ import (
 	"github.com/devjvao/bearforge/internal/gitcli"
 )
 
-// configureServiceAuthentication keeps selected credentials local to each
-// operation and supplies invocation-scoped clients instead of mutable globals.
-func (o *options) configureServiceAuthentication(service *app.Service) (*auth.Manager, error) {
-	manager, err := o.authentication()
+type serviceAuthentication func() (*auth.Manager, error)
+
+func (get serviceAuthentication) Resolve(ctx context.Context, request domain.CredentialRequest) (domain.Credential, error) {
+	manager, err := get()
 	if err != nil {
 		return nil, err
 	}
-	service.Credentials = manager
+	return manager.Resolve(ctx, request)
+}
+
+func (get serviceAuthentication) Connections(ctx context.Context) ([]auth.Connection, error) {
+	manager, err := get()
+	if err != nil {
+		return nil, err
+	}
+	return manager.Connections(ctx)
+}
+
+// configureServiceAuthentication keeps selected credentials local to each
+// operation and supplies invocation-scoped clients instead of mutable globals.
+func (o *options) configureServiceAuthentication(service *app.Service) serviceAuthentication {
+	credentials := serviceAuthentication(sync.OnceValues(o.authentication))
+	service.Credentials = credentials
 	base := service.Git
 	service.GitForConnection = func(request domain.CredentialRequest) (app.Git, error) {
 		if request.TokenEnv != "" || request.Connection == "" || !strings.HasPrefix(request.GitURL, "https://") {
@@ -60,5 +76,5 @@ func (o *options) configureServiceAuthentication(service *app.Service) (*auth.Ma
 		newBinding := gitcli.ConnectionBinding{Connection: current.Connection, GrantID: current.GrantID, URL: current.GitURL, Executable: executable}
 		return client.RebindConnection(ctx, path, oldBinding, newBinding)
 	}
-	return manager, nil
+	return credentials
 }
