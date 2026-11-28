@@ -56,8 +56,12 @@ func (m dashboardModel) startImportLogin() (tea.Model, tea.Cmd) {
 				case <-ctx.Done():
 				}
 			},
-			Confirm: func(ctx context.Context, c auth.Connection) error {
-				answer, err := importAsk(ctx, signals, dashboardImportSignal{kind: "confirm", connection: c})
+			Confirm: func(ctx context.Context, c auth.Connection, replacing bool) error {
+				prompt := "Press y to authorize this provider and origin."
+				if replacing {
+					prompt = "Press y to replace the saved grant for " + c.Name + "."
+				}
+				answer, err := importAsk(ctx, signals, dashboardImportSignal{kind: "confirm", connection: c, text: prompt})
 				if err != nil {
 					return err
 				}

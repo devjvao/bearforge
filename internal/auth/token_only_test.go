@@ -85,7 +85,7 @@ func TestBrowserLoginIsRejectedBeforePromptsOrIO(t *testing.T) {
 	manager.lookupEnv = func(string) (string, bool) { return "registered-client", true }
 	manager.browser = browserFunc(func(context.Context, string) error { t.Error("OAuth opened a browser"); return nil })
 	_, err := manager.Login(t.Context(), LoginRequest{Name: "work", Provider: "github", Host: server.URL, APIURL: server.URL, Method: "browser"}, LoginHooks{
-		Confirm: func(context.Context, Connection) error {
+		Confirm: func(context.Context, Connection, bool) error {
 			t.Error("unsupported method reached confirmation")
 			return nil
 		},

@@ -257,7 +257,7 @@ func TestDashboardImportSharedLoginHooksAndHiddenToken(t *testing.T) {
 				if r.Method != auth.MethodToken {
 					t.Errorf("shared login did not select token setup: %s", r.Method)
 				}
-				if err := h.Confirm(ctx, auth.Connection{Provider: provider, Host: r.Host, APIURL: "https://api.example.invalid"}); err != nil {
+				if err := h.Confirm(ctx, auth.Connection{Name: "work", Provider: provider, Host: r.Host, APIURL: "https://api.example.invalid"}, provider == "bitbucket"); err != nil {
 					return auth.Connection{}, err
 				}
 				h.Notify("Create a token at https://example.invalid/settings/tokens")
@@ -286,6 +286,9 @@ func TestDashboardImportSharedLoginHooksAndHiddenToken(t *testing.T) {
 			m = updated.(dashboardModel)
 			if m.importRun.prompt == nil || m.importRun.prompt.kind != "confirm" {
 				t.Fatal("missing origin confirmation")
+			}
+			if provider == "bitbucket" && !strings.Contains(m.importRun.prompt.text, "replace the saved grant for work") {
+				t.Fatal("existing grant was not identified in the confirmation")
 			}
 			m, _ = dashboardKey(m, 'y', "y")
 			updated, next = m.Update(next())

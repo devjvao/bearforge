@@ -13,12 +13,77 @@ import (
 	"sort"
 	"time"
 
+	"github.com/devjvao/bearforge/internal/domain"
 	"github.com/gofrs/flock"
 )
 
 type registry struct {
-	Version     int                   `json:"version"`
-	Connections map[string]Connection `json:"connections"`
+	Version        int                      `json:"version"`
+	Connections    map[string]Connection    `json:"connections"`
+	PendingCleanup map[string]secretCleanup `json:"pending_cleanup,omitempty"`
+}
+
+type secretCleanup struct {
+	ManagementURL string   `json:"management_url"`
+	Keys          []string `json:"keys"`
+}
+
+func (r *registry) retireSecrets(c Connection) {
+	entry := r.PendingCleanup[c.Name]
+	for _, key := range []string{c.SecretRef, c.RefreshRef, c.ClientSecretRef} {
+		if key != "" {
+			entry.Keys = append(entry.Keys, key)
+		}
+	}
+	if len(entry.Keys) == 0 {
+		return
+	}
+	if r.PendingCleanup == nil {
+		r.PendingCleanup = make(map[string]secretCleanup)
+	}
+	entry.ManagementURL = managementURL(c)
+	r.PendingCleanup[c.Name] = entry
+}
+
+// The caller holds the registry lock and has durably published this generation.
+// Missing keys also count as deleted after an interrupted cleanup.
+func (m *Manager) finishCleanup(ctx context.Context, r registry) error {
+	if len(r.PendingCleanup) == 0 {
+		return nil
+	}
+	live := make(map[string]bool)
+	for _, c := range r.Connections {
+		live[c.SecretRef], live[c.RefreshRef], live[c.ClientSecretRef] = true, true, true
+	}
+	var failed, changed bool
+	for name, entry := range r.PendingCleanup {
+		remaining := entry.Keys[:0]
+		for _, key := range entry.Keys {
+			if !live[key] {
+				if err := m.secrets.Delete(ctx, key); err != nil && !errors.Is(err, ErrSecretMissing) {
+					failed = true
+					remaining = append(remaining, key)
+					continue
+				}
+			}
+			changed = true
+		}
+		if len(remaining) == 0 {
+			delete(r.PendingCleanup, name)
+		} else {
+			entry.Keys = remaining
+			r.PendingCleanup[name] = entry
+		}
+	}
+	if changed {
+		if err := m.writeRegistry(r); err != nil {
+			return err
+		}
+	}
+	if failed {
+		return fmt.Errorf("credential cleanup is pending; a later login or logout will retry: %w", errors.Join(ErrSecureStore, ctx.Err()))
+	}
+	return nil
 }
 
 const registrySizeLimit = 2 << 20
@@ -154,7 +219,7 @@ func randomID() string {
 	}
 	return hex.EncodeToString(b)
 }
-func (m *Manager) save(ctx context.Context, c Connection, access string) (Connection, error) {
+func (m *Manager) save(ctx context.Context, c Connection, access string, reviewed *Connection) (Connection, error) {
 	unlock, e := m.lock(ctx)
 	if e != nil {
 		return Connection{}, e
@@ -164,11 +229,17 @@ func (m *Manager) save(ctx context.Context, c Connection, access string) (Connec
 	if e != nil {
 		return Connection{}, e
 	}
-	old := r.Connections[c.Name]
+	old, exists := r.Connections[c.Name]
+	if exists != (reviewed != nil) || exists && old.GrantID != reviewed.GrantID {
+		return Connection{}, domain.E("conflict", "connection changed during login; review the current connection and retry")
+	}
 	if e = m.saveGeneration(ctx, &c, access); e != nil {
 		return Connection{}, e
 	}
 	r.Connections[c.Name] = c
+	if exists {
+		r.retireSecrets(old)
+	}
 	if e = m.writeRegistry(r); e != nil {
 		var uncertain *registryPublicationError
 		if !errors.As(e, &uncertain) {
@@ -176,7 +247,9 @@ func (m *Manager) save(ctx context.Context, c Connection, access string) (Connec
 		}
 		return Connection{}, e
 	}
-	m.deleteSecrets(context.WithoutCancel(ctx), old)
+	if err := m.finishCleanup(ctx, r); err != nil {
+		return c, fmt.Errorf("connection saved: %w", err)
+	}
 	return c, nil
 }
 func (m *Manager) saveGeneration(ctx context.Context, c *Connection, access string) error {

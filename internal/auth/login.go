@@ -20,8 +20,13 @@ func (m *Manager) Login(ctx context.Context, r LoginRequest, h LoginHooks) (Conn
 		return Connection{}, errors.New("Bitbucket Server token setup requires a valid Git username")
 	}
 	c := Connection{Name: r.Name, Provider: r.Provider, Host: r.Host, APIURL: r.APIURL, GitURL: r.GitURL, Username: r.Username, GrantID: randomID(), State: StateUnverified, Method: MethodToken}
+	registry, e := m.readRegistry()
+	if e != nil {
+		return Connection{}, e
+	}
+	previous, replacing := registry.Connections[c.Name]
 	if h.Confirm != nil {
-		if e = h.Confirm(ctx, c); e != nil {
+		if e = h.Confirm(ctx, c, replacing); e != nil {
 			return Connection{}, e
 		}
 	}
@@ -56,7 +61,10 @@ func (m *Manager) Login(ctx context.Context, r LoginRequest, h LoginHooks) (Conn
 	if e != nil {
 		return Connection{}, e
 	}
-	return m.save(ctx, c, access)
+	if replacing {
+		return m.save(ctx, c, access, &previous)
+	}
+	return m.save(ctx, c, access, nil)
 }
 
 func tokenSetupURL(c Connection) string {
