@@ -2,6 +2,7 @@
 package gitcli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -308,11 +309,24 @@ func (c *Client) Config(ctx context.Context, path, key string) (string, error) {
 	return strings.TrimSpace(string(b)), err
 }
 
-// RemoteURLs reads effective URLs with the same last-value semantics as Config.
+// FetchURL returns the first configured URL, before Git's transport rewrites.
+// The catalog records this literal URL. Additional URLs do not select the fetch source.
+func (c *Client) FetchURL(ctx context.Context, path, remote string) (string, error) {
+	out, err := c.Run(ctx, path, "config", "--null", "--get-all", "remote."+remote+".url")
+	if isExit(err, 1) {
+		return "", nil
+	}
+	first, _, _ := bytes.Cut(out, []byte{0})
+	return string(first), err
+}
+
+// RemoteURLs batches FetchURL lookups while retaining Git's configuration order.
 func (c *Client) RemoteURLs(ctx context.Context, path string, names []string) (map[string]string, error) {
 	urls := make(map[string]string, len(names))
 	if len(names) > 1 {
+		pending := make(map[string]bool, len(names))
 		for _, name := range names {
+			pending[name] = true
 			urls[name] = ""
 		}
 		// Catalog remote names contain only these characters. Restricting the
@@ -325,8 +339,9 @@ func (c *Client) RemoteURLs(ctx context.Context, path string, names []string) (m
 			for record := range strings.SplitSeq(string(out), "\x00") {
 				key, value, _ := strings.Cut(record, "\n")
 				name := strings.TrimSuffix(strings.TrimPrefix(key, "remote."), ".url")
-				if _, wanted := urls[name]; wanted {
-					urls[name] = strings.TrimSpace(value)
+				if pending[name] {
+					urls[name] = value
+					delete(pending, name)
 				}
 			}
 			return urls, nil
@@ -339,7 +354,7 @@ func (c *Client) RemoteURLs(ctx context.Context, path string, names []string) (m
 		}
 	}
 	for _, name := range names {
-		v, err := c.Config(ctx, path, "remote."+name+".url")
+		v, err := c.FetchURL(ctx, path, name)
 		if err != nil {
 			return nil, err
 		}

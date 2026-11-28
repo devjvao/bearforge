@@ -28,7 +28,7 @@ type prInspectionGit struct {
 
 func (prInspectionGit) VerifyBare(context.Context, string) error           { return nil }
 func (prInspectionGit) VerifyCommon(context.Context, string, string) error { return nil }
-func (prInspectionGit) Config(_ context.Context, path, key string) (string, error) {
+func (prInspectionGit) FetchURL(_ context.Context, path, remote string) (string, error) {
 	return "https://github.com/team/" + filepath.Base(path) + ".git", nil
 }
 func (g prInspectionGit) Inspect(_ context.Context, path string) (domain.Status, error) {

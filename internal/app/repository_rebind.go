@@ -164,7 +164,7 @@ func (s *Service) verifyRebindRepository(ctx context.Context, repo domain.Reposi
 	if err := s.Git.VerifyBare(ctx, path); err != nil {
 		return "", err
 	}
-	origin, err := s.Git.Config(ctx, path, "remote.origin.url")
+	origin, err := s.Git.FetchURL(ctx, path, "origin")
 	if err != nil {
 		return "", err
 	}

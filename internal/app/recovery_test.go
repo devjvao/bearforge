@@ -16,6 +16,77 @@ type failingIntent struct {
 	fail bool
 }
 
+type cancelAbandonJournal struct {
+	app.Journal
+	cancel context.CancelFunc
+	phase  string
+}
+
+func (j cancelAbandonJournal) List() ([]app.Operation, error) {
+	ops, err := j.Journal.List()
+	if j.phase == "scan" {
+		j.cancel()
+	}
+	return ops, err
+}
+
+func (j cancelAbandonJournal) Load(id string) (*app.Operation, error) {
+	op, err := j.Journal.Load(id)
+	if j.phase == "load" {
+		j.cancel()
+	}
+	return op, err
+}
+
+type cancelPendingScan struct{ cancelAbandonJournal }
+
+func (j cancelPendingScan) PendingSummaries(ctx context.Context) ([]app.OperationSummary, error) {
+	j.cancel()
+	return nil, ctx.Err()
+}
+
+func TestAbandonHonorsCancellationBeforePublication(t *testing.T) {
+	for _, phase := range []string{"scan", "pending summaries", "load"} {
+		t.Run(phase, func(t *testing.T) {
+			s, _, _ := fixture(t)
+			result, err := s.CreateWorkspace(t.Context(), "review", "", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			journal := s.Journal
+			op, err := journal.Load(result.OperationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			op.State = "partial"
+			if err := journal.Save(op); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			wrapped := cancelAbandonJournal{journal, cancel, phase}
+			s.Journal = wrapped
+			if phase == "pending summaries" {
+				s.Journal = cancelPendingScan{wrapped}
+			}
+			if _, err := s.Abandon(ctx, op.ID); !errors.Is(err, context.Canceled) {
+				t.Errorf("abandon after cancellation: %v", err)
+			}
+			got, err := journal.Load(op.ID)
+			if err != nil || got.State != "partial" {
+				t.Fatalf("lost resumable journal: %+v, %v", got, err)
+			}
+			unlock, err := journal.Lock(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := unlock(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestResumeRemovedWorkspaceAfterManifestDeletion(t *testing.T) {
 	s, store, remote := fixture(t)
 	ctx := context.Background()

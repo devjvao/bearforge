@@ -228,3 +228,39 @@ func TestSyncEmptyCatalog(t *testing.T) {
 		t.Fatalf("empty sync = %+v, %v", result, err)
 	}
 }
+func TestSyncRejectsDifferentFirstFetchURL(t *testing.T) {
+	for _, multiple := range []bool{false, true} {
+		t.Run(map[bool]string{false: "single", true: "batched"}[multiple], func(t *testing.T) {
+			s, store, remote := fixture(t)
+			ctx := t.Context()
+			if _, err := s.AddRepository(ctx, "api", remote, false); err != nil {
+				t.Fatal(err)
+			}
+			bare := filepath.Join(store.Root, "repos", "api.git")
+			if multiple {
+				prGit(t, bare, "remote", "add", "second", remote)
+				catalog, rev, err := store.LoadCatalog()
+				if err != nil {
+					t.Fatal(err)
+				}
+				catalog.Repositories["api"].Remotes["second"] = remote
+				if err := store.SaveCatalog(catalog, rev); err != nil {
+					t.Fatal(err)
+				}
+			}
+			prGit(t, bare, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "other"))
+			prGit(t, bare, "config", "--add", "remote.origin.url", remote)
+			before, err := s.Git.Fingerprint(ctx, bare)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := s.Sync(ctx, []string{"api"}, 1, false)
+			if err == nil || app.ProblemFor(err).Code != "conflict" || len(result.Items) != 0 {
+				t.Fatalf("sync did not refuse the different fetch URL at preflight: %+v, %v", result, err)
+			}
+			if after, err := s.Git.Fingerprint(ctx, bare); err != nil || after != before {
+				t.Fatalf("refs changed after mismatched origin: %v", err)
+			}
+		})
+	}
+}

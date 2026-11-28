@@ -161,7 +161,7 @@ func TestRemoteURLsFallsBackWhenAggregateExceedsOutputLimit(t *testing.T) {
 	include := filepath.Join(root, "include.conf")
 	// A repository can contain other remotes than the catalog verifies.
 	// Their combined output must not break lookup of the requested keys.
-	settings := "[remote \"extra\"]\nurl = https://example.invalid/extra\n[remote \"unrelated\"]\nurl = "
+	settings := "[remote \"extra\"]\nurl = https://example.invalid/extra\nurl = secondary\n[remote \"unrelated\"]\nurl = "
 	if err := os.WriteFile(include, []byte(settings+strings.Repeat("x", 16<<20)+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}

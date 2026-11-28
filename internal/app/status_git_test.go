@@ -15,13 +15,13 @@ import (
 	"github.com/devjvao/bearforge/internal/gitcli"
 )
 
-type statusConfigOverride struct{ app.Git }
+type statusFetchURLOverride struct{ app.Git }
 
-func (g statusConfigOverride) Config(ctx context.Context, path, key string) (string, error) {
-	if key == "remote.origin.url" {
+func (g statusFetchURLOverride) FetchURL(ctx context.Context, path, remote string) (string, error) {
+	if remote == "origin" {
 		return "overridden", nil
 	}
-	return g.Git.Config(ctx, path, key)
+	return g.Git.FetchURL(ctx, path, remote)
 }
 
 func TestStatusGitLaunchesAndEffectiveRemoteURLs(t *testing.T) {
@@ -72,11 +72,11 @@ func TestStatusGitLaunchesAndEffectiveRemoteURLs(t *testing.T) {
 	}
 	checkAdapter := func(t *testing.T) {
 		saved := s.Git
-		s.Git = statusConfigOverride{saved}
+		s.Git = statusFetchURLOverride{saved}
 		t.Cleanup(func() { s.Git = saved })
 		_, err := s.Status(ctx, "review")
 		if err == nil || !strings.Contains(err.Error(), "remote origin for api differs") {
-			t.Fatalf("Config override bypassed: %v", err)
+			t.Fatalf("FetchURL override bypassed: %v", err)
 		}
 	}
 	t.Run("one remote", checkLaunches)
@@ -84,7 +84,7 @@ func TestStatusGitLaunchesAndEffectiveRemoteURLs(t *testing.T) {
 
 	const mirror = "https://example.invalid/api.git"
 	include := filepath.Join(t.TempDir(), "include.conf")
-	if err := os.WriteFile(include, []byte("[remote \"Origin\"]\nurl = superseded\nurl = "+mirror+"\n"), 0600); err != nil {
+	if err := os.WriteFile(include, []byte("[remote \"Origin\"]\nurl = "+mirror+"\nurl = secondary\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	client := s.Git.(*gitcli.Client)
@@ -102,7 +102,7 @@ func TestStatusGitLaunchesAndEffectiveRemoteURLs(t *testing.T) {
 	}
 	t.Run("included second remote with multiple values", checkLaunches)
 	t.Run("multiple remotes via adapter", checkAdapter)
-	for _, contents := range []string{"[remote \"Origin\"]\nurl = wrong\n", ""} {
+	for _, contents := range []string{"[remote \"Origin\"]\nurl = wrong\nurl = " + mirror + "\n", ""} {
 		if err := os.WriteFile(include, []byte(contents), 0600); err != nil {
 			t.Fatal(err)
 		}

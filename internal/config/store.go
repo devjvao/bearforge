@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 
 	"go.yaml.in/yaml/v3"
 
@@ -74,7 +75,12 @@ func (s *Store) RemoveEmpty(parts ...string) error {
 	if err != nil {
 		return err
 	}
-	return os.Remove(p)
+	// Rmdir checks the entry type as part of the deletion, even if the
+	// directory was replaced by a regular file after review.
+	if err := syscall.Rmdir(p); err != nil {
+		return &os.PathError{Op: "rmdir", Path: p, Err: err}
+	}
+	return nil
 }
 
 type defaultsDTO struct {

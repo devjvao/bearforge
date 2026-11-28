@@ -127,7 +127,7 @@ func (o *options) authenticationStatus(ctx context.Context, connection, reposito
 		}
 		if gitErr == nil {
 			var actualOrigin string
-			actualOrigin, gitErr = git.Config(ctx, repoPath, "remote.origin.url")
+			actualOrigin, gitErr = git.FetchURL(ctx, repoPath, "origin")
 			if gitErr == nil && actualOrigin != remote {
 				gitErr = domain.E("conflict", "repository %s origin differs from its registered URL", id)
 			}

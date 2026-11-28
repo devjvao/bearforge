@@ -217,6 +217,9 @@ func valid(op *app.Operation, root string) error {
 			}
 			importIDs[step.Repository] = true
 		}
+		if step.TrackingRemote != "" && (op.Kind != "workspace.add" || step.Create || step.Tracking != "same-name" || step.Branch == "" || domain.ValidateRemoteName(step.TrackingRemote) != nil) {
+			return domain.E("invalid", "invalid tracking remote in workspace branch plan")
+		}
 		if pin := step.RemoteBranch; pin != nil {
 			if op.Kind != "workspace.add" || step.Branch == "" || domain.ValidateRemoteName(pin.Remote) != nil || domain.ValidateURL(pin.URL) != nil {
 				return domain.E("invalid", "invalid remote identity in workspace branch plan")

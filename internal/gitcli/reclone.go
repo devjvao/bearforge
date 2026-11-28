@@ -10,7 +10,7 @@ import (
 // so an interrupted publish can distinguish it from a replacement directory.
 func (c *Client) PrepareReclone(ctx context.Context, path string, repo domain.Repository, operation string) error {
 	for name, url := range repo.Remotes {
-		have, err := c.Config(ctx, path, "remote."+name+".url")
+		have, err := c.FetchURL(ctx, path, name)
 		if err != nil {
 			return err
 		}

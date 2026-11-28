@@ -205,7 +205,7 @@ func (s *Service) preparePullRequest(ctx context.Context, req PRRequest, c domai
 			return nil, err
 		}
 	}
-	remote, err := s.Git.Config(ctx, item.Path, "remote."+c.Remote+".url")
+	remote, err := s.Git.FetchURL(ctx, item.Path, c.Remote)
 	if err != nil {
 		return nil, err
 	}
