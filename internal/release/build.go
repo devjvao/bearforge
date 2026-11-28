@@ -256,7 +256,7 @@ func reserveOutput(output string) (string, error) {
 // Artifacts are fully assembled in memory. Publish the checksum manifest last
 // and roll back only files still owned by this publisher on an ordinary failure.
 func publishArtifacts(ctx context.Context, output string, artifacts map[string][]byte, checksums []byte) (err error) {
-	owned := make(map[string]os.FileInfo, len(artifacts)+1)
+	owned := make(map[string]os.FileInfo)
 	defer func() {
 		if err == nil {
 			return
@@ -309,7 +309,7 @@ func publishArtifacts(ctx context.Context, output string, artifacts map[string][
 			return fmt.Errorf("unexpected entry in release output: %q", entry.Name())
 		}
 	}
-	if len(entries) != len(owned)+1 {
+	if len(entries)-1 != len(owned) {
 		return fmt.Errorf("a release output entry disappeared during publication")
 	}
 	return nil
