@@ -3,6 +3,7 @@ package release
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -14,6 +15,86 @@ import (
 
 	"github.com/devjvao/bearforge/internal/gitcli"
 )
+
+func TestCompetingReleasePublishers(t *testing.T) {
+	output := t.TempDir()
+	type reservation struct {
+		path string
+		err  error
+	}
+	start := make(chan struct{})
+	results := make(chan reservation, 2)
+	for range 2 {
+		go func() {
+			<-start
+			path, err := reserveOutput(output)
+			results <- reservation{path, err}
+		}()
+	}
+	close(start)
+	first, second := <-results, <-results
+	if (first.err == nil) == (second.err == nil) {
+		t.Fatalf("reservations: %v and %v", first.err, second.err)
+	}
+	winner := first
+	if winner.err != nil {
+		winner = second
+	}
+	artifacts := map[string][]byte{"manifest.json": []byte("manifest"), "example.zip": []byte("archive")}
+	checksums, err := Checksums(artifacts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := publishArtifacts(t.Context(), output, artifacts, checksums); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(winner.path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reserveOutput(output); err == nil {
+		t.Fatal("finished output could be claimed again")
+	}
+	for name, expected := range artifacts {
+		actual, err := os.ReadFile(filepath.Join(output, name))
+		if err != nil || !bytes.Equal(actual, expected) {
+			t.Fatalf("%s: got %q, %v", name, actual, err)
+		}
+	}
+	actual, err := os.ReadFile(filepath.Join(output, "checksums.txt"))
+	if err != nil || !bytes.Equal(actual, checksums) {
+		t.Fatalf("checksums: got %q, %v", actual, err)
+	}
+}
+
+func TestReleaseRollbackPreservesUnexpectedFile(t *testing.T) {
+	for _, filename := range []string{"checksums.txt", "unlisted.zip"} {
+		t.Run(filename, func(t *testing.T) {
+			output := t.TempDir()
+			staging, err := reserveOutput(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sentinel := filepath.Join(output, filename)
+			if err := os.WriteFile(sentinel, []byte("keep"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			err = publishArtifacts(t.Context(), output, map[string][]byte{"a.zip": []byte("partial")}, []byte("new checksum"))
+			if err == nil || (filename == "checksums.txt" && !errors.Is(err, os.ErrExist)) {
+				t.Fatalf("publish with unexpected %s: %v", filename, err)
+			}
+			if err := os.Remove(staging); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := os.ReadFile(sentinel); err != nil || string(got) != "keep" {
+				t.Fatalf("sentinel: %q, %v", got, err)
+			}
+			names, err := os.ReadDir(output)
+			if err != nil || len(names) != 1 || names[0].Name() != filename {
+				t.Fatalf("rollback left unexpected files: %v, %v", names, err)
+			}
+		})
+	}
+}
 
 func TestRequestedVersionTagIsVerifiedEvenWithAnotherTagAtHead(t *testing.T) {
 	root := t.TempDir()

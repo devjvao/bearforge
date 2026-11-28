@@ -10,21 +10,23 @@ The release job runs on macOS with exact Go 1.27.4, `-trimpath`, `-mod=readonly`
 
 Linux and macOS use `.tar.gz`; Windows uses `.zip`. Both amd64 and arm64 are built. Each archive contains the executable, README, MIT license, user/developer guides, PR-review setup and architecture reference, plus `sbom.cdx.json` derived from modules actually linked into that binary. Standalone CycloneDX SBOMs, `manifest.json` and all archives are listed in sorted `checksums.txt` entries.
 
-CI signs the exact checksums using Cosign and GitHub OIDC and verifies the resulting `checksums.txt.sigstore.json` bundle before publication. No production signing key is stored locally or in a repository secret. Build provenance attestations cover the checksummed artifacts. The manifest records the source commit, dirty/snapshot status, toolchain, target names and binary hashes.
+CI signs `checksums.txt` using Cosign and GitHub OIDC and verifies the resulting `checksums.txt.sigstore.json` bundle. It copies each file listed in the signed checksums into a fresh directory and verifies its hash. The retained CI artifact and public release contain those verified copies, the checksums and the signature bundle. Build provenance attestations cover the checksummed artifacts. The manifest records the source commit, dirty/snapshot status, toolchain, target names and binary hashes.
 
 ## Verify before extracting
 
 Download your archive, `checksums.txt` and `checksums.txt.sigstore.json` from the same release. Install a trusted Cosign distribution and verify the certificate against the exact repository workflow and tag. Replace `v0.2.0` with the release you downloaded; do not widen the identity to an arbitrary workflow or tag.
 
 ```sh
+archive='bearforge_0.2.0_linux_amd64.tar.gz'  # Set this to your downloaded archive.
 cosign verify-blob --bundle checksums.txt.sigstore.json \
   --certificate-identity 'https://github.com/devjvao/bearforge/.github/workflows/release.yml@refs/tags/v0.2.0' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
-  checksums.txt
-sha256sum --check --ignore-missing checksums.txt
+  checksums.txt &&
+entry=$(awk -v file="$archive" '$2 == file { line=$0; n++ } END { if (n != 1) exit 1; print line }' checksums.txt) &&
+printf '%s\n' "$entry" | sha256sum --check -
 ```
 
-On macOS, use `shasum -a 256 -c checksums.txt` after downloading all listed files, or compare the selected archive's hash to its signed entry. PowerShell verification for a single Windows archive:
+On macOS, set `archive` to the downloaded Darwin filename and replace `sha256sum --check -` with `shasum -a 256 -c -`. PowerShell verification for a single Windows archive:
 
 ```powershell
 $version = 'v0.2.0'
