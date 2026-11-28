@@ -4,7 +4,7 @@ Reviewed `main` at `27ff3a1e729490a9111ac2afa7fc48ee11e820ce` on 2026-11-27. The
 
 ## Implementation
 
-The five P1 fixes and all twelve remaining findings have regression coverage in the working tree. The checklist records the original findings and acceptance criteria. Source line numbers refer to the reviewed commit.
+The five P1 fixes and all twelve remaining findings have regression coverage. The checklist records the original findings and acceptance criteria. Source line numbers refer to the reviewed commit.
 
 | Area | Regression evidence |
 | --- | --- |
@@ -20,7 +20,7 @@ The fixture sends its first clone signal after a real local clone and an origin 
 
 Linux integration testing also reproduced an existing Git 2.43 failure on the reviewed commit. During an offline update preview, Git reports a missing promisor parent differently on this version. The ancestry check now confirms the reported object is absent from the local object store and defers the update. The regression verifies that preview sends no request for the parent. A separate Git 2.43 fixture verifies that removal distinguishes a private ref named `COMMIT_EDITMSG` from an ordinary commit message.
 
-### Verification on the combined changes
+### Local verification on the combined changes
 
 | Environment | Check | Result |
 | --- | --- | --- |
@@ -31,7 +31,7 @@ Linux integration testing also reproduced an existing Git 2.43 failure on the re
 | Ubuntu 24.04 under WSL | `BEARFORGE_SCALE_TEST=1 go test ./internal/app -run '^TestPhase2Scale60$' -count=1 -timeout 12m` | Passed in 33 seconds |
 | Windows and Linux | Native Windows console and Linux PTY login, keychain fixtures, release workflow shell tests and capture replay | Passed on the applicable platform. Release workflow tests used local signing and publication stand-ins. |
 | Windows amd64 | Unsigned snapshot through `cmd/release` | The archive, SBOM and manifest matched every entry in the generated checksums. |
-| macOS arm64 | `CGO_ENABLED=0` cross-build | Passed. Native macOS tests, including terminal and directory-removal behavior, still require a macOS runner. |
+| macOS arm64 | `CGO_ENABLED=0` cross-build | Passed. The native macOS matrix job exercises terminal and directory-removal behavior. [PR checks](https://github.com/devjvao/bearforge/pull/30/checks) |
 
 ## Scope and evidence
 
@@ -97,7 +97,7 @@ Baseline checks on Windows amd64, Go 1.27.4 and Git 2.47.0.windows.1 are recorde
 
 - [x] `TestImportRechecksExternalCatalogChangesDuringTransfer/registration_before_next_admission` timed out at line 497 in the full suite. This subtest uses one worker and was waiting for the **first** clone to signal its start. It had not yet made the external catalog edit or reached the conflicting second admission. The shared helper waits five seconds and cannot report an early importer return. Have the first-start wait select on both `git.started` and the operation's `done` channel, report the actual error or phase, and use the test deadline as a backstop. Preserve the assertions that the external registration survives and the conflicting clone never starts. Record repeated Windows race runs under package concurrency and a full-suite pass before closing. The original run does not establish a production deadlock or lost catalog data. [Failing wait](../../../internal/app/import_parallel_test.go#L497) · [Timeout helper](../../../internal/app/import_parallel_test.go#L108)
 
-The isolated baseline rerun command was `go test -race -count=3 -timeout 6m -run '^TestImportRechecksExternalCatalogChangesDuringTransfer$/^registration_before_next_admission$' -v ./internal/app`. The combined-change results above include the repeated Windows run, both full race suites and the Linux scale test. Native macOS verification is still open.
+The isolated baseline rerun command was `go test -race -count=3 -timeout 6m -run '^TestImportRechecksExternalCatalogChangesDuringTransfer$/^registration_before_next_admission$' -v ./internal/app`. The local results above include the repeated Windows run, both full race suites and the Linux scale test. GitHub Actions records native macOS results for each revision of the pull request.
 
 For implementation, add the regression for each numbered finding first, observe the current failure, then run it again after the fix. Git/storage changes should run `go test -timeout 30m ./internal/app ./internal/gitcli ./internal/config ./internal/operation`. Auth/provider changes should run `go test -timeout 30m ./internal/auth ./internal/cli ./internal/tui ./internal/github ./internal/bitbucket`. Run `go test ./internal/release` and exercise the published verification snippets for release changes.
 
